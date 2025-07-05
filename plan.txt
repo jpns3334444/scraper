@@ -1,0 +1,158 @@
+  🔹 Stage 1: Scraping Infrastructure 
+  (Refined)
+
+  Core Infrastructure
+
+  - ✅ CloudFormation stack with EC2, IAM
+  roles, Lambda trigger, and cron scheduling       
+  - ✅ Headless Selenium scraper with user
+  agent rotation
+  - ✅ EC2 UserData auto-installs dependencies     
+   and CloudWatch agent
+  - ✅ S3 integration for storing scraped
+  results
+
+  Essential Monitoring & Notifications
+
+  - 🔲 SNS topic for email/Slack notifications     
+   on job completion/failure
+  - 🔲 Enhanced Lambda function to monitor         
+  scraper execution status
+  - 🔲 Structured logging with success/failure     
+   metrics in scrape.py
+
+  Critical Reliability Fixes
+
+  - 🔲 Lambda timeout handling (current 60s        
+  timeout vs longer scraping duration)
+  - 🔲 Bot detection recovery strategy
+  (currently just logs and exits)
+  - 🔲 Rate limiting with respectful delays        
+  between requests
+
+  Data Quality
+
+  - 🔲 Basic data validation before S3 upload      
+  (check for empty results)
+  - 🔲 Simple deduplication to avoid
+  re-scraping same listings daily
+
+  Security Best Practices
+
+  - 🔲 Improved scraping delays (currently
+  2-4s, could be more variable)
+  - 🔲 Request headers randomization beyond        
+  just User-Agent
+
+  Nice-to-Have
+
+  - 🔲 Simple health check via CloudWatch
+  custom metrics
+  - 🔲 Basic error retry logic improvements        
+  (currently has some)
+
+
+
+
+
+LONG LIST:
+
+
+  🔹 Stage 1: Scraping Infrastructure
+
+  Core Infrastructure
+
+  - ✅ CloudFormation stack with EC2, IAM
+  roles, Lambda trigger, and cron scheduling       
+  - ✅ Headless Selenium scraper with user
+  agent rotation
+  - ✅ EC2 UserData auto-installs dependencies     
+   and CloudWatch agent
+  - ✅ S3 integration for storing scraped
+  results
+
+  Monitoring & Notifications
+
+  - 🔲 SNS topic for email/Slack notifications     
+   on job completion/failure
+  - 🔲 Enhanced Lambda function to monitor         
+  scraper execution status
+  - 🔲 CloudWatch alarms for scraper failures      
+  and timeouts
+  - 🔲 Structured logging with success/failure     
+   metrics in scrape.py
+
+  Reliability & Error Handling
+
+  - 🔲 Lambda timeout handling (current 60s        
+  timeout vs longer scraping duration)
+  - 🔲 Retry logic for failed scraping 
+  attempts (partially implemented)
+  - 🔲 Dead letter queue for failed Lambda         
+  invocations
+  - 🔲 Bot detection recovery strategy
+  (currently just logs and exits)
+  - 🔲 IP rotation mechanism for anti-bot
+  measures
+
+  Data Management
+
+  - 🔲 S3 lifecycle policies for cost
+  optimization (archive old data)
+  - 🔲 Data deduplication logic to avoid
+  re-scraping same listings
+  - 🔲 CSV/JSON output format standardization      
+  with metadata
+  - 🔲 Data validation and quality checks
+  before S3 upload
+
+  Security & Compliance
+
+  - 🔲 Rate limiting and respectful scraping       
+  delays
+  - 🔲 User-Agent rotation improvements (more      
+  realistic patterns)
+  - 🔲 Request headers randomization beyond        
+  just User-Agent
+  - 🔲 SSL/TLS certificate validation in
+  scraper requests
+  - 🔲 Environment variable encryption for
+  sensitive data
+
+  Operational Excellence
+
+  - 🔲 Health check endpoint for EC2 instance      
+  monitoring
+  - 🔲 Scraper performance metrics
+  (pages/minute, success rate)
+  - 🔲 Cost monitoring dashboard for AWS
+  resource usage
+  - 🔲 Automated deployment pipeline
+  improvements (current deploy.sh)
+  - 🔲 Backup strategy for configuration and       
+  code
+
+  Future Enhancements
+
+  - 🔲 Multi-region deployment for
+  geo-distribution
+  - 🔲 Proxy rotation service integration
+  - 🔲 Database integration (RDS/DynamoDB) for     
+   structured data
+  - 🔲 API endpoints for external access to        
+  scraped data
+  - 🔲 Real-time data streaming
+  (Kinesis/EventBridge)
+
+  The most critical missing items I identified     
+   are:
+  1. Lambda timeout handling - Your scraper        
+  runs much longer than the 60s Lambda timeout     
+  2. Proper error monitoring - No visibility       
+  into scraper failures
+  3. Bot detection recovery - Currently just       
+  exits on detection
+  4. Rate limiting - Missing respectful delays     
+   between requests
+  5. Data deduplication - May be re-scraping       
+  same listings daily

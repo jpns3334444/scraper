@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(NOTIFICATION_EMAIL=\"jpns3334444@gmail.com\" ./deploy.sh)",
+      "Bash(aws cloudformation validate-template:*)",
+      "Bash(aws s3 cp:*)",
+      "Bash(aws lambda invoke:*)",
+      "Bash(aws logs describe-log-groups:*)",
+      "Bash(aws logs describe-log-streams:*)",
+      "Bash(aws logs get-log-events:*)",
+      "Bash(aws ssm send-command:*)",
+      "Bash(aws ssm get-command-invocation:*)"
+    ],
+    "deny": []
+  }
+}
