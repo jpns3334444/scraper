@@ -1,147 +1,205 @@
+#!/usr/bin/env python3
+"""
+HTTP-based scraper for homes.co.jp with session management and complete data extraction
+Replaces Chrome/Selenium with fast, reliable HTTP requests + session flow
+"""
 import time
 import pandas as pd
 import os
-import undetected_chromedriver as uc
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium_stealth import stealth
+import requests
+import re
+from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import types
 import random
 import boto3
 from datetime import datetime
 import json
 
-# === Optional: rotating user agents ===
+# Realistic user agents for rotation
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
 ]
 
-def patch_driver_del(driver):
-    def safe_del(self):
-        try:
-            self.service.stop()
-        except:
-            pass
-    driver.__del__ = types.MethodType(safe_del, driver)
+def create_enhanced_session():
+    """Create HTTP session with enhanced browser-like headers"""
+    session = requests.Session()
+    
+    headers = {
+        'User-Agent': random.choice(USER_AGENTS),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Language': 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0',
+        'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"'
+    }
+    
+    session.headers.update(headers)
+    return session
 
-def create_driver():
-    options = uc.ChromeOptions()
-    options.add_argument("--headless=new")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-background-timer-throttling")
-    options.add_argument("--disable-backgrounding-occluded-windows")
-    options.add_argument("--disable-renderer-backgrounding")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("disable-blink-features=AutomationControlled")
-    ua = random.choice(USER_AGENTS)
-    options.add_argument(f"user-agent={ua}")
+def extract_listing_urls_from_html(html_content):
+    """Extract unique listing URLs from HTML content"""
+    relative_urls = re.findall(r'/mansion/b-\d+/', html_content)
+    unique_listings = set()
+    
+    for url in relative_urls:
+        absolute_url = f"https://www.homes.co.jp{url.rstrip('/')}"
+        unique_listings.add(absolute_url)
+    
+    return list(unique_listings)
 
-    driver = uc.Chrome(options=options)
-    stealth(driver,
-            languages=["en-US", "en"],
-            vendor="Google Inc.",
-            platform="Win32",
-            webgl_vendor="Intel Inc.",
-            renderer="Intel Iris OpenGL Engine",
-            fix_hairline=True,
-    )
-    patch_driver_del(driver)
-    return driver
-
-BASE_URL = "https://www.homes.co.jp/mansion/chuko/tokyo/chofu-city/list"
-
-def get_listing_links_from_page(page):
-    url = BASE_URL if page == 1 else f"{BASE_URL}?page={page}"
-    print(f"\n=== Scraping listing links from page {page} ===")
-    print(f"Loading URL: {url}")
-    driver = create_driver()
-    wait = WebDriverWait(driver, 10)
-
+def collect_all_listing_urls(base_url, max_pages=10):
+    """Collect all listing URLs using session-based pagination"""
+    session = create_enhanced_session()
+    all_links = set()
+    
+    log_structured_message("INFO", "Starting listing URL collection", base_url=base_url)
+    
     try:
-        driver.get(url)
-        time.sleep(random.uniform(2.5, 4))
-
-        if "Pardon Our Interruption" in driver.title:
-            print("🚫 Bot challenge hit. Save HTML + rotate IP before retrying.")
-            with open(f"page_{page}_captcha.html", "w", encoding="utf-8") as f:
-                f.write(driver.page_source)
-            driver.quit()
-            return []
-
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[class*=mod-listKks]")))
-        print("✅ Listing container appeared!")
-
-        for _ in range(5):
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(1.5)
-
-        listings = driver.find_elements(By.CSS_SELECTOR, "a[href*='/mansion/b-']")
-        links = {
-            href for href in [a.get_attribute("href") for a in listings]
-            if href and href.startswith("https://www.homes.co.jp/mansion/b-") and href.rstrip('/').count('/') == 4
-        }
-        print(f"Found {len(links)} links on page {page}")
-
-        driver.quit()
-        return list(links)
-
+        # Step 1: Get page 1 to establish session
+        print(f"=== Collecting listing URLs from page 1 ===")
+        response = session.get(base_url, timeout=15)
+        
+        if response.status_code != 200:
+            raise Exception(f"Failed to access page 1: HTTP {response.status_code}")
+        
+        if "pardon our interruption" in response.text.lower():
+            raise Exception("Anti-bot protection detected on page 1")
+        
+        # Parse pagination info
+        soup = BeautifulSoup(response.content, 'html.parser')
+        total_element = soup.select_one('.totalNum')
+        total_count = int(total_element.text) if total_element else 0
+        
+        page_links = soup.select('a[data-page]')
+        max_page = max([int(link.get('data-page', 1)) for link in page_links]) if page_links else 1
+        max_page = min(max_page, max_pages)
+        
+        log_structured_message("INFO", "Pagination info parsed", 
+                             total_listings=total_count, max_page=max_page)
+        
+        # Extract listings from page 1
+        page1_listings = extract_listing_urls_from_html(response.text)
+        all_links.update(page1_listings)
+        print(f"Page 1: Found {len(page1_listings)} listings")
+        
+        # Set referer for subsequent requests
+        session.headers['Referer'] = base_url
+        
+        # Step 2: Get remaining pages
+        for page_num in range(2, max_page + 1):
+            print(f"=== Collecting listings from page {page_num} ===")
+            
+            time.sleep(random.uniform(2, 4))
+            page_url = f"{base_url}/?page={page_num}"
+            
+            try:
+                response = session.get(page_url, timeout=15)
+                
+                if response.status_code != 200:
+                    log_structured_message("WARNING", "Failed to access page", 
+                                         page=page_num, status_code=response.status_code)
+                    continue
+                
+                if "pardon our interruption" in response.text.lower():
+                    log_structured_message("ERROR", "Anti-bot protection triggered", page=page_num)
+                    break
+                
+                page_listings = extract_listing_urls_from_html(response.text)
+                all_links.update(page_listings)
+                print(f"Page {page_num}: Found {len(page_listings)} listings")
+                
+                session.headers['Referer'] = page_url
+                log_structured_message("INFO", "Page scraped successfully", 
+                                     page=page_num, listings_found=len(page_listings))
+                
+            except Exception as e:
+                log_structured_message("ERROR", "Error fetching page", 
+                                     page=page_num, error=str(e))
+                continue
+        
+        all_links_list = list(all_links)
+        log_structured_message("INFO", "URL collection completed", 
+                             total_unique_links=len(all_links_list))
+        
+        return all_links_list, session
+        
     except Exception as e:
-        print(f"❌ Error on page {page}: {e}")
-        driver.quit()
-        return []
+        log_structured_message("ERROR", "Error in URL collection", error=str(e))
+        session.close()
+        raise
 
-def scrape_listing_details(url, retries=2):
+def extract_property_details(session, property_url, referer_url, retries=2):
+    """Extract detailed property information using session flow"""
     for attempt in range(retries + 1):
         try:
-            driver = create_driver()
-            wait = WebDriverWait(driver, 10)
-            print(f"Scraping: {url}")
-            driver.get(url)
-            time.sleep(2)
-            data = {"url": url}
-
-            try:
-                title_elem = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "h1")))
-                data["title"] = title_elem.text.strip()
-            except:
-                data["title"] = None
-
-            try:
-                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.price-main em")))
-                price_elem = driver.find_element(By.CSS_SELECTOR, "div.price-main em")
-                data["price"] = price_elem.text.strip()
-            except:
-                data["price"] = None
-
-            try:
-                rows = driver.find_elements(By.CSS_SELECTOR, "table.mod-tableSummary tr")
-                for row in rows:
-                    try:
-                        key = row.find_element(By.TAG_NAME, "th").text.strip()
-                        val = row.find_element(By.TAG_NAME, "td").text.strip()
-                        data[key] = val
-                    except:
-                        continue
-            except:
-                pass
-
-            driver.quit()
+            # Set proper referer and add realistic delay
+            session.headers['Referer'] = referer_url
+            time.sleep(random.uniform(2, 5))
+            
+            print(f"Scraping: {property_url}")
+            response = session.get(property_url, timeout=15)
+            
+            if response.status_code != 200:
+                if attempt == retries:
+                    return {"url": property_url, "error": f"HTTP {response.status_code}"}
+                time.sleep(3)
+                continue
+            
+            if "pardon our interruption" in response.text.lower():
+                return {"url": property_url, "error": "Anti-bot protection"}
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            data = {"url": property_url}
+            
+            # Extract title from h1 elements
+            h1_elements = soup.select('h1')
+            for h1 in h1_elements:
+                if h1.text.strip() and ('マンション' in h1.text or '万円' in h1.text):
+                    data["title"] = h1.text.strip()
+                    break
+            
+            # Extract price using regex from content
+            price_pattern = re.search(r'(\d{1,4}(?:,\d{3})*万円)', response.text)
+            if price_pattern:
+                data["price"] = price_pattern.group(1)
+            
+            # Extract detailed property information from tables
+            tables = soup.find_all('table')
+            for table in tables:
+                rows = table.find_all('tr')
+                if len(rows) > 10:  # Main property details table
+                    for row in rows:
+                        cells = row.find_all(['th', 'td'])
+                        if len(cells) >= 2:
+                            key = cells[0].text.strip()
+                            value = cells[1].text.strip()
+                            if key and value and len(key) < 30:  # Reasonable key length
+                                data[key] = value
+                    break
+            
             return data
-
+            
         except Exception as e:
-            print(f"[Attempt {attempt + 1}] Error scraping {url}: {e}")
-            time.sleep(3)
+            print(f"[Attempt {attempt + 1}] Error scraping {property_url}: {e}")
             if attempt == retries:
-                return {"url": url, "title": None, "price": None}
+                return {"url": property_url, "error": str(e)}
+            time.sleep(2)
+    
+    return {"url": property_url, "error": "Max retries exceeded"}
 
 def upload_to_s3(file_path, bucket, s3_key):
+    """Upload file to S3"""
     try:
         s3 = boto3.client("s3")
         s3.upload_file(file_path, bucket, s3_key)
@@ -152,15 +210,24 @@ def upload_to_s3(file_path, bucket, s3_key):
         return False
 
 def write_job_summary(summary_data):
+    """Write job summary to JSON file"""
     try:
         summary_path = "/var/log/scraper/summary.json"
+        os.makedirs(os.path.dirname(summary_path), exist_ok=True)
         with open(summary_path, "w") as f:
             json.dump(summary_data, f, indent=2)
         print(f"📋 Job summary written to {summary_path}")
     except Exception as e:
-        print(f"❌ Failed to write job summary: {e}")
+        # Fallback to current directory if /var/log/scraper not accessible
+        try:
+            with open("summary.json", "w") as f:
+                json.dump(summary_data, f, indent=2)
+            print(f"📋 Job summary written to summary.json")
+        except:
+            print(f"❌ Failed to write job summary: {e}")
 
 def log_structured_message(level, message, **kwargs):
+    """Log structured message in JSON format"""
     log_entry = {
         "timestamp": datetime.now().isoformat(),
         "level": level,
@@ -170,67 +237,87 @@ def log_structured_message(level, message, **kwargs):
     print(json.dumps(log_entry))
 
 def main():
+    """Main scraper function using HTTP with session flow"""
     job_start_time = datetime.now()
-    log_structured_message("INFO", "Starting scraper job", start_time=job_start_time.isoformat())
+    log_structured_message("INFO", "Starting HTTP scraper job", start_time=job_start_time.isoformat())
     
-    all_links = set()
     error_count = 0
     success_count = 0
-
+    session = None
+    
     try:
-        # === Step 1: collect links with fresh sessions ===
-        for page in range(1, 10):  # Scrape up to 9 pages (adjust as needed)
-            links = get_listing_links_from_page(page)
-            if not links:
-                log_structured_message("WARNING", "No links found or blocked", page=page)
-                error_count += 1
-                break
-            all_links.update(links)
-            log_structured_message("INFO", "Page scraped successfully", page=page, links_found=len(links))
-            print("💤 Sleep before IP rotation...")
-            time.sleep(10)
-
-        all_links = list(all_links)
-        log_structured_message("INFO", "Link collection completed", total_links=len(all_links))
-
-        # === Step 2: parallel scrape details ===
+        # Configuration
+        BASE_URL = "https://www.homes.co.jp/mansion/chuko/tokyo/chofu-city/list"
+        max_pages = 10
+        
+        # Step 1: Collect all listing URLs
+        print("\n🔗 Collecting all listing URLs...")
+        all_urls, session = collect_all_listing_urls(BASE_URL, max_pages)
+        
+        if not all_urls:
+            raise Exception("No listing URLs found")
+        
+        log_structured_message("INFO", "URL collection completed", total_urls=len(all_urls))
+        
+        # Step 2: Extract detailed information from each property
+        print(f"\n📋 Extracting details from {len(all_urls)} properties...")
         listings_data = []
-        max_threads = 5
-
-        log_structured_message("INFO", "Starting parallel scraping", max_threads=max_threads)
+        
+        # Use conservative threading to respect rate limits
+        max_threads = 2
         with ThreadPoolExecutor(max_workers=max_threads) as executor:
-            futures = {executor.submit(scrape_listing_details, url): url for url in all_links}
+            # Submit all tasks
+            futures = {
+                executor.submit(extract_property_details, session, url, BASE_URL): url 
+                for url in all_urls
+            }
+            
+            # Collect results
             for future in as_completed(futures):
                 url = futures[future]
                 try:
                     result = future.result()
                     listings_data.append(result)
-                    if result.get("title") and result.get("price"):
+                    
+                    if "error" not in result and result.get("title"):
                         success_count += 1
                     else:
                         error_count += 1
+                        
                 except Exception as e:
-                    log_structured_message("ERROR", "Error scraping listing", url=url, error=str(e))
+                    log_structured_message("ERROR", "Error processing property", url=url, error=str(e))
                     error_count += 1
-
+                    listings_data.append({"url": url, "error": str(e)})
+        
+        # Step 3: Save data
         df = pd.DataFrame(listings_data)
-
-        # === Save to desktop
-        filename = f"chofu-city-list-{datetime.now().strftime('%Y-%m-%d')}.csv"
-        desktop_path = os.path.join(os.path.expanduser("~"), "Desktop", filename)
-        df.to_csv(desktop_path, index=False)
-        log_structured_message("INFO", "Data saved locally", file_path=desktop_path)
-
-        # === Upload to S3
+        
+        # Generate filename
+        filename = f"chofu-city-listings-{datetime.now().strftime('%Y-%m-%d')}.csv"
+        
+        # Save locally (try desktop first, fallback to current directory)
+        try:
+            desktop_path = os.path.join(os.path.expanduser("~"), "Desktop", filename)
+            df.to_csv(desktop_path, index=False)
+            local_path = desktop_path
+        except:
+            local_path = filename
+            df.to_csv(local_path, index=False)
+        
+        log_structured_message("INFO", "Data saved locally", file_path=local_path)
+        
+        # Step 4: Upload to S3
         s3_upload_success = False
         output_bucket = os.environ.get("OUTPUT_BUCKET")
+        s3_key = None
+        
         if output_bucket:
             s3_key = f"scraper-output/{filename}"
-            s3_upload_success = upload_to_s3(desktop_path, output_bucket, s3_key)
+            s3_upload_success = upload_to_s3(local_path, output_bucket, s3_key)
         else:
             log_structured_message("WARNING", "OUTPUT_BUCKET environment variable not set")
-
-        # === Generate job summary
+        
+        # Step 5: Generate job summary
         job_end_time = datetime.now()
         duration = (job_end_time - job_start_time).total_seconds()
         
@@ -238,18 +325,26 @@ def main():
             "start_time": job_start_time.isoformat(),
             "end_time": job_end_time.isoformat(),
             "duration_seconds": duration,
-            "total_links_found": len(all_links),
+            "scraper_type": "HTTP_SESSION_FLOW",
+            "total_urls_found": len(all_urls),
             "successful_scrapes": success_count,
             "failed_scrapes": error_count,
             "total_records": len(listings_data),
             "output_file": filename,
             "s3_upload_success": s3_upload_success,
-            "s3_key": s3_key if output_bucket else None,
+            "s3_key": s3_key,
             "status": "SUCCESS" if success_count > 0 else "FAILED"
         }
         
         write_job_summary(summary_data)
-        log_structured_message("INFO", "Job completed successfully", **summary_data)
+        log_structured_message("INFO", "HTTP scraper job completed successfully", **summary_data)
+        
+        print(f"\n✅ Scraping completed successfully!")
+        print(f"📊 Results: {success_count} successful, {error_count} failed")
+        print(f"⏱️ Duration: {duration:.1f} seconds")
+        print(f"💾 Output: {local_path}")
+        if s3_upload_success:
+            print(f"☁️ S3: s3://{output_bucket}/{s3_key}")
         
     except Exception as e:
         job_end_time = datetime.now()
@@ -259,13 +354,19 @@ def main():
             "start_time": job_start_time.isoformat(),
             "end_time": job_end_time.isoformat(),
             "duration_seconds": duration,
+            "scraper_type": "HTTP_SESSION_FLOW",
             "status": "ERROR",
             "error": str(e)
         }
         
         write_job_summary(summary_data)
-        log_structured_message("ERROR", "Job failed with exception", **summary_data)
+        log_structured_message("ERROR", "HTTP scraper job failed", **summary_data)
+        print(f"\n❌ Scraping failed: {e}")
         raise
+    
+    finally:
+        if session:
+            session.close()
 
 if __name__ == "__main__":
     main()

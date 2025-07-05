@@ -9,7 +9,10 @@
       "Bash(aws logs describe-log-streams:*)",
       "Bash(aws logs get-log-events:*)",
       "Bash(aws ssm send-command:*)",
-      "Bash(aws ssm get-command-invocation:*)"
+      "Bash(aws ssm get-command-invocation:*)",
+      "Bash(python3:*)",
+      "Bash(pip3 install:*)",
+      "Bash(grep:*)"
     ],
     "deny": []
   }
