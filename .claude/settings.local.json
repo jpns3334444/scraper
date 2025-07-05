@@ -12,7 +12,16 @@
       "Bash(aws ssm get-command-invocation:*)",
       "Bash(python3:*)",
       "Bash(pip3 install:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(rm:*)",
+      "Bash(aws cloudformation describe-change-set:*)",
+      "Bash(aws cloudformation describe-stacks:*)",
+      "Bash(scp:*)",
+      "Bash(chmod:*)",
+      "Bash(ls:*)",
+      "Bash(cp:*)",
+      "Bash(cat:*)",
+      "Bash(aws cloudformation:*)"
     ],
     "deny": []
   }
