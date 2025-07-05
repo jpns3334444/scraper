@@ -21,7 +21,9 @@
       "Bash(ls:*)",
       "Bash(cp:*)",
       "Bash(cat:*)",
-      "Bash(aws cloudformation:*)"
+      "Bash(aws cloudformation:*)",
+      "Bash(ssh:*)",
+      "Bash(aws s3 ls:*)"
     ],
     "deny": []
   }
