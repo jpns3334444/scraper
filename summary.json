@@ -1,0 +1,15 @@
+{
+  "start_time": "2025-07-06T16:01:12.101829",
+  "end_time": "2025-07-06T16:01:25.874978",
+  "duration_seconds": 13.773149,
+  "scraper_type": "HTTP_SESSION_FLOW",
+  "testing_mode": "LOCAL",
+  "total_urls_found": 5,
+  "successful_scrapes": 5,
+  "failed_scrapes": 0,
+  "total_records": 5,
+  "output_file": "chofu-city-listings-2025-07-06.csv",
+  "s3_upload_success": false,
+  "s3_key": null,
+  "status": "SUCCESS"
+}

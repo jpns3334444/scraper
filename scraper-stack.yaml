@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: "Headless Selenium Scraper Infrastructure with S3 and Logging"
+Description: "HTTP Web Scraper Infrastructure with S3 and Logging"
 
 Parameters:
   KeyName:
@@ -28,6 +28,11 @@ Parameters:
     Default: "true"
     AllowedValues: ["true", "false"]
     Description: Whether to enable email notifications
+  GitHubToken:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: GitHub Personal Access Token for private repositories (optional)
 
 Conditions:
   ShouldCreateBucket: !Equals [!Ref CreateBucket, "true"]
@@ -54,6 +59,7 @@ Resources:
   ScraperBucket:
     Type: AWS::S3::Bucket
     Condition: ShouldCreateBucket
+    DeletionPolicy: Retain
     Properties:
       BucketName: !Ref OutputBucket
       PublicAccessBlockConfiguration:
@@ -89,15 +95,6 @@ Resources:
                   - s3:PutObject
                 Resource:
                   - !Sub arn:aws:s3:::${OutputBucket}/scraper-output/*
-        - PolicyName: AllowS3ReadFromSource  # 🔥 ADDED THIS
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - s3:GetObject
-                Resource:
-                  - !Sub arn:aws:s3:::${OutputBucket}/scraper-source/*
         - PolicyName: AllowCloudWatchLogs
           PolicyDocument:
             Version: "2012-10-17"
@@ -108,6 +105,14 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: "*"
+        - PolicyName: AllowSecretsManager
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:github-token*"
 
   EventBridgeSSMExecutionRole:
     Type: AWS::IAM::Role
@@ -162,20 +167,10 @@ Resources:
             - - "#!/bin/bash\n"
               - "set -e\n"
               - "exec > >(tee -a /var/log/user-data.log) 2>&1\n"
-              - "echo \"🚀 Starting EC2 initialization at $(date)\" \n"
+              - "echo \"🚀 Starting EC2 initialization with GitHub at $(date)\" \n"
               - "apt-get update -y\n"
-              - "apt-get install -y python3-pip unzip xvfb wget curl gnupg software-properties-common -y\n"
-              - "wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add -\n"
-              - "echo 'deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main' > /etc/apt/sources.list.d/google-chrome.list\n"
-              - "apt-get update -y\n"
-              - "apt-get install -y google-chrome-stable\n"
-              - "CHROME_VERSION=$(google-chrome-stable --version | cut -d' ' -f3 | cut -d'.' -f1)\n"
-              - "CHROMEDRIVER_VERSION=$(curl -s https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION})\n"
-              - "wget -N https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip\n"
-              - "unzip chromedriver_linux64.zip\n"
-              - "mv chromedriver /usr/local/bin/\n"
-              - "chmod +x /usr/local/bin/chromedriver\n"
-              - "pip3 install pandas undetected-chromedriver selenium boto3 beautifulsoup4 requests\n"
+              - "apt-get install -y python3-pip unzip wget curl gnupg software-properties-common git -y\n"
+              - "pip3 install pandas boto3 beautifulsoup4 requests\n"
               - "echo 'export OUTPUT_BUCKET=\""
               - !Ref OutputBucket
               - "\"' >> /etc/environment\n"
@@ -211,15 +206,22 @@ Resources:
               - !Ref OutputBucket
               - "\"\n"
               - "echo \"Using S3 bucket: $OUTPUT_BUCKET_NAME\" >> /var/log/scraper/run.log\n"
+              - "echo \"Cloning scraper from GitHub...\" >> /var/log/scraper/run.log\n"
+              - "echo \"Retrieving GitHub token from Secrets Manager...\" >> /var/log/scraper/run.log\n"
+              - "GITHUB_TOKEN=$(aws secretsmanager get-secret-value --secret-id github-token --region "
+              - !Ref AWS::Region
+              - " --query SecretString --output text 2>/dev/null || echo \"\")\n"
               - "for i in {1..5}; do\n"
-              - "  echo \"Attempt $i: Downloading scrape.py from S3...\" >> /var/log/scraper/run.log\n"
-              - "  if aws s3 cp s3://$OUTPUT_BUCKET_NAME/scraper-source/scrape.py /home/ubuntu/scrape.py; then\n"
-              - "    echo \"✅ Successfully downloaded scrape.py on attempt $i\" >> /var/log/scraper/run.log\n"
+              - "  echo \"Attempt $i: Cloning from GitHub...\" >> /var/log/scraper/run.log\n"
+              - "  if [ -n \"$GITHUB_TOKEN\" ]; then\n    GITHUB_URL=\"https://$GITHUB_TOKEN@github.com/jpns3334444/scraper.git\"\n  else\n    GITHUB_URL=\"https://github.com/jpns3334444/scraper.git\"\n  fi\n  if git clone $GITHUB_URL /tmp/scraper-repo; then\n"
+              - "    echo \"✅ Successfully cloned from GitHub on attempt $i\" >> /var/log/scraper/run.log\n"
+              - "    cp /tmp/scraper-repo/scrape.py /home/ubuntu/scrape.py\n"
+              - "    rm -rf /tmp/scraper-repo\n"
               - "    break\n"
               - "  else\n"
-              - "    echo \"❌ Failed to download scrape.py on attempt $i\" >> /var/log/scraper/run.log\n"
+              - "    echo \"❌ Failed to clone from GitHub on attempt $i\" >> /var/log/scraper/run.log\n"
               - "    if [ $i -eq 5 ]; then\n"
-              - "      echo \"❌ All 5 download attempts failed\" >> /var/log/scraper/run.log\n"
+              - "      echo \"❌ All 5 GitHub clone attempts failed\" >> /var/log/scraper/run.log\n"
               - "    fi\n"
               - "    sleep 5\n"
               - "  fi\n"
@@ -227,7 +229,7 @@ Resources:
               - "if [ -f /home/ubuntu/scrape.py ]; then\n"
               - "  chmod +x /home/ubuntu/scrape.py\n"
               - "  chown ubuntu:ubuntu /home/ubuntu/scrape.py\n"
-              - "  echo \"✅ scrape.py successfully downloaded and ready.\" >> /var/log/scraper/run.log\n"
+              - "  echo \"✅ scrape.py successfully cloned from GitHub and ready.\" >> /var/log/scraper/run.log\n"
               - "  echo \"File size: $(ls -lh /home/ubuntu/scrape.py | awk '{print $5}')\" >> /var/log/scraper/run.log\n"
               - "  # Test Python dependencies\n"
               - "  echo \"Testing Python dependencies...\" >> /var/log/scraper/run.log\n"
@@ -237,9 +239,8 @@ Resources:
               - "    echo \"❌ Python dependency check failed\" >> /var/log/scraper/run.log\n"
               - "  fi\n"
               - "else\n"
-              - "  echo \"❌ Failed to download scrape.py from S3 after all attempts\" >> /var/log/scraper/run.log\n"
-              - "  echo \"Available S3 objects in scraper-source/:\" >> /var/log/scraper/run.log\n"
-              - "  aws s3 ls s3://$OUTPUT_BUCKET_NAME/scraper-source/ >> /var/log/scraper/run.log 2>&1\n"
+              - "  echo \"❌ Failed to clone scrape.py from GitHub after all attempts\" >> /var/log/scraper/run.log\n"
+              - "  echo \"Check GitHub repository: https://github.com/jpns3334444/scraper\" >> /var/log/scraper/run.log\n"
               - "fi\n"
               - "/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/config.json -s\n"
               - "systemctl enable amazon-ssm-agent\n"

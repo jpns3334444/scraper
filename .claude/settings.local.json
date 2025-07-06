@@ -23,7 +23,9 @@
       "Bash(cat:*)",
       "Bash(aws cloudformation:*)",
       "Bash(ssh:*)",
-      "Bash(aws s3 ls:*)"
+      "Bash(aws s3 ls:*)",
+      "Bash(./deploy.sh)",
+      "Bash(aws ec2 describe-instances:*)"
     ],
     "deny": []
   }
