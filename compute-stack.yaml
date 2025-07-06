@@ -83,7 +83,7 @@ Resources:
               - " --query SecretString --output text 2>/dev/null || echo \"\")\n"
               - "for i in {1..5}; do\n"
               - "  echo \"Attempt $i: Cloning from GitHub...\" >> /var/log/scraper/run.log\n"
-              - "  if [ -n \"$GITHUB_TOKEN\" ]; then\n    GITHUB_URL=\"https://$GITHUB_TOKEN@github.com/jpns3334444/scraper.git\"\n  else\n    GITHUB_URL=\"https://github.com/jpns3334444/scraper.git\"\n  fi\n  if git clone $GITHUB_URL /tmp/scraper-repo; then\n"
+              - "  if [ -n \"$GITHUB_TOKEN\" ]; then\n    GITHUB_URL=\"https://$GITHUB_TOKEN@github.com/jpns3334444/scraper.git\"\n  else\n    GITHUB_URL=\"https://github.com/jpns3334444/scraper.git\"\n  fi\n  if git clone -b master $GITHUB_URL /tmp/scraper-repo; then\n"
               - "    echo \"✅ Successfully cloned from GitHub on attempt $i\" >> /var/log/scraper/run.log\n"
               - "    cp /tmp/scraper-repo/scrape.py /home/ubuntu/scrape.py\n"
               - "    rm -rf /tmp/scraper-repo\n"

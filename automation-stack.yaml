@@ -100,7 +100,7 @@ Resources:
                       DocumentName="AWS-RunShellScript",
                       Parameters={
                           "commands": [
-                              "python3 /home/ubuntu/scrape.py >> /var/log/scraper/run.log 2>&1"
+                              "export OUTPUT_BUCKET=lifull-scrape-tokyo && python3 /home/ubuntu/scrape.py >> /var/log/scraper/run.log 2>&1"
                           ],
                           "executionTimeout": ["3600"]
                       }
