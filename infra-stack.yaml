@@ -1,0 +1,178 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Scraper Infrastructure - IAM Roles, Security Group, SNS"
+
+Parameters:
+  MyIPv4:
+    Type: String
+    Description: Your IPv4 address in CIDR (e.g. 203.0.113.1/32)
+  MyIPv6:
+    Type: String
+    Description: Your IPv6 address in CIDR (e.g. 2400:abcd::1234/128)
+  OutputBucket:
+    Type: String
+    Description: S3 bucket to upload scraper results to
+    Default: "lifull-scrape-tokyo"
+  NotificationEmail:
+    Type: String
+    Default: ""
+    Description: Email address for scraper notifications (optional)
+  NotificationEnabled:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Whether to enable email notifications
+
+Conditions:
+  HasNotificationEmail: !Not [!Equals [!Ref NotificationEmail, ""]]
+  ShouldEnableNotifications: !Equals [!Ref NotificationEnabled, "true"]
+
+Resources:
+  ScraperNotificationTopic:
+    Type: AWS::SNS::Topic
+    Condition: ShouldEnableNotifications
+    Properties:
+      TopicName: scraper-notifications
+      DisplayName: Scraper Job Notifications
+
+  ScraperNotificationSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasNotificationEmail
+    Properties:
+      Protocol: email
+      TopicArn: !Ref ScraperNotificationTopic
+      Endpoint: !Ref NotificationEmail
+
+  ScraperRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: AllowS3Upload
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource:
+                  - !Sub arn:aws:s3:::${OutputBucket}/scraper-output/*
+        - PolicyName: AllowCloudWatchLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+        - PolicyName: AllowSecretsManager
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:github-token*"
+
+  ScraperInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref ScraperRole]
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaSSMSendCommand
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                  - ssm:GetCommandInvocation
+                  - ssm:ListCommandInvocations
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                Resource: "*"
+        - PolicyName: LambdaBasicExecution
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+        - PolicyName: LambdaSNSPublish
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref ScraperNotificationTopic
+
+  ScraperSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow SSH only from your IPs
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MyIPv4
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIpv6: !Ref MyIPv6
+
+Outputs:
+  ScraperRoleArn:
+    Description: "ARN of the IAM role for scraper EC2 instances"
+    Value: !GetAtt ScraperRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-ScraperRoleArn"
+
+  ScraperInstanceProfileName:
+    Description: "Name of the instance profile for scraper EC2 instances"
+    Value: !Ref ScraperInstanceProfile
+    Export:
+      Name: !Sub "${AWS::StackName}-ScraperInstanceProfileName"
+
+  LambdaExecutionRoleArn:
+    Description: "ARN of the IAM role for Lambda functions"
+    Value: !GetAtt LambdaExecutionRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdaExecutionRoleArn"
+
+  ScraperSecurityGroupId:
+    Description: "ID of the security group for scraper EC2 instances"
+    Value: !Ref ScraperSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-ScraperSecurityGroupId"
+
+  ScraperNotificationTopicArn:
+    Description: "ARN of the SNS topic for scraper notifications"
+    Value: !Ref ScraperNotificationTopic
+    Export:
+      Name: !Sub "${AWS::StackName}-ScraperNotificationTopicArn"

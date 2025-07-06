@@ -12,88 +12,96 @@ I'm working on a web scraper project that targets homes.co.jp (Japanese real est
 - Saves results to CSV and uploads to S3
 - Implements structured JSON logging
 
-### 2. **scraper-stack.yaml** - AWS CloudFormation template that creates:
-- EC2 instance (t3.small, Ubuntu 22.04) with scraper code
-- IAM roles with permissions for S3, CloudWatch, Secrets Manager
-- S3 bucket for storing scraped data
-- Lambda function for triggering scraper via SSM
-- EventBridge rule for daily scheduled runs (2 AM JST)
-- SNS notifications for job status
-- CloudWatch logging integration
+## 🏗️ **MODULAR ARCHITECTURE (NEW - Dec 2024)**
 
-### 3. **deploy.sh** - Deployment script that:
-- Retrieves GitHub token from AWS Secrets Manager
-- Validates CloudFormation template
-- Handles stack creation/updates with change sets
-- Streams deployment events in real-time
-- Manages IP whitelisting for SSH access
+The project now uses a **4-stack modular architecture** for efficient testing and deployment:
 
-### 4. **ssm-scraper.sh** - Utility script for SSM session management to EC2 instance
+### **Stack 1: S3 Bucket Stack** (`s3-bucket-stack.yaml`)
+- **Purpose**: Persistent data storage
+- **Contents**: S3 bucket with versioning
+- **Deploy frequency**: Once (rarely changes)
+- **Command**: `aws cloudformation create-stack --stack-name s3-bucket-stack --template-body file://s3-bucket-stack.yaml`
 
-## Current Status
-The project is functional but needs improvements for production use. See the improvement priorities below.
+### **Stack 2: Infrastructure Stack** (`infra-stack.yaml`)  
+- **Purpose**: Core infrastructure that rarely changes
+- **Contents**: IAM roles, security groups, SNS topics
+- **Deploy frequency**: Rarely (only when permissions change)
+- **Exports**: Role ARNs, Security Group IDs for other stacks
+- **Command**: `aws cloudformation deploy --stack-name scraper-infra-stack --template-file infra-stack.yaml`
 
-## Testing Workflow
+### **Stack 3: Compute Stack** (`compute-stack.yaml`) ⚡
+- **Purpose**: EC2 instance only - **FREQUENTLY RECREATED FOR TESTING**
+- **Contents**: Single EC2 instance with UserData script for GitHub clone
+- **Deploy frequency**: **Every code change** (2-3 minutes)
+- **GitHub Integration**: Clones from `master` branch with token from Secrets Manager
+- **Command**: `./deploy-compute.sh --recreate` (fast testing)
 
-### Phase 1: Local Development Testing (15 seconds)
+### **Stack 4: Automation Stack** (`automation-stack.yaml`)
+- **Purpose**: Scheduling and triggering logic
+- **Contents**: Lambda function + EventBridge rule
+- **Deploy frequency**: Only when Lambda logic changes
+- **Features**: Dynamically finds EC2 instances by "MarketScraper" tag (no hardcoded IDs)
+
+## 🚀 **DEPLOYMENT SCRIPTS**
+
+### **deploy-all.sh** - Deploy complete architecture
 ```bash
-# Test locally with limited data (5 listings only)
-python3 scrape.py
-```
-**Expected Output:**
-- 🧪 LOCAL TESTING MODE indicators
-- Processes only 5 listings from 1 page
-- Skips S3 upload
-- Completes in ~15 seconds
-
-### Phase 2: Infrastructure Testing (2-5 minutes)
-
-#### Step 1: Deploy/Update Infrastructure
-```bash
-# Deploy or update CloudFormation stack
-./deploy.sh
+./deploy-all.sh  # Deploys all 4 stacks in sequence
 ```
 
-#### Step 2: Test Lambda Trigger Function
+### **deploy-compute.sh** - Fast testing workflow ⚡
 ```bash
-# Get Lambda function name
-LAMBDA_FUNCTION=$(aws lambda list-functions --query "Functions[?FunctionName=='trigger-scraper'].FunctionName" --output text)
-
-# Test Lambda function manually
-aws lambda invoke \
-  --function-name $LAMBDA_FUNCTION \
-  --payload '{}' \
-  /tmp/lambda-response.json
-
-# Check response
-cat /tmp/lambda-response.json
+./deploy-compute.sh --recreate  # Delete + recreate EC2 in ~3 minutes
 ```
 
-**Expected Lambda Response:**
+### **Legacy Scripts (Deprecated)**
+- ~~`deploy.sh`~~ - Old monolithic deployment (use deploy-all.sh instead)
+- ~~`scraper-stack.yaml`~~ - Old monolithic template (replaced by 4 separate stacks)
+
+## 🎯 **CURRENT STATUS (WORKING)**
+✅ **GitHub Integration Fixed**: EC2 instances successfully pull code from `master` branch  
+✅ **Modular Architecture**: 4-stack split enables fast testing cycles  
+✅ **Dynamic Discovery**: Lambda finds EC2 instances by tag (no hardcoded IDs)  
+✅ **Fast Testing**: Compute stack recreates in ~3 minutes vs ~10 minutes for full monolith
+
+## 🧪 **NEW TESTING WORKFLOW**
+
+### **Phase 1: Local Development Testing (15 seconds)**
+```bash
+python3 scrape.py  # Test locally with limited data (5 listings only)
+```
+
+### **Phase 2: Quick Infrastructure Testing (3 minutes)** ⚡
+```bash
+# Fast compute stack recreation for code changes
+./deploy-compute.sh --recreate
+
+# Test Lambda trigger (finds EC2 automatically by tag)
+aws lambda invoke --function-name trigger-scraper --payload '{}' /tmp/response.json
+cat /tmp/response.json
+```
+
+**Expected Response (Working):**
 ```json
 {
-  "statusCode": 200,
-  "body": "{\"command_id\": \"abc123...\", \"status\": \"Success\", \"duration\": 120.5}"
+  "statusCode": 200, 
+  "body": "{\"command_id\": \"7223d04a-6879-48c2-9d50-43fd2d45f7a3\", \"status\": \"Success\", \"instance_id\": \"i-07557a973d41aa46f\"}"
 }
 ```
 
-#### Step 3: Verify Scraper Execution
+### **Phase 3: Full Architecture Deployment (8-10 minutes)**
 ```bash
-# Check latest SSM command execution
-aws ssm list-command-invocations \
-  --max-items 1 \
-  --query "CommandInvocations[0].[CommandId,Status,StandardOutputContent]" \
-  --output table
+./deploy-all.sh  # Only needed for infrastructure changes
+```
+
+### **Verification Commands**
+```bash
+# Check scraper logs for GitHub integration
+INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=MarketScraper" "Name=instance-state-name,Values=running" --query "Reservations[0].Instances[0].InstanceId" --output text)
+aws ssm send-command --instance-ids $INSTANCE_ID --document-name "AWS-RunShellScript" --parameters 'commands=["tail -30 /var/log/scraper/run.log"]' --region ap-northeast-1
 
 # Check S3 for output files
 aws s3 ls s3://lifull-scrape-tokyo/scraper-output/ --recursive
-
-# Check CloudWatch logs
-aws logs describe-log-streams \
-  --log-group-name scraper-logs \
-  --order-by LastEventTime \
-  --descending \
-  --max-items 1
 ```
 
 ### Testing Checklist

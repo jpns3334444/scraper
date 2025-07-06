@@ -1,0 +1,35 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "S3 Bucket for Scraper Data Storage"
+
+Parameters:
+  BucketName:
+    Type: String
+    Description: Name for the S3 bucket
+    Default: "lifull-scrape-tokyo"
+
+Resources:
+  ScraperDataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Ref BucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+
+Outputs:
+  BucketName:
+    Description: "Name of the S3 bucket for scraper data"
+    Value: !Ref ScraperDataBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-BucketName"
+  
+  BucketArn:
+    Description: "ARN of the S3 bucket for scraper data"
+    Value: !GetAtt ScraperDataBucket.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-BucketArn"
