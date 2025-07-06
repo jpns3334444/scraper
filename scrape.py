@@ -239,7 +239,14 @@ def log_structured_message(level, message, **kwargs):
 def main():
     """Main scraper function using HTTP with session flow"""
     job_start_time = datetime.now()
-    log_structured_message("INFO", "Starting HTTP scraper job", start_time=job_start_time.isoformat())
+    
+    # Detect local testing mode
+    is_local_testing = not os.environ.get("OUTPUT_BUCKET")
+    if is_local_testing:
+        log_structured_message("INFO", "LOCAL TESTING MODE: Limited to 5 listings", start_time=job_start_time.isoformat())
+        print("🧪 LOCAL TESTING MODE - Processing only 5 listings for quick testing")
+    else:
+        log_structured_message("INFO", "Starting HTTP scraper job", start_time=job_start_time.isoformat())
     
     error_count = 0
     success_count = 0
@@ -248,7 +255,7 @@ def main():
     try:
         # Configuration
         BASE_URL = "https://www.homes.co.jp/mansion/chuko/tokyo/chofu-city/list"
-        max_pages = 10
+        max_pages = 1 if is_local_testing else 10
         
         # Step 1: Collect all listing URLs
         print("\n🔗 Collecting all listing URLs...")
@@ -256,6 +263,11 @@ def main():
         
         if not all_urls:
             raise Exception("No listing URLs found")
+        
+        # Limit URLs for local testing
+        if is_local_testing:
+            all_urls = all_urls[:5]  # Only process first 5 listings
+            print(f"🧪 LIMITED TO {len(all_urls)} LISTINGS FOR LOCAL TESTING")
         
         log_structured_message("INFO", "URL collection completed", total_urls=len(all_urls))
         
@@ -311,9 +323,12 @@ def main():
         output_bucket = os.environ.get("OUTPUT_BUCKET")
         s3_key = None
         
-        if output_bucket:
+        if output_bucket and not is_local_testing:
             s3_key = f"scraper-output/{filename}"
             s3_upload_success = upload_to_s3(local_path, output_bucket, s3_key)
+        elif is_local_testing:
+            print("🧪 LOCAL TESTING: Skipping S3 upload")
+            log_structured_message("INFO", "LOCAL TESTING: S3 upload skipped")
         else:
             log_structured_message("WARNING", "OUTPUT_BUCKET environment variable not set")
         
@@ -326,6 +341,7 @@ def main():
             "end_time": job_end_time.isoformat(),
             "duration_seconds": duration,
             "scraper_type": "HTTP_SESSION_FLOW",
+            "testing_mode": "LOCAL" if is_local_testing else "PRODUCTION",
             "total_urls_found": len(all_urls),
             "successful_scrapes": success_count,
             "failed_scrapes": error_count,

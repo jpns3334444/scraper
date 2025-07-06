@@ -9,6 +9,22 @@ OUTPUT_BUCKET="lifull-scrape-tokyo"
 REGION="ap-northeast-1"
 NOTIFICATION_EMAIL="${NOTIFICATION_EMAIL:-}"
 NOTIFICATION_ENABLED="${NOTIFICATION_ENABLED:-true}"
+# Get GitHub token from AWS Secrets Manager
+SECRET_NAME="github-token"
+echo "🔐 Retrieving GitHub token from AWS Secrets Manager..."
+GITHUB_TOKEN=$(aws secretsmanager get-secret-value \
+  --secret-id "$SECRET_NAME" \
+  --region "$REGION" \
+  --query SecretString \
+  --output text 2>/dev/null || echo "")
+
+if [ -z "$GITHUB_TOKEN" ]; then
+  echo "⚠️  GitHub token not found in AWS Secrets Manager."
+  echo "Please create a secret named '$SECRET_NAME' with your GitHub token:"
+  echo "aws secretsmanager create-secret --name '$SECRET_NAME' --secret-string 'ghp_your_token_here' --region '$REGION'"
+  echo "Then run this script again."
+  exit 1
+fi
 
 # === Dynamically fetch public IPs ===
 MY_IPV4="$(curl -s -4 ifconfig.me)/32"
@@ -68,9 +84,10 @@ if ! aws cloudformation create-change-set \
       ParameterKey=MyIPv4,ParameterValue="$MY_IPV4" \
       ParameterKey=MyIPv6,ParameterValue="$MY_IPV6" \
       ParameterKey=OutputBucket,ParameterValue="$OUTPUT_BUCKET" \
-      ParameterKey=CreateBucket,ParameterValue=true \
+      ParameterKey=CreateBucket,ParameterValue=false \
       ParameterKey=NotificationEmail,ParameterValue="$NOTIFICATION_EMAIL" \
       ParameterKey=NotificationEnabled,ParameterValue="$NOTIFICATION_ENABLED" \
+      ParameterKey=GitHubToken,ParameterValue="$GITHUB_TOKEN" \
   --capabilities CAPABILITY_NAMED_IAM \
   --region "$REGION"; then
     echo "❌ Failed to create change set."
