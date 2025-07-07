@@ -13,14 +13,36 @@ Parameters:
     Type: String
     Description: Name of the infrastructure stack to import from
     Default: "scraper-infra-stack"
+  InstanceType:
+    Type: String
+    Description: EC2 instance type
+    Default: t3.small
+    AllowedValues:
+      - t3.micro
+      - t3.small
+      - t3.medium
+      - t3.large
+
+Mappings:
+  RegionMap:
+    us-east-1:
+      AMI: ami-0866a3c8686eaeeba # Ubuntu 22.04 LTS
+    us-west-2:
+      AMI: ami-0866a3c8686eaeeba # Ubuntu 22.04 LTS
+    ap-northeast-1:
+      AMI: ami-09013b9396188007c # Ubuntu 22.04 LTS
+    ap-southeast-1:
+      AMI: ami-047126e50991d067b # Ubuntu 22.04 LTS
+    eu-west-1:
+      AMI: ami-0866a3c8686eaeeba # Ubuntu 22.04 LTS
 
 Resources:
   ScraperInstance:
     Type: AWS::EC2::Instance
     Properties:
-      InstanceType: t3.small
+      InstanceType: !Ref InstanceType
       KeyName: !Ref KeyName
-      ImageId: ami-09013b9396188007c # Ubuntu 22.04 LTS
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AMI]
       IamInstanceProfile: 
         Fn::ImportValue: !Sub "${InfraStackName}-ScraperInstanceProfileName"
       SecurityGroupIds:
@@ -40,7 +62,6 @@ Resources:
               - "echo \"🚀 Starting EC2 initialization with GitHub at $(date)\" \n"
               - "apt-get update -y\n"
               - "apt-get install -y python3-pip unzip wget curl gnupg software-properties-common git awscli -y\n"
-              - "pip3 install pandas boto3 beautifulsoup4 requests\n"
               - "echo 'export OUTPUT_BUCKET=\""
               - !Ref OutputBucket
               - "\"' >> /etc/environment\n"
@@ -86,6 +107,8 @@ Resources:
               - "  if [ -n \"$GITHUB_TOKEN\" ]; then\n    GITHUB_URL=\"https://$GITHUB_TOKEN@github.com/jpns3334444/scraper.git\"\n  else\n    GITHUB_URL=\"https://github.com/jpns3334444/scraper.git\"\n  fi\n  if git clone -b master $GITHUB_URL /tmp/scraper-repo; then\n"
               - "    echo \"✅ Successfully cloned from GitHub on attempt $i\" >> /var/log/scraper/run.log\n"
               - "    cp /tmp/scraper-repo/scrape.py /home/ubuntu/scrape.py\n"
+              - "    cp /tmp/scraper-repo/requirements.txt /home/ubuntu/requirements.txt\n"
+              - "    pip3 install -r /home/ubuntu/requirements.txt\n"
               - "    rm -rf /tmp/scraper-repo\n"
               - "    break\n"
               - "  else\n"

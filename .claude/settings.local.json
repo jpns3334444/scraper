@@ -25,7 +25,8 @@
       "Bash(ssh:*)",
       "Bash(aws s3 ls:*)",
       "Bash(./deploy.sh)",
-      "Bash(aws ec2 describe-instances:*)"
+      "Bash(aws ec2 describe-instances:*)",
+      "Bash(find:*)"
     ],
     "deny": []
   }

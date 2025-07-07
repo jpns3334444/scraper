@@ -1,0 +1,343 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Stealth Mode Infrastructure - DynamoDB, Step Functions, and Enhanced EventBridge"
+
+Parameters:
+  InfraStackName:
+    Type: String
+    Description: Name of the infrastructure stack to import from
+    Default: "scraper-infra-stack"
+
+Resources:
+  # DynamoDB table for session state management
+  ScraperSessionStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: scraper-session-state
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: session_id
+          AttributeType: S
+        - AttributeName: date_key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: session_id
+          KeyType: HASH
+        - AttributeName: date_key
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: date-index
+          KeySchema:
+            - AttributeName: date_key
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Purpose
+          Value: ScraperStealthMode
+        - Key: Component
+          Value: SessionState
+
+  # Step Functions State Machine for orchestration
+  StealthScraperStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: stealth-scraper-orchestrator
+      RoleArn: !GetAtt StepFunctionsExecutionRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Stealth scraper orchestration with behavioral mimicry",
+          "StartAt": "InitializeSession",
+          "States": {
+            "InitializeSession": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${InitializeSessionFunction}",
+                "Payload.$": "$"
+              },
+              "ResultPath": "$.sessionData",
+              "Next": "CheckSessionState"
+            },
+            "CheckSessionState": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.sessionData.Payload.should_proceed",
+                  "BooleanEquals": true,
+                  "Next": "TriggerScraping"
+                }
+              ],
+              "Default": "SessionSkipped"
+            },
+            "TriggerScraping": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${ScraperTriggerFunction}",
+                "Payload.$": "$"
+              },
+              "ResultPath": "$.scraperResult",
+              "Next": "UpdateSessionState"
+            },
+            "UpdateSessionState": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${UpdateSessionFunction}",
+                "Payload.$": "$"
+              },
+              "End": true
+            },
+            "SessionSkipped": {
+              "Type": "Pass",
+              "Result": "Session skipped - already completed for today",
+              "End": true
+            }
+          }
+        }
+
+  # IAM Role for Step Functions
+  StepFunctionsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StepFunctionsExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt InitializeSessionFunction.Arn
+                  - !GetAtt UpdateSessionFunction.Arn
+                  - !Sub 
+                    - "${LambdaArn}"
+                    - LambdaArn: 
+                        Fn::ImportValue: !Sub "${InfraStackName}-ScraperLambdaArn"
+
+  # Lambda function for session initialization
+  InitializeSessionFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: stealth-initialize-session
+      Handler: index.lambda_handler
+      Role: !GetAtt SessionLambdaRole.Arn
+      Runtime: python3.11
+      Timeout: 60
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref ScraperSessionStateTable
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import os
+          import time
+          from datetime import datetime, timezone
+          from decimal import Decimal
+
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table(os.environ['DYNAMODB_TABLE'])
+
+          def lambda_handler(event, context):
+              """Initialize session and check if scraping should proceed"""
+              
+              session_id = event.get('session_id', f"session-{int(time.time())}")
+              date_key = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+              max_properties = event.get('max_properties', 8)
+              
+              try:
+                  # Check if session already completed today
+                  response = table.get_item(
+                      Key={
+                          'session_id': session_id,
+                          'date_key': date_key
+                      }
+                  )
+                  
+                  if 'Item' in response:
+                      item = response['Item']
+                      if item.get('status') == 'completed':
+                          return {
+                              'session_id': session_id,
+                              'date_key': date_key,
+                              'should_proceed': False,
+                              'reason': 'Session already completed today',
+                              'properties_scraped': int(item.get('properties_scraped', 0))
+                          }
+                  
+                  # Initialize or update session
+                  ttl = int(time.time()) + (7 * 24 * 60 * 60)  # 7 days TTL
+                  
+                  session_data = {
+                      'session_id': session_id,
+                      'date_key': date_key,
+                      'status': 'initialized',
+                      'max_properties': max_properties,
+                      'properties_scraped': 0,
+                      'start_time': datetime.now(timezone.utc).isoformat(),
+                      'last_updated': datetime.now(timezone.utc).isoformat(),
+                      'ttl': ttl
+                  }
+                  
+                  table.put_item(Item=session_data)
+                  
+                  return {
+                      'session_id': session_id,
+                      'date_key': date_key,
+                      'should_proceed': True,
+                      'max_properties': max_properties,
+                      'session_data': session_data
+                  }
+                  
+              except Exception as e:
+                  print(f"Error initializing session: {str(e)}")
+                  return {
+                      'session_id': session_id,
+                      'date_key': date_key,
+                      'should_proceed': False,
+                      'error': str(e)
+                  }
+
+  # Lambda function for session state updates
+  UpdateSessionFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: stealth-update-session
+      Handler: index.lambda_handler
+      Role: !GetAtt SessionLambdaRole.Arn
+      Runtime: python3.11
+      Timeout: 60
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref ScraperSessionStateTable
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import os
+          from datetime import datetime, timezone
+
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table(os.environ['DYNAMODB_TABLE'])
+
+          def lambda_handler(event, context):
+              """Update session state after scraping completion"""
+              
+              session_data = event.get('sessionData', {}).get('Payload', {})
+              scraper_result = event.get('scraperResult', {}).get('Payload', {})
+              
+              session_id = session_data.get('session_id')
+              date_key = session_data.get('date_key')
+              
+              if not session_id or not date_key:
+                  return {'error': 'Missing session_id or date_key'}
+              
+              try:
+                  # Determine final status based on scraper result
+                  status = 'completed' if scraper_result.get('statusCode') == 200 else 'failed'
+                  
+                  # Extract properties count from scraper result
+                  body = json.loads(scraper_result.get('body', '{}'))
+                  properties_scraped = body.get('properties_scraped', 0)
+                  
+                  # Update session
+                  table.update_item(
+                      Key={
+                          'session_id': session_id,
+                          'date_key': date_key
+                      },
+                      UpdateExpression='SET #status = :status, properties_scraped = :props, end_time = :end_time, last_updated = :updated, scraper_result = :result',
+                      ExpressionAttributeNames={
+                          '#status': 'status'
+                      },
+                      ExpressionAttributeValues={
+                          ':status': status,
+                          ':props': properties_scraped,
+                          ':end_time': datetime.now(timezone.utc).isoformat(),
+                          ':updated': datetime.now(timezone.utc).isoformat(),
+                          ':result': scraper_result
+                      }
+                  )
+                  
+                  return {
+                      'session_id': session_id,
+                      'status': status,
+                      'properties_scraped': properties_scraped,
+                      'updated': True
+                  }
+                  
+              except Exception as e:
+                  print(f"Error updating session: {str(e)}")
+                  return {'error': str(e)}
+
+  # IAM Role for session management Lambda functions
+  SessionLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: 
+                  - !GetAtt ScraperSessionStateTable.Arn
+                  - !Sub "${ScraperSessionStateTable.Arn}/index/*"
+
+Outputs:
+  SessionStateTableName:
+    Description: "DynamoDB table name for session state"
+    Value: !Ref ScraperSessionStateTable
+    Export:
+      Name: !Sub "${AWS::StackName}-SessionStateTableName"
+
+  SessionStateTableArn:
+    Description: "DynamoDB table ARN for session state"
+    Value: !GetAtt ScraperSessionStateTable.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-SessionStateTableArn"
+
+  StepFunctionsStateMachineArn:
+    Description: "Step Functions state machine ARN"
+    Value: !Ref StealthScraperStateMachine
+    Export:
+      Name: !Sub "${AWS::StackName}-StepFunctionsArn"
+
+  InitializeSessionFunctionArn:
+    Description: "Initialize session Lambda function ARN"
+    Value: !GetAtt InitializeSessionFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-InitializeSessionFunctionArn"
+
+  UpdateSessionFunctionArn:
+    Description: "Update session Lambda function ARN"
+    Value: !GetAtt UpdateSessionFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-UpdateSessionFunctionArn"
