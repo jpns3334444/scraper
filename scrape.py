@@ -18,6 +18,10 @@ import threading
 from queue import Queue, Empty
 from enum import Enum
 from typing import Optional, Dict, Any, List
+import urllib.parse
+from PIL import Image
+import io
+import base64
 
 # Enhanced browser profiles for stealth mode
 BROWSER_PROFILES = [
@@ -299,9 +303,14 @@ def create_stealth_session(stealth_mode=False):
             
         session.headers.update(base_headers)
         
-        log_structured_message("INFO", "Stealth session created", 
-                             profile=profile["name"], 
-                             user_agent=base_headers["User-Agent"][:50] + "...")
+        # Log session creation (function defined later in file)
+        try:
+            log_structured_message("INFO", "Stealth session created", 
+                                 profile=profile["name"], 
+                                 user_agent=base_headers["User-Agent"][:50] + "...")
+        except NameError:
+            # Function not yet defined during import, skip logging
+            pass
     else:
         # Legacy mode for compatibility
         headers = {
@@ -964,10 +973,74 @@ def extract_property_details_with_circuit_breaker(property_url, referer_url, ret
             session_pool.return_session(session)
 
 
+def extract_property_images(soup, session, base_url):
+    """Extract property images from the page"""
+    images = []
+    image_urls = set()
+    
+    try:
+        # Look for common image selectors on homes.co.jp
+        selectors = [
+            'img[src*="photo"]',
+            '.photo img',
+            '.gallery img',
+            '.image-gallery img',
+            'img[alt*="写真"]',
+            'img[alt*="画像"]',
+            '.property-image img',
+            'img[src*="mansion"]'
+        ]
+        
+        for selector in selectors:
+            for img in soup.select(selector):
+                src = img.get('src') or img.get('data-src') or img.get('data-lazy-src')
+                if src:
+                    # Convert relative URLs to absolute
+                    if src.startswith('//'):
+                        src = 'https:' + src
+                    elif src.startswith('/'):
+                        src = base_url + src
+                    elif not src.startswith('http'):
+                        src = base_url + '/' + src.lstrip('/')
+                    
+                    # Filter out small images and icons
+                    if any(exclude in src.lower() for exclude in ['icon', 'logo', 'btn', 'arrow', 'small']):
+                        continue
+                    
+                    image_urls.add(src)
+        
+        # Download and encode images
+        for img_url in list(image_urls)[:5]:  # Limit to first 5 images
+            try:
+                img_response = session.get(img_url, timeout=10)
+                if img_response.status_code == 200 and 'image' in img_response.headers.get('content-type', ''):
+                    # Convert to base64 for storage
+                    img_base64 = base64.b64encode(img_response.content).decode('utf-8')
+                    images.append({
+                        'url': img_url,
+                        'data': img_base64,
+                        'content_type': img_response.headers.get('content-type', 'image/jpeg')
+                    })
+                    
+                    # Small delay between image downloads
+                    time.sleep(random.uniform(0.5, 1.5))
+                    
+            except Exception as e:
+                log_structured_message("WARNING", "Failed to download image", 
+                                     image_url=img_url, error=str(e))
+                continue
+        
+        return images
+        
+    except Exception as e:
+        log_structured_message("ERROR", "Image extraction failed", error=str(e))
+        return []
+
 def _extract_property_details_core(session, property_url, referer_url, retries=3):
-    """Core property extraction logic with enhanced error handling and stealth timing"""
+    """Core property extraction logic with enhanced error handling, stealth timing, and image capture"""
     last_error = None
     stealth_mode = os.environ.get("STEALTH_MODE", "false").lower() == "true"
+    capture_images = os.environ.get("CAPTURE_IMAGES", "true").lower() == "true"
     
     for attempt in range(retries + 1):
         try:
@@ -1027,6 +1100,19 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
                             if key and value and len(key) < 30:  # Reasonable key length
                                 data[key] = value
                     break
+            
+            # Extract property images if enabled
+            if capture_images:
+                try:
+                    images = extract_property_images(soup, session, "https://www.homes.co.jp")
+                    if images:
+                        data["images"] = images
+                        data["image_count"] = len(images)
+                        log_structured_message("INFO", "Images extracted", 
+                                             url=property_url, image_count=len(images))
+                except Exception as e:
+                    log_structured_message("WARNING", "Image extraction failed", 
+                                         url=property_url, error=str(e))
             
             # Log successful extraction
             log_structured_message("INFO", "Property details extracted successfully", 
