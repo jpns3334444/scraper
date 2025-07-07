@@ -1,0 +1,288 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'AI layer for daily real estate analysis - Lambda functions, Step Functions, and EventBridge'
+
+Parameters:
+  OutputBucket:
+    Type: String
+    Default: re-stock
+    Description: S3 bucket name for storing outputs
+  OpenAIAPIKey:
+    Type: String
+    NoEcho: true
+    Description: OpenAI API key for GPT-4.1 requests
+  SlackHookURL:
+    Type: String
+    NoEcho: true
+    Description: Slack webhook URL for notifications
+  EmailFrom:
+    Type: String
+    Description: From email address for SES notifications
+  EmailTo:
+    Type: String
+    Description: To email address for reports
+
+Globals:
+  Function:
+    Timeout: 900
+    MemorySize: 1024
+    Runtime: python3.12
+    Environment:
+      Variables:
+        OUTPUT_BUCKET: !Ref OutputBucket
+        OPENAI_API_KEY: !Ref OpenAIAPIKeyParameter
+        SLACK_HOOK_URL: !Ref SlackHookURLParameter
+
+Resources:
+  # SSM Parameters for secrets
+  OpenAIAPIKeyParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/ai-scraper/${AWS::StackName}/openai-api-key'
+      Type: SecureString
+      Value: !Ref OpenAIAPIKey
+      Description: OpenAI API key for GPT-4.1
+
+  SlackHookURLParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/ai-scraper/${AWS::StackName}/slack-hook-url'
+      Type: SecureString
+      Value: !Ref SlackHookURL
+      Description: Slack webhook URL
+
+  # IAM Role for Lambda functions
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${OutputBucket}'
+                  - !Sub 'arn:aws:s3:::${OutputBucket}/*'
+        - PolicyName: SSMAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Ref OpenAIAPIKeyParameter
+                  - !Ref SlackHookURLParameter
+        - PolicyName: SESAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                Resource: '*'
+
+  # Step Functions execution role
+  StepFunctionsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaInvokePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt ETLFunction.Arn
+                  - !GetAtt PromptBuilderFunction.Arn
+                  - !GetAtt LLMBatchFunction.Arn
+                  - !GetAtt ReportSenderFunction.Arn
+
+  # Lambda Functions
+  ETLFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-etl'
+      PackageType: Image
+      ImageUri: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/ai-scraper-etl:latest'
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          FUNCTION_NAME: etl
+
+  PromptBuilderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-prompt-builder'
+      PackageType: Image
+      ImageUri: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/ai-scraper-prompt-builder:latest'
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          FUNCTION_NAME: prompt_builder
+
+  LLMBatchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-llm-batch'
+      PackageType: Image
+      ImageUri: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/ai-scraper-llm-batch:latest'
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 3600
+      Environment:
+        Variables:
+          FUNCTION_NAME: llm_batch
+
+  ReportSenderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-report-sender'
+      PackageType: Image
+      ImageUri: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/ai-scraper-report-sender:latest'
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          FUNCTION_NAME: report_sender
+          EMAIL_FROM: !Ref EmailFrom
+          EMAIL_TO: !Ref EmailTo
+
+  # Step Functions State Machine
+  AIAnalysisStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${AWS::StackName}-ai-analysis'
+      RoleArn: !GetAtt StepFunctionsExecutionRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "AI analysis workflow for real estate listings",
+          "StartAt": "ETL",
+          "States": {
+            "ETL": {
+              "Type": "Task",
+              "Resource": "${ETLFunction.Arn}",
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 30,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "Next": "PromptBuilder"
+            },
+            "PromptBuilder": {
+              "Type": "Task",
+              "Resource": "${PromptBuilderFunction.Arn}",
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 30,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "Next": "LLMBatch"
+            },
+            "LLMBatch": {
+              "Type": "Task",
+              "Resource": "${LLMBatchFunction.Arn}",
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 60,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "Next": "ReportSender"
+            },
+            "ReportSender": {
+              "Type": "Task",
+              "Resource": "${ReportSenderFunction.Arn}",
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 30,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "End": true
+            }
+          }
+        }
+
+  # EventBridge rule for daily execution
+  DailyAnalysisRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${AWS::StackName}-daily-analysis'
+      Description: 'Trigger AI analysis daily at 18:00 UTC (03:00 JST)'
+      ScheduleExpression: 'cron(0 18 * * ? *)'
+      State: ENABLED
+      Targets:
+        - Arn: !Ref AIAnalysisStateMachine
+          Id: 'AIAnalysisTarget'
+          RoleArn: !GetAtt EventBridgeExecutionRole.Arn
+          Input: !Sub |
+            {
+              "date": "$$.State.EnteredTime"
+            }
+
+  # EventBridge execution role
+  EventBridgeExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StepFunctionsExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource: !Ref AIAnalysisStateMachine
+
+Outputs:
+  StateMachineArn:
+    Description: 'ARN of the Step Functions state machine'
+    Value: !Ref AIAnalysisStateMachine
+    Export:
+      Name: !Sub '${AWS::StackName}-StateMachineArn'
+  
+  ETLFunctionArn:
+    Description: 'ARN of the ETL Lambda function'
+    Value: !GetAtt ETLFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ETLFunctionArn'

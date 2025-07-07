@@ -1,0 +1,198 @@
+{
+  "Comment": "AI analysis workflow for real estate listings - ETL → PromptBuilder → LLMBatch → ReportSender",
+  "StartAt": "ETL",
+  "States": {
+    "ETL": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${ETLFunctionArn}",
+        "Payload": {
+          "date.$": "$.date"
+        }
+      },
+      "ResultPath": "$.etl_result",
+      "ResultSelector": {
+        "date.$": "$.Payload.date",
+        "bucket.$": "$.Payload.bucket",
+        "jsonl_key.$": "$.Payload.jsonl_key",
+        "listings_count.$": "$.Payload.listings_count",
+        "processed_data.$": "$.Payload.processed_data"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed",
+            "States.ExecutionLimitExceeded",
+            "States.Runtime"
+          ],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "ETLFailed",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "PromptBuilder"
+    },
+    "PromptBuilder": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${PromptBuilderFunctionArn}",
+        "Payload": {
+          "date.$": "$.etl_result.date",
+          "bucket.$": "$.etl_result.bucket",
+          "jsonl_key.$": "$.etl_result.jsonl_key"
+        }
+      },
+      "ResultPath": "$.prompt_result",
+      "ResultSelector": {
+        "date.$": "$.Payload.date",
+        "bucket.$": "$.Payload.bucket",
+        "prompt_key.$": "$.Payload.prompt_key",
+        "listings_count.$": "$.Payload.listings_count",
+        "total_images.$": "$.Payload.total_images"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed",
+            "States.ExecutionLimitExceeded",
+            "States.Runtime"
+          ],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "PromptBuilderFailed",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "LLMBatch"
+    },
+    "LLMBatch": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${LLMBatchFunctionArn}",
+        "Payload": {
+          "date.$": "$.prompt_result.date",
+          "bucket.$": "$.prompt_result.bucket",
+          "prompt_key.$": "$.prompt_result.prompt_key"
+        }
+      },
+      "ResultPath": "$.llm_result",
+      "ResultSelector": {
+        "date.$": "$.Payload.date",
+        "bucket.$": "$.Payload.bucket",
+        "result_key.$": "$.Payload.result_key",
+        "batch_id.$": "$.Payload.batch_id",
+        "batch_result.$": "$.Payload.batch_result"
+      },
+      "TimeoutSeconds": 3600,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed",
+            "States.ExecutionLimitExceeded"
+          ],
+          "IntervalSeconds": 60,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        },
+        {
+          "ErrorEquals": [
+            "States.Runtime"
+          ],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 1,
+          "BackoffRate": 1.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "LLMBatchFailed",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "ReportSender"
+    },
+    "ReportSender": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${ReportSenderFunctionArn}",
+        "Payload": {
+          "date.$": "$.llm_result.date",
+          "bucket.$": "$.llm_result.bucket",
+          "result_key.$": "$.llm_result.result_key",
+          "batch_result.$": "$.llm_result.batch_result"
+        }
+      },
+      "ResultPath": "$.report_result",
+      "ResultSelector": {
+        "date.$": "$.Payload.date",
+        "bucket.$": "$.Payload.bucket",
+        "report_key.$": "$.Payload.report_key",
+        "top_picks_count.$": "$.Payload.top_picks_count",
+        "slack_sent.$": "$.Payload.slack_sent",
+        "email_sent.$": "$.Payload.email_sent"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed",
+            "States.ExecutionLimitExceeded",
+            "States.Runtime"
+          ],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "ReportSenderFailed",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "Success"
+    },
+    "Success": {
+      "Type": "Succeed",
+      "Comment": "AI analysis workflow completed successfully"
+    },
+    "ETLFailed": {
+      "Type": "Fail",
+      "Cause": "ETL step failed",
+      "Error": "ETLError"
+    },
+    "PromptBuilderFailed": {
+      "Type": "Fail",
+      "Cause": "Prompt builder step failed",
+      "Error": "PromptBuilderError"
+    },
+    "LLMBatchFailed": {
+      "Type": "Fail",
+      "Cause": "LLM batch processing step failed",
+      "Error": "LLMBatchError"
+    },
+    "ReportSenderFailed": {
+      "Type": "Fail",
+      "Cause": "Report sender step failed",
+      "Error": "ReportSenderError"
+    }
+  }
+}
