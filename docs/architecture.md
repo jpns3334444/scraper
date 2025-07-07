@@ -1,21 +1,31 @@
-# AI Real Estate Analysis - Architecture Documentation
+# Tokyo Real Estate Analysis - Complete System Architecture
 
 ## Overview
 
-The AI Real Estate Analysis system is a serverless, event-driven architecture that processes daily real estate listings from Tokyo and generates investment recommendations using GPT-4.1 vision capabilities.
+The Tokyo Real Estate Analysis system is a complete pipeline combining web scraping and AI-powered investment analysis. It consists of two complementary subsystems:
 
-## Architecture Diagram
+1. **Data Collection System**: EC2-based web scraper that collects daily property data
+2. **AI Analysis System**: Serverless AI pipeline that processes the data and generates investment reports
+
+This document focuses on the AI Analysis subsystem architecture. For scraper system details, see `/scraper/README.md`.
+
+## Complete System Architecture
 
 ```mermaid
 graph TB
-    subgraph "Daily Schedule"
-        EB[EventBridge Rule<br/>cron: 0 18 * * ? *<br/>03:00 JST]
+    subgraph "Data Collection System (EC2)"
+        WEB[Real Estate Websites] --> SCRAPER[Web Scraper<br/>scrape.py]
+        SCRAPER --> S3[(S3 Bucket<br/>re-stock)]
+        CRON1[Daily Cron] --> SCRAPER
     end
     
-    subgraph "Existing Infrastructure"
-        S3[(S3 Bucket<br/>re-stock)]
-        CSV[Daily CSV<br/>raw/YYYY-MM-DD/listings.csv]
-        IMG[Property Images<br/>raw/YYYY-MM-DD/images/*.jpg]
+    subgraph "Data Storage"
+        S3 --> CSV[Daily CSV<br/>raw/YYYY-MM-DD/listings.csv]
+        S3 --> IMG[Property Images<br/>raw/YYYY-MM-DD/images/*.jpg]
+    end
+    
+    subgraph "Daily AI Analysis Schedule"
+        EB[EventBridge Rule<br/>cron: 0 18 * * ? *<br/>03:00 JST]
     end
     
     subgraph "AI Analysis Workflow"
