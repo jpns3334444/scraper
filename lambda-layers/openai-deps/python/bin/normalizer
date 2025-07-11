@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/var/lang/bin/python3.12
 # -*- coding: utf-8 -*-
 import re
 import sys

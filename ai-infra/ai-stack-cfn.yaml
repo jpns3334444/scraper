@@ -31,7 +31,7 @@ Resources:
         S3Bucket: !Ref DeploymentBucket
         S3Key: layers/python-deps.zip
       CompatibleRuntimes:
-        - python3.11
+        - python3.12
 
   OpenAIDepsLayer:
     Type: AWS::Lambda::LayerVersion
@@ -42,7 +42,7 @@ Resources:
         S3Bucket: !Ref DeploymentBucket
         S3Key: layers/openai-deps.zip
       CompatibleRuntimes:
-        - python3.11
+        - python3.12
 
   # IAM Role for Lambda functions
   LambdaExecutionRole:
@@ -119,7 +119,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub '${AWS::StackName}-etl'
-      Runtime: python3.11
+      Runtime: python3.12
       Handler: app.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
@@ -139,7 +139,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub '${AWS::StackName}-prompt-builder'
-      Runtime: python3.11
+      Runtime: python3.12
       Handler: app.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
@@ -159,7 +159,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub '${AWS::StackName}-llm-batch'
-      Runtime: python3.11
+      Runtime: python3.12
       Handler: app.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
@@ -180,7 +180,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub '${AWS::StackName}-report-sender'
-      Runtime: python3.11
+      Runtime: python3.12
       Handler: app.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:

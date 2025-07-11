@@ -1,0 +1,21 @@
+# Python dependencies for AI Real Estate Analysis Lambda functions
+# Built for Python 3.13 using official AWS Lambda base image
+
+# Core data processing - latest stable versions
+pandas>=2.2.0,<2.3.0
+numpy>=1.26.0,<2.0.0
+
+# AWS SDK - latest
+boto3
+
+# OpenAI API - latest stable
+openai>=1.50.0
+
+# Timezone handling - latest
+pytz
+
+# HTTP requests - latest stable
+requests>=2.32.0
+
+# JSON logging - latest
+python-json-logger>=2.0.0

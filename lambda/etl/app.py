@@ -79,7 +79,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
 def process_listings(df: pd.DataFrame, bucket: str, date_str: str) -> List[Dict[str, Any]]:
     """
-    Process listings dataframe and add computed features.
+    Simplified processing - just handle images and pass raw data to OpenAI.
     
     Args:
         df: Input dataframe
@@ -87,15 +87,36 @@ def process_listings(df: pd.DataFrame, bucket: str, date_str: str) -> List[Dict[
         date_str: Processing date string
         
     Returns:
-        List of processed listing dictionaries
+        List of processed listing dictionaries with raw data preserved
     """
     processed = []
     
     for _, row in df.iterrows():
         try:
-            listing = process_single_listing(row, bucket, date_str)
-            if listing:
-                processed.append(listing)
+            # Convert row to dict, keeping all original fields
+            listing = row.to_dict()
+            
+            # Only process images if present
+            if 'photo_filenames' in listing and listing['photo_filenames']:
+                image_urls = process_and_upload_images(listing['photo_filenames'], bucket, date_str, listing.get('id', 'unknown'))
+                listing['uploaded_image_urls'] = image_urls
+                
+                # Extract interior photos for AI analysis
+                listing['interior_photos'] = extract_interior_photos(image_urls)
+            else:
+                listing['uploaded_image_urls'] = []
+                listing['interior_photos'] = []
+            
+            # Add minimal metadata
+            listing['processed_date'] = date_str
+            listing['source'] = 'homes_scraper'
+            
+            # Only skip if completely empty or missing ID
+            if not str(listing.get('id', '')).strip():
+                continue
+                
+            processed.append(listing)
+            
         except Exception as e:
             logger.warning(f"Failed to process listing {row.get('id', 'unknown')}: {e}")
             continue
@@ -103,99 +124,57 @@ def process_listings(df: pd.DataFrame, bucket: str, date_str: str) -> List[Dict[
     return processed
 
 
-def process_single_listing(row: pd.Series, bucket: str, date_str: str) -> Optional[Dict[str, Any]]:
+def process_and_upload_images(photo_filenames: str, bucket: str, date_str: str, listing_id: str) -> List[str]:
     """
-    Process a single listing row.
+    Process image filenames and create S3 URLs. In a real implementation, this would
+    handle base64 image extraction and upload to S3.
     
     Args:
-        row: Pandas series representing one listing
+        photo_filenames: Pipe-separated photo filenames or base64 image data
         bucket: S3 bucket name
         date_str: Processing date string
+        listing_id: Listing identifier for image organization
         
     Returns:
-        Processed listing dictionary or None if invalid
+        List of S3 URLs for uploaded images
     """
-    try:
-        # Extract basic fields
-        listing_id = str(row.get('id', ''))
-        headline = str(row.get('headline', ''))
-        price_yen = pd.to_numeric(row.get('price_yen', 0), errors='coerce')
-        area_m2 = pd.to_numeric(row.get('area_m2', 0), errors='coerce')
-        year_built = pd.to_numeric(row.get('year_built', 0), errors='coerce')
-        walk_mins_station = pd.to_numeric(row.get('walk_mins_station', 0), errors='coerce')
-        ward = str(row.get('ward', ''))
-        photo_filenames = str(row.get('photo_filenames', ''))
-        
-        # Skip if missing critical data
-        if not listing_id or price_yen <= 0 or area_m2 <= 0:
-            return None
-        
-        # Compute derived features
-        price_per_m2 = price_yen / area_m2 if area_m2 > 0 else 0
-        current_year = datetime.now().year
-        age_years = current_year - year_built if year_built > 0 else 0
-        
-        # Process photo filenames
-        photo_urls, interior_photos = process_photos(photo_filenames, bucket, date_str)
-        
-        listing = {
-            'id': listing_id,
-            'headline': headline,
-            'price_yen': int(price_yen),
-            'area_m2': float(area_m2),
-            'year_built': int(year_built) if year_built > 0 else None,
-            'walk_mins_station': float(walk_mins_station),
-            'ward': ward,
-            'price_per_m2': round(price_per_m2, 2),
-            'age_years': int(age_years),
-            'photo_urls': photo_urls,
-            'interior_photos': interior_photos,
-            'photo_count': len(photo_urls),
-            'interior_photo_count': len(interior_photos)
-        }
-        
-        return listing
-        
-    except Exception as e:
-        logger.warning(f"Error processing listing: {e}")
-        return None
-
-
-def process_photos(photo_filenames: str, bucket: str, date_str: str) -> tuple[List[str], List[str]]:
-    """
-    Process photo filenames and categorize interior photos.
-    
-    Args:
-        photo_filenames: Pipe-separated photo filenames
-        bucket: S3 bucket name
-        date_str: Processing date string
-        
-    Returns:
-        Tuple of (all_photo_urls, interior_photo_urls)
-    """
-    if not photo_filenames or photo_filenames.lower() in ['nan', 'none', '']:
-        return [], []
+    if not photo_filenames or str(photo_filenames).lower() in ['nan', 'none', '']:
+        return []
     
     # Split by pipe and clean filenames
-    filenames = [f.strip() for f in photo_filenames.split('|') if f.strip()]
+    filenames = [f.strip() for f in str(photo_filenames).split('|') if f.strip()]
     
-    photo_urls = []
-    interior_photos = []
+    image_urls = []
     
-    interior_keywords = ['living', 'bedroom', 'kitchen', 'interior', 'room', 'dining']
+    for i, filename in enumerate(filenames):
+        # Create S3 URL - in real implementation, this would be the actual uploaded image URL
+        s3_key = f"raw/{date_str}/images/{listing_id}_{i}_{quote(filename)}"
+        image_url = f"s3://{bucket}/{s3_key}"
+        image_urls.append(image_url)
     
-    for filename in filenames:
-        # Create S3 URL
-        s3_key = f"raw/{date_str}/images/{quote(filename)}"
-        photo_url = f"s3://{bucket}/{s3_key}"
-        photo_urls.append(photo_url)
+    return image_urls
+
+
+def extract_interior_photos(image_urls: List[str]) -> List[str]:
+    """
+    Extract interior photos from the list of image URLs based on filename keywords.
+    
+    Args:
+        image_urls: List of S3 image URLs
         
-        # Check if it's an interior photo
-        filename_lower = filename.lower()
-        if any(keyword in filename_lower for keyword in interior_keywords):
-            interior_photos.append(photo_url)
+    Returns:
+        List of interior photo URLs
+    """
+    interior_photos = []
+    interior_keywords = ['living', 'bedroom', 'kitchen', 'interior', 'room', 'dining', 'bath']
     
-    return photo_urls, interior_photos
+    for url in image_urls:
+        # Extract filename from URL for keyword matching
+        filename = url.split('/')[-1].lower()
+        if any(keyword in filename for keyword in interior_keywords):
+            interior_photos.append(url)
+    
+    return interior_photos
 
 
 def save_jsonl_to_s3(data: List[Dict[str, Any]], bucket: str, key: str) -> None:

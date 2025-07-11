@@ -36,7 +36,8 @@
       "Bash(aws lambda get-function:*)",
       "Bash(aws lambda list-layers:*)",
       "Bash(aws lambda delete-layer-version:*)",
-      "Bash(./package-lambdas.sh:*)"
+      "Bash(./package-lambdas.sh:*)",
+      "Bash(true)"
     ],
     "deny": []
   }

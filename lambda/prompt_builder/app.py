@@ -16,26 +16,45 @@ logger.setLevel(logging.INFO)
 
 s3_client = boto3.client('s3')
 
-SYSTEM_PROMPT = """You are an aggressive Tokyo condo investor.
-Goal: pick the FIVE best bargains in this feed.
+SYSTEM_PROMPT = """You are an aggressive Tokyo condo investor and data analyst.
 
-Rank strictly by:
-- lowest price_per_m2 versus 3-year ward median
-- structural / cosmetic risks visible in PHOTOS (mold, warped floor, low light)
-- walking minutes to nearest station
-- south or southeast exposure, open view, balcony usability
+TASK 1: Parse and analyze the raw Japanese real estate data provided
+- Extract and convert prices (万円 to yen, handle any price format)
+- Calculate price_per_m2 from price and area fields
+- Parse property age from year_built or age fields  
+- Extract station distance from any walking time fields
+- Handle location details (ward, address, station info)
+- Process any field names or formats flexibly (Japanese or English)
 
-Return JSON only:
+TASK 2: Find the FIVE best investment opportunities
+- Rank by lowest price_per_m2 vs area median estimates
+- Analyze photos for structural/cosmetic issues (mold, warped floors, poor lighting)
+- Consider location and transportation access
+- Evaluate exposure, balcony space, and livability
+- Account for property age and potential renovation needs
+
+Return structured JSON with your analysis and reasoning:
 {
 "top_picks":[
-{ "id":"...", "score":0-100,
-"why":"concise reasoning",
-"red_flags":[ "...", ... ] },
+{ "id":"...", 
+  "score":0-100,
+  "parsed_price_yen": 25000000,
+  "parsed_area_m2": 65.5, 
+  "calculated_price_per_m2": 381679,
+  "parsed_age_years": 15,
+  "parsed_station_mins": 8,
+  "why":"detailed investment reasoning",
+  "red_flags":["structural concerns", "market risks"],
+  "photo_analysis":"what you see in images"
+},
 ...
 ],
-"runners_up":[ ... up to 10 ... ],
-"market_notes":"brief observation"
-}"""
+"runners_up":[ ... up to 10 similar format ... ],
+"market_notes":"brief market observation and data quality notes",
+"parsing_notes":"any issues with data parsing or field interpretation"
+}
+
+Handle all data parsing errors gracefully and note any ambiguous fields in your response."""
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -118,25 +137,28 @@ def load_jsonl_from_s3(bucket: str, key: str) -> List[Dict[str, Any]]:
 
 def sort_and_filter_listings(listings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Sort listings by price_per_m2 and take top 5 for testing.
+    Filter and sort listings for analysis. Since we're letting OpenAI handle parsing,
+    we just filter out completely invalid entries and take top candidates.
     
     Args:
         listings: List of listing dictionaries
         
     Returns:
-        Filtered and sorted listings
+        Filtered listings (raw data preserved)
     """
-    # Filter out listings without valid price_per_m2
+    # Filter out listings that are clearly invalid (no ID or essential data)
     valid_listings = [
         listing for listing in listings 
-        if listing.get('price_per_m2', 0) > 0
+        if listing.get('id') and (
+            listing.get('price_yen') or 
+            listing.get('price') or 
+            any('price' in str(key).lower() for key in listing.keys())
+        )
     ]
     
-    # Sort by price_per_m2 ascending (cheapest first)
-    sorted_listings = sorted(valid_listings, key=lambda x: x.get('price_per_m2', float('inf')))
-    
-    # Take top 5 for testing
-    return sorted_listings[:5]
+    # For now, just take first 5 for testing - OpenAI will do the real ranking
+    # In production, could sort by any available numeric field or keep all
+    return valid_listings[:5]
 
 
 def build_vision_prompt(listings: List[Dict[str, Any]], date_str: str, bucket: str) -> Dict[str, Any]:
@@ -175,10 +197,11 @@ def build_vision_prompt(listings: List[Dict[str, Any]], date_str: str, bucket: s
 
 def build_user_message_content(listings: List[Dict[str, Any]], date_str: str, bucket: str) -> List[Dict[str, Any]]:
     """
-    Build user message content with text and images.
+    Build user message content with raw listing data and images.
+    Pass ALL fields to OpenAI for processing.
     
     Args:
-        listings: List of listing dictionaries
+        listings: List of listing dictionaries (raw data)
         date_str: Processing date string
         bucket: S3 bucket name
         
@@ -188,29 +211,24 @@ def build_user_message_content(listings: List[Dict[str, Any]], date_str: str, bu
     content = [
         {
             "type": "text",
-            "text": f"Listings scraped on {date_str}:"
+            "text": f"Raw real estate listings scraped on {date_str}. Parse and analyze ALL data including Japanese fields:"
         }
     ]
     
     for listing in listings:
-        # Add listing data as text
-        listing_text = json.dumps({
-            "id": listing.get("id"),
-            "headline": listing.get("headline"),
-            "price_yen": listing.get("price_yen"),
-            "area_m2": listing.get("area_m2"),
-            "price_per_m2": listing.get("price_per_m2"),
-            "age_years": listing.get("age_years"),
-            "walk_mins_station": listing.get("walk_mins_station"),
-            "ward": listing.get("ward")
-        }, ensure_ascii=False, separators=(',', ':'))
+        # Create a clean copy excluding image processing metadata
+        clean_listing = {k: v for k, v in listing.items() 
+                        if k not in ['uploaded_image_urls', 'processed_date', 'source']}
+        
+        # Pass ALL raw fields to OpenAI - let it handle the parsing
+        listing_text = json.dumps(clean_listing, ensure_ascii=False, indent=2)
         
         content.append({
-            "type": "text",
-            "text": listing_text
+            "type": "text", 
+            "text": f"LISTING DATA:\n{listing_text}"
         })
         
-        # Add interior photos (max 20 per listing)
+        # Add interior photos for visual analysis (max 20 per listing)
         interior_photos = listing.get('interior_photos', [])[:20]
         
         for photo_url in interior_photos:

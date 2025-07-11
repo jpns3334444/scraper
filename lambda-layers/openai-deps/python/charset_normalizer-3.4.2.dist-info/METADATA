@@ -1,4 +1,4 @@
-Metadata-Version: 2.1
+Metadata-Version: 2.4
 Name: charset-normalizer
 Version: 3.4.2
 Summary: The Real First Universal Charset Detector. Open, modern and actively maintained alternative to Chardet.
@@ -32,7 +32,8 @@ Classifier: Typing :: Typed
 Requires-Python: >=3.7
 Description-Content-Type: text/markdown
 License-File: LICENSE
-Provides-Extra: unicode_backport
+Provides-Extra: unicode-backport
+Dynamic: license-file
 
 <h1 align="center">Charset Detection, for Everyone 👋</h1>
 
