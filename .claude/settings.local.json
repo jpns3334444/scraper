@@ -27,7 +27,16 @@
       "Bash(./deploy.sh)",
       "Bash(aws ec2 describe-instances:*)",
       "Bash(find:*)",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "Bash(sam validate:*)",
+      "Bash(sam build:*)",
+      "Bash(pip install:*)",
+      "Bash(aws stepfunctions describe-execution:*)",
+      "Bash(aws stepfunctions:*)",
+      "Bash(aws lambda get-function:*)",
+      "Bash(aws lambda list-layers:*)",
+      "Bash(aws lambda delete-layer-version:*)",
+      "Bash(./package-lambdas.sh:*)"
     ],
     "deny": []
   }

@@ -15,7 +15,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 s3_client = boto3.client('s3')
-ssm_client = boto3.client('ssm')
+secrets_client = boto3.client('secretsmanager')
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -72,21 +72,17 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
 def get_openai_client() -> OpenAI:
     """
-    Initialize OpenAI client with API key from SSM.
+    Initialize OpenAI client with API key from Secrets Manager.
     
     Returns:
         OpenAI client instance
     """
     try:
-        # Get API key from SSM Parameter Store
-        api_key = os.environ.get('OPENAI_API_KEY')
-        if not api_key:
-            # Fallback to SSM if not in environment
-            stack_name = os.environ.get('AWS_LAMBDA_FUNCTION_NAME', '').split('-')[0]
-            param_name = f'/ai-scraper/{stack_name}/openai-api-key'
-            
-            response = ssm_client.get_parameter(Name=param_name, WithDecryption=True)
-            api_key = response['Parameter']['Value']
+        # Get API key from Secrets Manager
+        secret_name = os.environ.get('OPENAI_SECRET_NAME', 'ai-scraper/openai-api-key')
+        
+        response = secrets_client.get_secret_value(SecretId=secret_name)
+        api_key = response['SecretString']
         
         return OpenAI(api_key=api_key)
         

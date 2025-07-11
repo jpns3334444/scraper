@@ -15,7 +15,7 @@ help:
 	@echo "  type-check  Run type checking with mypy"
 	@echo ""
 	@echo "Build & Deploy:"
-	@echo "  build       Build Lambda containers locally"
+	@echo "  build       Package Lambda functions for CloudFormation"
 	@echo "  deploy-dev  Deploy to development environment"
 	@echo "  deploy-prod Deploy to production environment"
 	@echo "  validate    Validate CloudFormation template"
@@ -29,7 +29,7 @@ help:
 	@echo "  make deploy-dev BUCKET=my-sam-bucket OPENAI_KEY=sk-..."
 
 # Variables
-PYTHON := python3.12
+PYTHON := python3.8
 LAMBDA_DIRS := lambda/etl lambda/prompt_builder lambda/llm_batch lambda/report_sender
 
 # Development commands
@@ -77,65 +77,21 @@ type-check:
 
 # Build commands
 build:
-	@echo "Building Lambda containers..."
-	@for dir in $(LAMBDA_DIRS); do \
-		echo "Building $$dir..."; \
-		cd "$$dir" && docker build -t "ai-scraper-$$(basename $$dir):latest" . && cd ../..; \
-	done
+	@echo "Packaging Lambda functions for CloudFormation..."
+	cd ai-infra && ./package-lambdas.sh
 
 validate:
 	@echo "Validating CloudFormation template..."
-	aws cloudformation validate-template --template-body file://infra/ai-stack.yaml
+	aws cloudformation validate-template --template-body file://ai-infra/ai-stack-cfn.yaml
 
 # Deployment commands
 deploy-dev:
-ifndef BUCKET
-	@echo "Error: BUCKET variable is required"
-	@echo "Usage: make deploy-dev BUCKET=my-sam-bucket OPENAI_KEY=sk-... SLACK_WEBHOOK=https://... EMAIL_FROM=from@example.com EMAIL_TO=to@example.com"
-	@exit 1
-endif
-ifndef OPENAI_KEY
-	@echo "Error: OPENAI_KEY variable is required"
-	@exit 1
-endif
-ifndef SLACK_WEBHOOK
-	@echo "Error: SLACK_WEBHOOK variable is required"
-	@exit 1
-endif
-ifndef EMAIL_FROM
-	@echo "Error: EMAIL_FROM variable is required"
-	@exit 1
-endif
-ifndef EMAIL_TO
-	@echo "Error: EMAIL_TO variable is required"
-	@exit 1
-endif
-	@echo "Deploying to development..."
-	infra/deploy.sh -e dev -b $(BUCKET) --openai-key $(OPENAI_KEY) --slack-webhook $(SLACK_WEBHOOK) --email-from $(EMAIL_FROM) --email-to $(EMAIL_TO)
+	@echo "Deploying to development environment..."
+	cd ai-infra && ./deploy-cfn.sh --stack-name ai-scraper-dev
 
 deploy-prod:
-ifndef BUCKET
-	@echo "Error: BUCKET variable is required"
-	@exit 1
-endif
-ifndef OPENAI_KEY
-	@echo "Error: OPENAI_KEY variable is required"
-	@exit 1
-endif
-ifndef SLACK_WEBHOOK
-	@echo "Error: SLACK_WEBHOOK variable is required"
-	@exit 1
-endif
-ifndef EMAIL_FROM
-	@echo "Error: EMAIL_FROM variable is required"
-	@exit 1
-endif
-ifndef EMAIL_TO
-	@echo "Error: EMAIL_TO variable is required"
-	@exit 1
-endif
-	@echo "Deploying to production..."
-	infra/deploy.sh -e prod -s ai-scraper-prod -b $(BUCKET) --openai-key $(OPENAI_KEY) --slack-webhook $(SLACK_WEBHOOK) --email-from $(EMAIL_FROM) --email-to $(EMAIL_TO)
+	@echo "Deploying to production environment..."
+	cd ai-infra && ./deploy-cfn.sh --stack-name ai-scraper-prod
 
 # Local testing
 local-run:
@@ -174,7 +130,7 @@ endif
 # Maintenance commands
 clean:
 	@echo "Cleaning build artifacts..."
-	rm -rf infra/.aws-sam
+	rm -rf ai-infra/.aws-sam
 	rm -rf .pytest_cache
 	rm -rf htmlcov
 	rm -rf .coverage
@@ -182,18 +138,22 @@ clean:
 	find . -type f -name "*.pyc" -delete
 	find . -type f -name ".DS_Store" -delete
 
-# Docker commands
-docker-build-etl:
-	cd lambda/etl && docker build -t ai-scraper-etl:latest .
+# CloudFormation commands
+cfn-package:
+	@echo "Packaging Lambda functions for CloudFormation..."
+	cd ai-infra && ./package-lambdas.sh
 
-docker-build-prompt-builder:
-	cd lambda/prompt_builder && docker build -t ai-scraper-prompt-builder:latest .
-
-docker-build-llm-batch:
-	cd lambda/llm_batch && docker build -t ai-scraper-llm-batch:latest .
-
-docker-build-report-sender:
-	cd lambda/report_sender && docker build -t ai-scraper-report-sender:latest .
+cfn-deploy-with-params:
+	@echo "Deploying with custom parameters..."
+ifndef EMAIL_FROM
+	@echo "Error: EMAIL_FROM variable is required"
+	@exit 1
+endif
+ifndef EMAIL_TO
+	@echo "Error: EMAIL_TO variable is required"
+	@exit 1
+endif
+	cd ai-infra && ./deploy-cfn.sh --email-from $(EMAIL_FROM) --email-to $(EMAIL_TO)
 
 # Test individual Lambda functions locally
 test-etl-local:
@@ -217,5 +177,5 @@ pre-commit: format-check lint type-check test
 	@echo "Pre-commit checks passed!"
 
 # CI/CD simulation
-ci: install format-check lint type-check test validate build
+ci: install format-check lint type-check test validate cfn-package
 	@echo "CI pipeline simulation complete!"

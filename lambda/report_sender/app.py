@@ -1,6 +1,6 @@
 """
 Report Sender Lambda function for generating and delivering Markdown reports.
-Processes LLM results and sends via Slack and SES email.
+Processes LLM results and sends via SES email.
 """
 import json
 import logging
@@ -59,9 +59,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         report_key = f"reports/{date_str}/report.md"
         save_report_to_s3(markdown_report, batch_result, bucket, report_key, date_str)
         
-        # Send to Slack
-        slack_success = send_to_slack(markdown_report, date_str)
-        
         # Send via email
         email_success = send_via_email(markdown_report, date_str)
         
@@ -73,7 +70,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             'bucket': bucket,
             'report_key': report_key,
             'top_picks_count': len(top_picks),
-            'slack_sent': slack_success,
             'email_sent': email_success
         }
         
@@ -257,62 +253,6 @@ def save_report_to_s3(markdown_report: str, batch_result: Dict[str, Any], bucket
         logger.error(f"Failed to save report to S3: {e}")
         raise
 
-
-def send_to_slack(markdown_report: str, date_str: str) -> bool:
-    """
-    Send report to Slack via webhook.
-    
-    Args:
-        markdown_report: Markdown report content
-        date_str: Processing date string
-        
-    Returns:
-        True if successful, False otherwise
-    """
-    try:
-        import requests
-        
-        # Get Slack webhook URL from environment or SSM
-        slack_url = os.environ.get('SLACK_HOOK_URL')
-        if not slack_url:
-            stack_name = os.environ.get('AWS_LAMBDA_FUNCTION_NAME', '').split('-')[0]
-            param_name = f'/ai-scraper/{stack_name}/slack-hook-url'
-            
-            response = ssm_client.get_parameter(Name=param_name, WithDecryption=True)
-            slack_url = response['Parameter']['Value']
-        
-        if not slack_url:
-            logger.warning("No Slack webhook URL configured")
-            return False
-        
-        # Prepare Slack message (truncate if too long)
-        max_length = 3000
-        truncated_report = markdown_report[:max_length]
-        if len(markdown_report) > max_length:
-            truncated_report += "\n\n... (truncated, see full report in S3)"
-        
-        payload = {
-            "text": f"Tokyo Real Estate Analysis - {date_str}",
-            "blocks": [
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": truncated_report
-                    }
-                }
-            ]
-        }
-        
-        response = requests.post(slack_url, json=payload, timeout=30)
-        response.raise_for_status()
-        
-        logger.info("Successfully sent report to Slack")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Failed to send to Slack: {e}")
-        return False
 
 
 def send_via_email(markdown_report: str, date_str: str) -> bool:

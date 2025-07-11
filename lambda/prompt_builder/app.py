@@ -61,7 +61,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         logger.info(f"Loaded {len(listings)} listings")
         
-        # Sort by price_per_m2 and take top 100
+        # Sort by price_per_m2 and take top 5 for testing
         sorted_listings = sort_and_filter_listings(listings)
         
         logger.info(f"Selected {len(sorted_listings)} top listings by price_per_m2")
@@ -118,7 +118,7 @@ def load_jsonl_from_s3(bucket: str, key: str) -> List[Dict[str, Any]]:
 
 def sort_and_filter_listings(listings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Sort listings by price_per_m2 and take top 100.
+    Sort listings by price_per_m2 and take top 5 for testing.
     
     Args:
         listings: List of listing dictionaries
@@ -135,8 +135,8 @@ def sort_and_filter_listings(listings: List[Dict[str, Any]]) -> List[Dict[str, A
     # Sort by price_per_m2 ascending (cheapest first)
     sorted_listings = sorted(valid_listings, key=lambda x: x.get('price_per_m2', float('inf')))
     
-    # Take top 100
-    return sorted_listings[:100]
+    # Take top 5 for testing
+    return sorted_listings[:5]
 
 
 def build_vision_prompt(listings: List[Dict[str, Any]], date_str: str, bucket: str) -> Dict[str, Any]:

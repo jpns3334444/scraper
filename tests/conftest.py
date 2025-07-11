@@ -65,12 +65,6 @@ def mock_ssm_client(aws_credentials):
             Type='SecureString'
         )
         
-        ssm.put_parameter(
-            Name='/ai-scraper/test-stack/slack-hook-url',
-            Value='https://hooks.slack.com/test',
-            Type='SecureString'
-        )
-        
         yield ssm
 
 
@@ -234,7 +228,6 @@ def environment_variables():
         'EMAIL_FROM': 'test@example.com',
         'EMAIL_TO': 'recipient@example.com',
         'OPENAI_API_KEY': 'test-openai-key',
-        'SLACK_HOOK_URL': 'https://hooks.slack.com/test'
     }
     
     with patch.dict(os.environ, env_vars):

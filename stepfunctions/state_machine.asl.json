@@ -146,7 +146,6 @@
         "bucket.$": "$.Payload.bucket",
         "report_key.$": "$.Payload.report_key",
         "top_picks_count.$": "$.Payload.top_picks_count",
-        "slack_sent.$": "$.Payload.slack_sent",
         "email_sent.$": "$.Payload.email_sent"
       },
       "Retry": [

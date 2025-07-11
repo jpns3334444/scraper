@@ -5,12 +5,11 @@ import json
 from unittest.mock import patch, Mock
 
 import pytest
-import responses
 
 # Import the report sender function
 import sys
 sys.path.append('/mnt/c/Users/azure/Desktop/scraper/lambda/report_sender')
-from app import lambda_handler, generate_markdown_report, send_to_slack, send_via_email, markdown_to_plain_text
+from app import lambda_handler, generate_markdown_report, send_via_email, markdown_to_plain_text
 
 
 class TestReportSender:
@@ -20,7 +19,6 @@ class TestReportSender:
         """Test successful report generation and sending."""
         with patch('app.s3_client', mock_s3_client), \
              patch('app.ses_client', mock_ses_client), \
-             patch('app.send_to_slack', return_value=True), \
              patch('app.send_via_email', return_value=True):
             
             result = lambda_handler(sample_report_event, None)
@@ -28,7 +26,6 @@ class TestReportSender:
         assert result['statusCode'] == 200
         assert result['date'] == '2025-07-07'
         assert result['top_picks_count'] == 1
-        assert result['slack_sent'] is True
         assert result['email_sent'] is True
         
         # Verify report was saved to S3
@@ -109,57 +106,6 @@ class TestReportSender:
         assert '**Runners Up**: 0' in markdown
         assert '## Market Overview' not in markdown  # No market notes
         assert '## 🥈 Runners Up' not in markdown  # No runners up
-    
-    @responses.activate
-    def test_send_to_slack_success(self, mock_ssm_client, environment_variables):
-        """Test successful Slack message sending."""
-        # Mock Slack webhook response
-        responses.add(
-            responses.POST,
-            'https://hooks.slack.com/test',
-            json={'ok': True},
-            status=200
-        )
-        
-        markdown_report = "# Test Report\n\nThis is a test report."
-        
-        with patch('app.ssm_client', mock_ssm_client):
-            result = send_to_slack(markdown_report, '2025-07-07')
-        
-        assert result is True
-        assert len(responses.calls) == 1
-        
-        # Check request payload
-        request_body = json.loads(responses.calls[0].request.body)
-        assert request_body['text'] == 'Tokyo Real Estate Analysis - 2025-07-07'
-        assert len(request_body['blocks']) == 1
-    
-    @responses.activate
-    def test_send_to_slack_failure(self, environment_variables):
-        """Test Slack sending failure handling."""
-        # Mock failed Slack webhook response
-        responses.add(
-            responses.POST,
-            'https://hooks.slack.com/test',
-            json={'error': 'invalid_payload'},
-            status=400
-        )
-        
-        markdown_report = "# Test Report\n\nThis is a test report."
-        
-        result = send_to_slack(markdown_report, '2025-07-07')
-        
-        assert result is False
-    
-    def test_send_to_slack_no_url(self, environment_variables):
-        """Test Slack sending when no webhook URL is configured."""
-        with patch.dict('os.environ', {'SLACK_HOOK_URL': ''}):
-            with patch('app.ssm_client') as mock_ssm:
-                mock_ssm.get_parameter.return_value = {'Parameter': {'Value': ''}}
-                
-                result = send_to_slack("Test report", '2025-07-07')
-        
-        assert result is False
     
     def test_send_via_email_success(self, mock_ses_client, environment_variables):
         """Test successful email sending."""
@@ -264,7 +210,6 @@ class TestReportSender:
         }
         
         with patch('app.s3_client', mock_s3_client), \
-             patch('app.send_to_slack', return_value=True), \
              patch('app.send_via_email', return_value=True):
             
             result = lambda_handler(event, None)
