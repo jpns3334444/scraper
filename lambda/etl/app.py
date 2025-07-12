@@ -43,13 +43,25 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         # Read CSV from S3
         csv_key = f"scraper-output/chofu-city-listings-{date_str}.csv"
-        logger.info(f"Reading CSV from s3://{bucket}/{csv_key}")
+        logger.info(f"Attempting to read CSV from s3://{bucket}/{csv_key}")
+        logger.info(f"Date string: {date_str}")
+        logger.info(f"Bucket from env: {bucket}")
+        
+        # List files in the bucket to debug
+        try:
+            list_response = s3_client.list_objects_v2(Bucket=bucket, Prefix="scraper-output/")
+            if 'Contents' in list_response:
+                logger.info(f"Files in scraper-output/: {[obj['Key'] for obj in list_response['Contents']]}")
+            else:
+                logger.info("No files found in scraper-output/")
+        except Exception as list_error:
+            logger.error(f"Failed to list bucket contents: {list_error}")
         
         try:
             response = s3_client.get_object(Bucket=bucket, Key=csv_key)
             df = pd.read_csv(response['Body'])
         except Exception as e:
-            logger.error(f"Failed to read CSV: {e}")
+            logger.error(f"Failed to read CSV from s3://{bucket}/{csv_key}: {e}")
             raise
         
         logger.info(f"Loaded {len(df)} listings from CSV")
@@ -126,11 +138,10 @@ def process_listings(df: pd.DataFrame, bucket: str, date_str: str) -> List[Dict[
 
 def process_and_upload_images(photo_filenames: str, bucket: str, date_str: str, listing_id: str) -> List[str]:
     """
-    Process image filenames and create S3 URLs. In a real implementation, this would
-    handle base64 image extraction and upload to S3.
+    Process image filenames and handle both S3 keys (new format) and filenames (legacy format).
     
     Args:
-        photo_filenames: Pipe-separated photo filenames or base64 image data
+        photo_filenames: Pipe-separated S3 keys or photo filenames
         bucket: S3 bucket name
         date_str: Processing date string
         listing_id: Listing identifier for image organization
@@ -141,16 +152,33 @@ def process_and_upload_images(photo_filenames: str, bucket: str, date_str: str, 
     if not photo_filenames or str(photo_filenames).lower() in ['nan', 'none', '']:
         return []
     
-    # Split by pipe and clean filenames
-    filenames = [f.strip() for f in str(photo_filenames).split('|') if f.strip()]
+    # Split by pipe and clean entries
+    entries = [f.strip() for f in str(photo_filenames).split('|') if f.strip()]
     
     image_urls = []
     
-    for i, filename in enumerate(filenames):
-        # Create S3 URL - in real implementation, this would be the actual uploaded image URL
-        s3_key = f"raw/{date_str}/images/{listing_id}_{i}_{quote(filename)}"
-        image_url = f"s3://{bucket}/{s3_key}"
-        image_urls.append(image_url)
+    for i, entry in enumerate(entries):
+        # Check if entry is already an S3 key (new format from updated scraper)
+        if entry.startswith('raw/') and '/images/' in entry:
+            # Entry is already an S3 key - use directly
+            image_url = f"s3://{bucket}/{entry}"
+            image_urls.append(image_url)
+            logger.info(f"Using S3 key from scraper: {entry}")
+        
+        elif entry.startswith('local_image_'):
+            # Local testing mode - create placeholder S3 URL
+            clean_filename = entry.replace('local_image_', '').split('_', 1)[-1]
+            s3_key = f"raw/{date_str}/images/{listing_id}_{i}_{quote(clean_filename)}"
+            image_url = f"s3://{bucket}/{s3_key}"
+            image_urls.append(image_url)
+            logger.info(f"Converting local image reference to S3 URL: {s3_key}")
+        
+        else:
+            # Legacy format - treat as filename and construct S3 URL
+            s3_key = f"raw/{date_str}/images/{listing_id}_{i}_{quote(entry)}"
+            image_url = f"s3://{bucket}/{s3_key}"
+            image_urls.append(image_url)
+            logger.info(f"Processing legacy filename format: {entry}")
     
     return image_urls
 

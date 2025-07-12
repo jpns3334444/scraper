@@ -170,3 +170,12 @@ Each Lambda function in `lambda/*/` follows this pattern:
 - **Secrets Management**: Never commit API keys; use SSM Parameter Store
 - **S3 Structure**: Maintain consistent folder structure (`raw/`, `clean/`, `prompts/`, `batch_output/`, `reports/`)
 - **Two Subsystems**: AI analysis system is independent of the scraper system in `/scraper/`
+
+## Security Practices
+
+- **IMPORTANT**: We are using AWS secrets to store all API keys/ anything of that nature
+
+## Cleanup and Maintenance Guidelines
+
+- **Cleanup Procedures**:
+  - Whenever we stop using a file/process... delete it! Delete any unused, unnecessary files you come across as well.

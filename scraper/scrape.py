@@ -19,9 +19,7 @@ from queue import Queue, Empty
 from enum import Enum
 from typing import Optional, Dict, Any, List
 import urllib.parse
-from PIL import Image
 import io
-import base64
 
 # Enhanced browser profiles for stealth mode
 BROWSER_PROFILES = [
@@ -871,7 +869,8 @@ def collect_all_listing_urls(base_url, max_pages=10, stealth_config=None):
         
         page_links = soup.select('a[data-page]')
         max_page = max([int(link.get('data-page', 1)) for link in page_links]) if page_links else 1
-        max_page = min(max_page, max_pages)
+        if max_pages is not None:
+            max_page = min(max_page, max_pages)
         
         log_structured_message("INFO", "Pagination info parsed", 
                              total_listings=total_count, max_page=max_page)
@@ -973,10 +972,11 @@ def extract_property_details_with_circuit_breaker(property_url, referer_url, ret
             session_pool.return_session(session)
 
 
-def extract_property_images(soup, session, base_url):
-    """Extract property images from the page"""
-    images = []
+def extract_property_images(soup, session, base_url, bucket=None, property_id=None):
+    """Extract property images and upload to S3, return S3 keys"""
+    s3_keys = []
     image_urls = set()
+    stealth_mode = os.environ.get("STEALTH_MODE", "false").lower() == "true"
     
     try:
         # Look for common image selectors on homes.co.jp
@@ -1009,38 +1009,52 @@ def extract_property_images(soup, session, base_url):
                     
                     image_urls.add(src)
         
-        # Download and encode images
-        for img_url in list(image_urls)[:5]:  # Limit to first 5 images
+        # Download images and upload to S3 (or just collect URLs if no bucket)
+        for i, img_url in enumerate(list(image_urls)[:5]):  # Limit to first 5 images
             try:
                 img_response = session.get(img_url, timeout=10)
                 if img_response.status_code == 200 and 'image' in img_response.headers.get('content-type', ''):
-                    # Convert to base64 for storage
-                    img_base64 = base64.b64encode(img_response.content).decode('utf-8')
-                    images.append({
-                        'url': img_url,
-                        'data': img_base64,
-                        'content_type': img_response.headers.get('content-type', 'image/jpeg')
-                    })
+                    content_type = img_response.headers.get('content-type', 'image/jpeg')
+                    
+                    # Upload to S3 if bucket provided, otherwise skip
+                    if bucket and property_id:
+                        s3_key = upload_image_to_s3(
+                            img_response.content, 
+                            bucket, 
+                            property_id, 
+                            i, 
+                            content_type
+                        )
+                        if s3_key:
+                            s3_keys.append(s3_key)
+                    else:
+                        # Local mode - just store the original URL for reference
+                        s3_keys.append(f"local_image_{i}_{img_url.split('/')[-1]}")
                     
                     # Small delay between image downloads
-                    time.sleep(random.uniform(0.5, 1.5))
+                    delay = random.uniform(0.5, 1.5)
+                    if stealth_mode:
+                        delay += random.uniform(1, 3)  # Extra delay in stealth mode for S3 uploads
+                    time.sleep(delay)
                     
             except Exception as e:
-                log_structured_message("WARNING", "Failed to download image", 
-                                     image_url=img_url, error=str(e))
+                log_structured_message("WARNING", "Failed to download/upload image", 
+                                     image_url=img_url, property_id=property_id, 
+                                     image_index=i, error=str(e))
                 continue
         
-        return images
+        return s3_keys
         
     except Exception as e:
-        log_structured_message("ERROR", "Image extraction failed", error=str(e))
+        log_structured_message("ERROR", "Image extraction failed", 
+                             property_id=property_id, error=str(e))
         return []
 
 def _extract_property_details_core(session, property_url, referer_url, retries=3):
     """Core property extraction logic with enhanced error handling, stealth timing, and image capture"""
     last_error = None
     stealth_mode = os.environ.get("STEALTH_MODE", "false").lower() == "true"
-    capture_images = os.environ.get("CAPTURE_IMAGES", "true").lower() == "true"
+    output_bucket = os.environ.get("OUTPUT_BUCKET")  # Check if S3 bucket is configured
     
     for attempt in range(retries + 1):
         try:
@@ -1101,18 +1115,30 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
                                 data[key] = value
                     break
             
-            # Extract property images if enabled
-            if capture_images:
-                try:
-                    images = extract_property_images(soup, session, "https://www.homes.co.jp")
-                    if images:
-                        data["images"] = images
-                        data["image_count"] = len(images)
-                        log_structured_message("INFO", "Images extracted", 
-                                             url=property_url, image_count=len(images))
-                except Exception as e:
-                    log_structured_message("WARNING", "Image extraction failed", 
-                                         url=property_url, error=str(e))
+            # Extract property ID from URL for S3 organization
+            property_id = "unknown"
+            id_match = re.search(r'/b-(\d+)/', property_url)
+            if id_match:
+                property_id = id_match.group(1)
+                data["id"] = property_id
+            
+            # Extract property images and upload to S3 (if bucket configured)
+            try:
+                s3_keys = extract_property_images(
+                    soup, session, "https://www.homes.co.jp", 
+                    bucket=output_bucket, property_id=property_id
+                )
+                if s3_keys:
+                    # Store S3 keys in photo_filenames field (pipe-separated)
+                    data["photo_filenames"] = "|".join(s3_keys)
+                    data["image_count"] = len(s3_keys)
+                    log_structured_message("INFO", "Images processed", 
+                                         url=property_url, property_id=property_id,
+                                         image_count=len(s3_keys), 
+                                         has_s3_bucket=bool(output_bucket))
+            except Exception as e:
+                log_structured_message("WARNING", "Image processing failed", 
+                                     url=property_url, property_id=property_id, error=str(e))
             
             # Log successful extraction
             log_structured_message("INFO", "Property details extracted successfully", 
@@ -1140,6 +1166,43 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
         raise last_error
     else:
         raise Exception("Max retries exceeded")
+
+def upload_image_to_s3(image_content, bucket, property_id, image_index, content_type="image/jpeg"):
+    """Upload image content to S3 and return S3 key"""
+    try:
+        # Determine file extension based on content type
+        if 'png' in content_type.lower():
+            file_extension = '.png'
+        elif 'gif' in content_type.lower():
+            file_extension = '.gif'
+        elif 'webp' in content_type.lower():
+            file_extension = '.webp'
+        else:
+            file_extension = '.jpg'  # Default to JPEG
+        
+        # Generate current date for S3 path
+        date_str = datetime.now().strftime('%Y-%m-%d')
+        s3_key = f"raw/{date_str}/images/{property_id}_{image_index}{file_extension}"
+        
+        # Upload to S3
+        s3 = boto3.client("s3")
+        s3.put_object(
+            Bucket=bucket,
+            Key=s3_key,
+            Body=image_content,
+            ContentType=content_type
+        )
+        
+        log_structured_message("INFO", "Image uploaded to S3", 
+                             s3_key=s3_key, property_id=property_id, 
+                             image_index=image_index, content_type=content_type)
+        return s3_key
+        
+    except Exception as e:
+        log_structured_message("ERROR", "S3 image upload failed", 
+                             property_id=property_id, image_index=image_index, 
+                             error=str(e))
+        return None
 
 def upload_to_s3(file_path, bucket, s3_key):
     """Upload file to S3"""
@@ -1502,8 +1565,13 @@ def main():
         # Step 3: Save data
         df = pd.DataFrame(listings_data)
         
-        # Generate filename
-        filename = f"chofu-city-listings-{datetime.now().strftime('%Y-%m-%d')}.csv"
+        # Generate filename based on areas scraped
+        date_str = datetime.now().strftime('%Y-%m-%d')
+        if len(session_areas) == 1:
+            area_name = session_areas[0]
+            filename = f"{area_name}-listings-{date_str}.csv"
+        else:
+            filename = f"tokyo-multi-area-listings-{date_str}.csv"
         
         # Save locally (try desktop first, fallback to current directory)
         try:

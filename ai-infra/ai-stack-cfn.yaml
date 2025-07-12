@@ -4,7 +4,7 @@ Description: 'AI layer for daily real estate analysis - Lambda functions, Step F
 Parameters:
   OutputBucket:
     Type: String
-    Default: re-stock
+    Default: tokyo-real-estate-ai-data
     Description: S3 bucket name for storing outputs
   OpenAIAPIKey:
     Type: String
