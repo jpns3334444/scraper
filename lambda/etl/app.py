@@ -42,7 +42,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         logger.info(f"Processing listings for date: {date_str}")
         
         # Read CSV from S3
-        csv_key = f"raw/{date_str}/listings.csv"
+        csv_key = f"scraper-output/chofu-city-listings-{date_str}.csv"
         logger.info(f"Reading CSV from s3://{bucket}/{csv_key}")
         
         try:
