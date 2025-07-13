@@ -4,12 +4,11 @@ set -e
 # === Configuration ===
 REGION="ap-northeast-1"
 KEY_NAME="lifull-key"
-OUTPUT_BUCKET="lifull-scrape-tokyo"
+OUTPUT_BUCKET="tokyo-real-estate-ai-data"
 NOTIFICATION_EMAIL="${NOTIFICATION_EMAIL:-}"
 NOTIFICATION_ENABLED="${NOTIFICATION_ENABLED:-true}"
 
-# Stack names
-S3_STACK_NAME="s3-bucket-stack"
+# Stack names  
 INFRA_STACK_NAME="scraper-infra-stack"
 COMPUTE_STACK_NAME="scraper-compute-stack"
 AUTOMATION_STACK_NAME="scraper-automation-stack"
@@ -88,7 +87,7 @@ echo
 echo "🎉 All stacks deployed successfully!"
 echo
 echo "📋 Stack Information:"
-echo "  S3 Bucket: $S3_STACK_NAME"
+echo "  S3 Bucket: $OUTPUT_BUCKET (existing bucket)"
 echo "  Infrastructure: $INFRA_STACK_NAME"
 echo "  Compute: $COMPUTE_STACK_NAME"
 echo "  Automation: $AUTOMATION_STACK_NAME"

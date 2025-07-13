@@ -1,15 +1,11 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: "Stealth Mode Automation - Distributed EventBridge Rules and Enhanced Lambda"
+Description: "Scraper Automation - Lambda Function and EventBridge"
 
 Parameters:
   InfraStackName:
     Type: String
     Description: Name of the infrastructure stack to import from
     Default: "scraper-infra-stack"
-  StealthStackName:
-    Type: String
-    Description: Name of the stealth infrastructure stack
-    Default: "scraper-stealth-stack"
   NotificationEnabled:
     Type: String
     Default: "true"
@@ -17,15 +13,14 @@ Parameters:
     Description: Whether to enable email notifications
 
 Resources:
-  # Enhanced scraper trigger Lambda with session awareness
-  StealthScraperTriggerLambda:
+  ScraperTriggerLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: stealth-trigger-scraper
+      FunctionName: trigger-scraper
       Handler: index.lambda_handler
       Role: 
         Fn::ImportValue: !Sub "${InfraStackName}-LambdaExecutionRoleArn"
-      Runtime: python3.11
+      Runtime: python3.12
       Timeout: 900
       Environment:
         Variables:
@@ -33,9 +28,9 @@ Resources:
             Fn::ImportValue: !Sub "${InfraStackName}-ScraperNotificationTopicArn"
           NOTIFICATION_ENABLED: !Ref NotificationEnabled
           DYNAMODB_TABLE:
-            Fn::ImportValue: !Sub "${StealthStackName}-SessionStateTableName"
+            Fn::ImportValue: !Sub "${InfraStackName}-SessionStateTableName"
           STEP_FUNCTIONS_ARN:
-            Fn::ImportValue: !Sub "${StealthStackName}-StepFunctionsArn"
+            Fn::ImportValue: !Sub "${InfraStackName}-StepFunctionsArn"
       Code:
         ZipFile: |
           import boto3
@@ -57,17 +52,37 @@ Resources:
               
               # Extract session parameters from event
               session_id = event.get('session_id', f"session-{int(time.time())}")
-              max_properties = event.get('max_properties', 8)
+              mode = event.get('mode', 'stealth')
+              single_area = event.get('single_area', 'chofu-city')
+              
+              # Configure based on mode
+              if mode == 'testing':
+                  max_properties = 5
+                  stealth_mode = False
+                  areas = [single_area]  # Single area for testing
+              elif mode == 'stealth':
+                  max_properties = event.get('max_properties', 10000)
+                  stealth_mode = True
+                  # Use area distribution logic for comprehensive coverage
+                  areas = []  # Will be handled by scraper's internal logic
+              elif mode == 'normal':
+                  max_properties = 500
+                  stealth_mode = False
+                  areas = [single_area]
+              else:
+                  max_properties = event.get('max_properties', 8)
+                  stealth_mode = True
+                  areas = []
+              
               entry_point = event.get('entry_point', 'default')
               
-              # Add human-like delay before starting (5-15 minutes)
-              initial_delay = random.uniform(300, 900)  # 5-15 minutes
-              print(f"Adding human-like delay: {initial_delay:.1f} seconds")
-              
-              # For demo purposes, we'll use a shorter delay in Lambda
-              # In production, this would be handled by EventBridge scheduling
-              demo_delay = min(initial_delay, 30)  # Max 30 seconds for demo
-              time.sleep(demo_delay)
+              # Add human-like delay for stealth mode
+              if stealth_mode:
+                  initial_delay = random.uniform(300, 900)  # 5-15 minutes
+                  print(f"Adding human-like delay: {initial_delay:.1f} seconds")
+                  # For demo purposes, use shorter delay in Lambda
+                  demo_delay = min(initial_delay, 30)  # Max 30 seconds for demo
+                  time.sleep(demo_delay)
               
               # Find EC2 instance by tag
               try:
@@ -89,13 +104,13 @@ Resources:
                       if notification_enabled and sns_topic_arn:
                           sns.publish(
                               TopicArn=sns_topic_arn,
-                              Message=f"❌ Stealth scraper job failed to start\\n\\nSession: {session_id}\\nError: {error_msg}",
-                              Subject="Stealth Scraper Job - Error"
+                              Message=f" {mode.title()} scraper job failed to start\\n\\nSession: {session_id}\\nError: {error_msg}",
+                              Subject=f"{mode.title()} Scraper Job - Error"
                           )
                       
                       return {
                           "statusCode": 404,
-                          "body": json.dumps({"error": error_msg, "session_id": session_id})
+                          "body": json.dumps({"error": error_msg, "session_id": session_id, "mode": mode})
                       }
                   
                   instance_id = instances[0]['InstanceId']
@@ -108,26 +123,29 @@ Resources:
                   if notification_enabled and sns_topic_arn:
                       sns.publish(
                           TopicArn=sns_topic_arn,
-                          Message=f"❌ Stealth scraper job failed to start\\n\\nSession: {session_id}\\nError: {error_msg}",
-                          Subject="Stealth Scraper Job - Error"
+                          Message=f" {mode.title()} scraper job failed to start\\n\\nSession: {session_id}\\nError: {error_msg}",
+                          Subject=f"{mode.title()} Scraper Job - Error"
                       )
                   
                   return {
                       "statusCode": 500,
-                      "body": json.dumps({"error": error_msg, "session_id": session_id})
+                      "body": json.dumps({"error": error_msg, "session_id": session_id, "mode": mode})
                   }
               
-              print(f"Starting stealth scraper job - Session: {session_id}, Max Properties: {max_properties}")
+              print(f"Starting {mode} scraper job - Session: {session_id}, Max Properties: {max_properties}")
               start_time = datetime.now()
               
               try:
                   # Build command with session parameters
+                  areas_env = ','.join(areas) if areas else ''
                   scraper_command = f"""
-                  export OUTPUT_BUCKET=lifull-scrape-tokyo
+                  export OUTPUT_BUCKET=tokyo-real-estate-ai-data
                   export SESSION_ID="{session_id}"
                   export MAX_PROPERTIES={max_properties}
+                  export STEALTH_MODE={str(stealth_mode).lower()}
                   export ENTRY_POINT="{entry_point}"
-                  export STEALTH_MODE=true
+                  export MODE="{mode}"
+                  export AREAS="{areas_env}"
                   cd /home/ubuntu && python3 scrape.py >> /var/log/scraper/run.log 2>&1
                   """
                   
@@ -191,11 +209,11 @@ Resources:
                   
                   if notification_enabled and sns_topic_arn:
                       if status == "Success":
-                          message = f"✅ Stealth scraper session completed successfully\\n\\nSession ID: {session_id}\\nStart Time: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\\nEnd Time: {end_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\\nDuration: {duration:.1f} seconds\\nProperties Scraped: {properties_scraped}\\nMax Properties: {max_properties}\\nCommand ID: {command_id}\\nInstance ID: {instance_id}\\n\\nCheck S3 bucket for scraped data."
-                          subject = "Stealth Scraper Session - Success"
+                          message = f" {mode.title()} scraper session completed successfully\\n\\nSession ID: {session_id}\\nMode: {mode}\\nStart Time: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\\nEnd Time: {end_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\\nDuration: {duration:.1f} seconds\\nProperties Scraped: {properties_scraped}\\nMax Properties: {max_properties}\\nCommand ID: {command_id}\\nInstance ID: {instance_id}\\n\\nCheck S3 bucket for scraped data."
+                          subject = f"{mode.title()} Scraper Session - Success"
                       else:
-                          message = f"❌ Stealth scraper session failed\\n\\nSession ID: {session_id}\\nStart Time: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\\nEnd Time: {end_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\\nDuration: {duration:.1f} seconds\\nStatus: {status}\\nCommand ID: {command_id}\\nInstance ID: {instance_id}\\n\\nError Output:\\n{error_output}"
-                          subject = "Stealth Scraper Session - Failed"
+                          message = f" {mode.title()} scraper session failed\\n\\nSession ID: {session_id}\\nMode: {mode}\\nStart Time: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\\nEnd Time: {end_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\\nDuration: {duration:.1f} seconds\\nStatus: {status}\\nCommand ID: {command_id}\\nInstance ID: {instance_id}\\n\\nError Output:\\n{error_output}"
+                          subject = f"{mode.title()} Scraper Session - Failed"
                       
                       sns.publish(
                           TopicArn=sns_topic_arn,
@@ -211,6 +229,7 @@ Resources:
                           "duration": duration,
                           "instance_id": instance_id,
                           "session_id": session_id,
+                          "mode": mode,
                           "properties_scraped": properties_scraped,
                           "max_properties": max_properties
                       })
@@ -223,27 +242,62 @@ Resources:
                   if notification_enabled and sns_topic_arn:
                       sns.publish(
                           TopicArn=sns_topic_arn,
-                          Message=f"❌ Stealth scraper session failed to start\\n\\nSession: {session_id}\\nError: {error_msg}",
-                          Subject="Stealth Scraper Session - Error"
+                          Message=f" {mode.title()} scraper session failed to start\\n\\nSession: {session_id}\\nError: {error_msg}",
+                          Subject=f"{mode.title()} Scraper Session - Error"
                       )
                   
                   return {
                       "statusCode": 500,
-                      "body": json.dumps({"error": error_msg, "session_id": session_id})
+                      "body": json.dumps({"error": error_msg, "session_id": session_id, "mode": mode})
                   }
 
-  # EventBridge Rules for distributed timing (8 sessions throughout the day)
+  # Testing session rule - DISABLED by default
+  TestingSessionRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: testing-session-rule
+      ScheduleExpression: "cron(0 17 * * ? *)"
+      State: DISABLED
+      Targets:
+        - Arn: !GetAtt ScraperTriggerLambda.Arn
+          Id: TestingSessionTarget
+          Input: |
+            {
+              "mode": "testing",
+              "session_id": "test-session",
+              "single_area": "chofu-city"
+            }
+
+  # Normal session rule - DISABLED by default  
+  NormalSessionRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: normal-session-rule
+      ScheduleExpression: "cron(0 17 * * ? *)"
+      State: DISABLED
+      Targets:
+        - Arn: !GetAtt ScraperTriggerLambda.Arn
+          Id: NormalSessionTarget
+          Input: |
+            {
+              "mode": "normal", 
+              "session_id": "daily-normal",
+              "single_area": "chofu-city"
+            }
+
+  # Stealth sessions (8 rules) - ENABLED by default
   MorningSession1Rule:
     Type: AWS::Events::Rule
     Properties:
       Name: stealth-scraper-morning-1
-      ScheduleExpression: "cron(0 8 * * ? *)"  # 5 PM JST = 8:00 UTC
+      ScheduleExpression: "cron(0 8 * * ? *)"
       State: ENABLED
       Targets:
-        - Arn: !GetAtt StealthScraperTriggerLambda.Arn
+        - Arn: !GetAtt ScraperTriggerLambda.Arn
           Id: MorningSession1Target
           Input: |
             {
+              "mode": "stealth",
               "session_id": "morning-1",
               "max_properties": 10000,
               "entry_point": "list_page_1"
@@ -253,13 +307,14 @@ Resources:
     Type: AWS::Events::Rule
     Properties:
       Name: stealth-scraper-morning-2
-      ScheduleExpression: "cron(30 9 * * ? *)"  # 6:30 PM JST = 9:30 UTC
+      ScheduleExpression: "cron(30 9 * * ? *)"
       State: ENABLED
       Targets:
-        - Arn: !GetAtt StealthScraperTriggerLambda.Arn
+        - Arn: !GetAtt ScraperTriggerLambda.Arn
           Id: MorningSession2Target
           Input: |
             {
+              "mode": "stealth",
               "session_id": "morning-2",
               "max_properties": 10000,
               "entry_point": "search_query"
@@ -269,13 +324,14 @@ Resources:
     Type: AWS::Events::Rule
     Properties:
       Name: stealth-scraper-afternoon-1
-      ScheduleExpression: "cron(15 12 * * ? *)"  # 9:15 PM JST = 12:15 UTC
+      ScheduleExpression: "cron(15 12 * * ? *)"
       State: ENABLED
       Targets:
-        - Arn: !GetAtt StealthScraperTriggerLambda.Arn
+        - Arn: !GetAtt ScraperTriggerLambda.Arn
           Id: AfternoonSession1Target
           Input: |
             {
+              "mode": "stealth",
               "session_id": "afternoon-1",
               "max_properties": 10000,
               "entry_point": "list_page_2"
@@ -285,13 +341,14 @@ Resources:
     Type: AWS::Events::Rule
     Properties:
       Name: stealth-scraper-afternoon-2
-      ScheduleExpression: "cron(45 14 * * ? *)"  # 11:45 PM JST = 14:45 UTC
+      ScheduleExpression: "cron(45 14 * * ? *)"
       State: ENABLED
       Targets:
-        - Arn: !GetAtt StealthScraperTriggerLambda.Arn
+        - Arn: !GetAtt ScraperTriggerLambda.Arn
           Id: AfternoonSession2Target
           Input: |
             {
+              "mode": "stealth",
               "session_id": "afternoon-2",
               "max_properties": 10000,
               "entry_point": "price_sort"
@@ -301,13 +358,14 @@ Resources:
     Type: AWS::Events::Rule
     Properties:
       Name: stealth-scraper-evening-1
-      ScheduleExpression: "cron(20 16 * * ? *)"  # 1:20 AM JST+1 = 16:20 UTC
+      ScheduleExpression: "cron(20 16 * * ? *)"
       State: ENABLED
       Targets:
-        - Arn: !GetAtt StealthScraperTriggerLambda.Arn
+        - Arn: !GetAtt ScraperTriggerLambda.Arn
           Id: EveningSession1Target
           Input: |
             {
+              "mode": "stealth",
               "session_id": "evening-1",
               "max_properties": 10000,
               "entry_point": "list_page_3"
@@ -317,13 +375,14 @@ Resources:
     Type: AWS::Events::Rule
     Properties:
       Name: stealth-scraper-evening-2
-      ScheduleExpression: "cron(10 18 * * ? *)"  # 3:10 AM JST+1 = 18:10 UTC
+      ScheduleExpression: "cron(10 18 * * ? *)"
       State: ENABLED
       Targets:
-        - Arn: !GetAtt StealthScraperTriggerLambda.Arn
+        - Arn: !GetAtt ScraperTriggerLambda.Arn
           Id: EveningSession2Target
           Input: |
             {
+              "mode": "stealth",
               "session_id": "evening-2",
               "max_properties": 10000,
               "entry_point": "default"
@@ -333,13 +392,14 @@ Resources:
     Type: AWS::Events::Rule
     Properties:
       Name: stealth-scraper-night-1
-      ScheduleExpression: "cron(35 20 * * ? *)"  # 5:35 AM JST+1 = 20:35 UTC
+      ScheduleExpression: "cron(35 20 * * ? *)"
       State: ENABLED
       Targets:
-        - Arn: !GetAtt StealthScraperTriggerLambda.Arn
+        - Arn: !GetAtt ScraperTriggerLambda.Arn
           Id: NightSession1Target
           Input: |
             {
+              "mode": "stealth",
               "session_id": "night-1",
               "max_properties": 10000,
               "entry_point": "area_search"
@@ -349,23 +409,40 @@ Resources:
     Type: AWS::Events::Rule
     Properties:
       Name: stealth-scraper-night-2
-      ScheduleExpression: "cron(55 22 * * ? *)"  # 7:55 AM JST+1 = 22:55 UTC
+      ScheduleExpression: "cron(55 22 * * ? *)"
       State: ENABLED
       Targets:
-        - Arn: !GetAtt StealthScraperTriggerLambda.Arn
+        - Arn: !GetAtt ScraperTriggerLambda.Arn
           Id: NightSession2Target
           Input: |
             {
+              "mode": "stealth",
               "session_id": "night-2",
               "max_properties": 10000,
               "entry_point": "list_page_4"
             }
 
   # Lambda permissions for all EventBridge rules
+  AllowTestingSession:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ScraperTriggerLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt TestingSessionRule.Arn
+
+  AllowNormalSession:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ScraperTriggerLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt NormalSessionRule.Arn
+
   AllowMorningSession1:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref StealthScraperTriggerLambda
+      FunctionName: !Ref ScraperTriggerLambda
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt MorningSession1Rule.Arn
@@ -373,7 +450,7 @@ Resources:
   AllowMorningSession2:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref StealthScraperTriggerLambda
+      FunctionName: !Ref ScraperTriggerLambda
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt MorningSession2Rule.Arn
@@ -381,7 +458,7 @@ Resources:
   AllowAfternoonSession1:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref StealthScraperTriggerLambda
+      FunctionName: !Ref ScraperTriggerLambda
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt AfternoonSession1Rule.Arn
@@ -389,7 +466,7 @@ Resources:
   AllowAfternoonSession2:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref StealthScraperTriggerLambda
+      FunctionName: !Ref ScraperTriggerLambda
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt AfternoonSession2Rule.Arn
@@ -397,7 +474,7 @@ Resources:
   AllowEveningSession1:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref StealthScraperTriggerLambda
+      FunctionName: !Ref ScraperTriggerLambda
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt EveningSession1Rule.Arn
@@ -405,7 +482,7 @@ Resources:
   AllowEveningSession2:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref StealthScraperTriggerLambda
+      FunctionName: !Ref ScraperTriggerLambda
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt EveningSession2Rule.Arn
@@ -413,7 +490,7 @@ Resources:
   AllowNightSession1:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref StealthScraperTriggerLambda
+      FunctionName: !Ref ScraperTriggerLambda
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt NightSession1Rule.Arn
@@ -421,20 +498,20 @@ Resources:
   AllowNightSession2:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref StealthScraperTriggerLambda
+      FunctionName: !Ref ScraperTriggerLambda
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt NightSession2Rule.Arn
 
 Outputs:
-  StealthScraperLambdaArn:
-    Description: "ARN of the stealth scraper trigger Lambda function"
-    Value: !GetAtt StealthScraperTriggerLambda.Arn
+  ScraperLambdaArn:
+    Description: "ARN of the scraper trigger Lambda function"
+    Value: !GetAtt ScraperTriggerLambda.Arn
     Export:
-      Name: !Sub "${AWS::StackName}-StealthScraperLambdaArn"
+      Name: !Sub "${AWS::StackName}-ScraperLambdaArn"
 
   EventBridgeRulesCount:
     Description: "Number of distributed EventBridge rules created"
-    Value: "8"
+    Value: "10"
     Export:
       Name: !Sub "${AWS::StackName}-EventBridgeRulesCount"

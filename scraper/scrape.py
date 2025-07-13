@@ -660,12 +660,18 @@ def get_daily_area_distribution(all_areas, session_id, date_key):
     return assigned_areas
 
 def get_stealth_session_config():
-    """Get stealth mode configuration from environment variables"""
+    """Get scraper configuration from environment variables"""
+    mode = os.environ.get('MODE', 'normal')  # 'testing', 'stealth', 'normal'
+    areas_env = os.environ.get('AREAS', '')
+    areas = [area.strip() for area in areas_env.split(',') if area.strip()] if areas_env else []
+    
     return {
         'session_id': os.environ.get('SESSION_ID', f'session-{int(time.time())}'),
         'max_properties': int(os.environ.get('MAX_PROPERTIES', '50')),
         'entry_point': os.environ.get('ENTRY_POINT', 'default'),
-        'stealth_mode': os.environ.get('STEALTH_MODE', 'false').lower() == 'true'
+        'stealth_mode': os.environ.get('STEALTH_MODE', 'false').lower() == 'true',
+        'mode': mode,
+        'areas': areas
     }
 
 # Global circuit breaker and session pool instances
@@ -979,21 +985,38 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
     stealth_mode = os.environ.get("STEALTH_MODE", "false").lower() == "true"
     
     try:
-        # Look for common image selectors on homes.co.jp
+        # Updated selectors specifically for homes.co.jp structure
         selectors = [
-            'img[src*="photo"]',
-            '.photo img',
-            '.gallery img',
-            '.image-gallery img',
-            'img[alt*="写真"]',
-            'img[alt*="画像"]',
-            '.property-image img',
-            'img[src*="mansion"]'
+            # Main property gallery images
+            '.mainPhoto img',
+            '.detailPhoto img', 
+            '.gallery-item img',
+            '.photo-gallery img',
+            # Common image containers
+            '.property-photos img',
+            '.mansion-photos img',
+            # Generic image selectors with filters
+            'img[src*="/photo/"]',
+            'img[src*="/image/"]',
+            'img[src*="mansion"]',
+            'img[src*="property"]',
+            # Lazy loading images
+            'img[data-src*="photo"]',
+            'img[data-original*="photo"]',
+            # Any img in photo containers
+            '[class*="photo"] img',
+            '[id*="photo"] img'
         ]
         
         for selector in selectors:
             for img in soup.select(selector):
-                src = img.get('src') or img.get('data-src') or img.get('data-lazy-src')
+                # Check multiple possible src attributes
+                src = (img.get('src') or 
+                      img.get('data-src') or 
+                      img.get('data-original') or 
+                      img.get('data-lazy-src') or
+                      img.get('data-lazy'))
+                
                 if src:
                     # Convert relative URLs to absolute
                     if src.startswith('//'):
@@ -1003,46 +1026,81 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
                     elif not src.startswith('http'):
                         src = base_url + '/' + src.lstrip('/')
                     
-                    # Filter out small images and icons
-                    if any(exclude in src.lower() for exclude in ['icon', 'logo', 'btn', 'arrow', 'small']):
-                        continue
+                    # Filter out unwanted images (be more specific)
+                    exclude_patterns = [
+                        'icon', 'logo', 'btn', 'button', 'arrow', 'banner',
+                        'thumb', 'favicon', 'sprite', 'bg_', 'background',
+                        'nav_', 'header_', 'footer_', 'menu_'
+                    ]
                     
-                    image_urls.add(src)
+                    # Check if any exclude pattern is in the URL
+                    if any(pattern in src.lower() for pattern in exclude_patterns):
+                        continue
+                        
+                    # Only include images that are likely property photos
+                    if any(pattern in src.lower() for pattern in ['photo', 'image', 'pic', 'img']):
+                        image_urls.add(src)
         
-        # Download images and upload to S3 (or just collect URLs if no bucket)
-        for i, img_url in enumerate(list(image_urls)[:5]):  # Limit to first 5 images
+        # Also look for images in script tags (sometimes URLs are in JavaScript)
+        scripts = soup.find_all('script')
+        for script in scripts:
+            if script.string:
+                # Look for image URLs in JavaScript
+                js_images = re.findall(r'["\']([^"\']*(?:photo|image|pic)[^"\']*\.(?:jpg|jpeg|png|gif|webp))["\']', 
+                                     script.string, re.IGNORECASE)
+                for img_url in js_images:
+                    if img_url.startswith('//'):
+                        img_url = 'https:' + img_url
+                    elif img_url.startswith('/'):
+                        img_url = base_url + img_url
+                    elif not img_url.startswith('http'):
+                        img_url = base_url + '/' + img_url.lstrip('/')
+                    image_urls.add(img_url)
+        
+        print(f"Found {len(image_urls)} potential images for property {property_id}")
+        
+        # Download and process ALL images (remove the [:5] limit)
+        for i, img_url in enumerate(list(image_urls)):
             try:
                 img_response = session.get(img_url, timeout=10)
-                if img_response.status_code == 200 and 'image' in img_response.headers.get('content-type', ''):
+                if img_response.status_code == 200:
                     content_type = img_response.headers.get('content-type', 'image/jpeg')
                     
-                    # Upload to S3 if bucket provided, otherwise skip
-                    if bucket and property_id:
-                        s3_key = upload_image_to_s3(
-                            img_response.content, 
-                            bucket, 
-                            property_id, 
-                            i, 
-                            content_type
-                        )
-                        if s3_key:
-                            s3_keys.append(s3_key)
-                    else:
-                        # Local mode - just store the original URL for reference
-                        s3_keys.append(f"local_image_{i}_{img_url.split('/')[-1]}")
-                    
-                    # Small delay between image downloads
-                    delay = random.uniform(0.5, 1.5)
-                    if stealth_mode:
-                        delay += random.uniform(1, 3)  # Extra delay in stealth mode for S3 uploads
-                    time.sleep(delay)
-                    
-            except Exception as e:
-                log_structured_message("WARNING", "Failed to download/upload image", 
-                                     image_url=img_url, property_id=property_id, 
-                                     image_index=i, error=str(e))
-                continue
+                    # Only process actual images
+                    if 'image' in content_type:
+                        # Check image size to filter out tiny images
+                        content_length = len(img_response.content)
+                        if content_length < 1000:  # Skip very small images (< 1KB)
+                            print(f"Skipping small image {i}: {img_url} ({content_length} bytes)")
+                            continue
+                        
+                        # Upload to S3 if bucket provided
+                        if bucket and property_id:
+                            s3_key = upload_image_to_s3(
+                                img_response.content, 
+                                bucket, 
+                                property_id, 
+                                i, 
+                                content_type
+                            )
+                            if s3_key:
+                                s3_keys.append(s3_key)
+                        else:
+                            # Local mode - store reference with proper naming
+                            filename = f"{property_id}_image_{i}_{img_url.split('/')[-1]}"
+                            s3_keys.append(filename)
+                        
+                        # Smaller delay between downloads
+                        delay = random.uniform(0.2, 0.8)
+                        if stealth_mode:
+                            delay += random.uniform(0.5, 1.5)
+                        time.sleep(delay)
+                        
+                except Exception as e:
+                    print(f"Failed to download image {i} from {img_url}: {str(e)}")
+                    continue
         
+        print(f"Successfully processed {len(s3_keys)} images for property {property_id}")
         return s3_keys
         
     except Exception as e:
@@ -1050,11 +1108,12 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
                              property_id=property_id, error=str(e))
         return []
 
+
 def _extract_property_details_core(session, property_url, referer_url, retries=3):
-    """Core property extraction logic with enhanced error handling, stealth timing, and image capture"""
+    """Core property extraction logic with enhanced error handling, stealth timing, and improved image capture"""
     last_error = None
     stealth_mode = os.environ.get("STEALTH_MODE", "false").lower() == "true"
-    output_bucket = os.environ.get("OUTPUT_BUCKET")  # Check if S3 bucket is configured
+    output_bucket = os.environ.get("OUTPUT_BUCKET")
     
     for attempt in range(retries + 1):
         try:
@@ -1064,7 +1123,6 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
             # Use human-like timing in stealth mode
             if stealth_mode:
                 delay = simulate_human_reading_time()
-                # Cap the delay to prevent extremely long waits
                 delay = min(delay, 180)  # Max 3 minutes
                 print(f"Stealth mode: Simulating {delay:.1f}s human reading time")
                 time.sleep(delay)
@@ -1078,7 +1136,6 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
                 error_msg = f"HTTP {response.status_code}"
                 if attempt == retries:
                     raise requests.exceptions.HTTPError(error_msg)
-                # Exponential backoff with jitter
                 backoff_time = (2 ** attempt) + random.uniform(0, 1)
                 time.sleep(backoff_time)
                 continue
@@ -1088,6 +1145,52 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
             
             soup = BeautifulSoup(response.content, 'html.parser')
             data = {"url": property_url}
+            
+            # FIXED: Better property ID extraction from URL
+            property_id = "unknown"
+            
+            # Try multiple patterns for property ID extraction
+            patterns = [
+                r'/mansion/b-(\d+)/',           # /mansion/b-1234567890/
+                r'/b-(\d+)/',                   # /b-1234567890/
+                r'property[_-]?id[=:](\d+)',    # property_id=123 or property:123
+                r'mansion[_-]?(\d{8,})',        # mansion_12345678 or mansion-12345678
+                r'/(\d{10,})/'                  # Any 10+ digit number in URL path
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, property_url)
+                if match:
+                    property_id = match.group(1)
+                    print(f"Extracted property ID: {property_id} using pattern: {pattern}")
+                    break
+            
+            # If still unknown, try to extract from page content
+            if property_id == "unknown":
+                # Look for property ID in meta tags
+                meta_tags = soup.find_all('meta')
+                for meta in meta_tags:
+                    content = meta.get('content', '')
+                    if re.search(r'\d{8,}', content):
+                        id_match = re.search(r'(\d{8,})', content)
+                        if id_match:
+                            property_id = id_match.group(1)
+                            print(f"Found property ID in meta content: {property_id}")
+                            break
+                
+                # Look for ID in script tags or data attributes
+                if property_id == "unknown":
+                    scripts = soup.find_all('script')
+                    for script in scripts:
+                        if script.string:
+                            id_matches = re.findall(r'(?:property|mansion|id)["\']?\s*[:=]\s*["\']?(\d{8,})', script.string)
+                            if id_matches:
+                                property_id = id_matches[0]
+                                print(f"Found property ID in script: {property_id}")
+                                break
+            
+            # Store the extracted ID
+            data["id"] = property_id
             
             # Extract title from h1 elements
             h1_elements = soup.select('h1')
@@ -1111,31 +1214,27 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
                         if len(cells) >= 2:
                             key = cells[0].text.strip()
                             value = cells[1].text.strip()
-                            if key and value and len(key) < 30:  # Reasonable key length
+                            if key and value and len(key) < 30:
                                 data[key] = value
                     break
             
-            # Extract property ID from URL for S3 organization
-            property_id = "unknown"
-            id_match = re.search(r'/b-(\d+)/', property_url)
-            if id_match:
-                property_id = id_match.group(1)
-                data["id"] = property_id
-            
-            # Extract property images and upload to S3 (if bucket configured)
+            # IMPROVED: Extract property images with better naming
             try:
+                print(f"Starting image extraction for property {property_id}...")
                 s3_keys = extract_property_images(
                     soup, session, "https://www.homes.co.jp", 
                     bucket=output_bucket, property_id=property_id
                 )
                 if s3_keys:
-                    # Store S3 keys in photo_filenames field (pipe-separated)
                     data["photo_filenames"] = "|".join(s3_keys)
                     data["image_count"] = len(s3_keys)
                     log_structured_message("INFO", "Images processed", 
                                          url=property_url, property_id=property_id,
                                          image_count=len(s3_keys), 
                                          has_s3_bucket=bool(output_bucket))
+                else:
+                    print(f"No images found for property {property_id}")
+                    
             except Exception as e:
                 log_structured_message("WARNING", "Image processing failed", 
                                      url=property_url, property_id=property_id, error=str(e))
@@ -1397,28 +1496,53 @@ def main():
     """Main scraper function using HTTP with session flow and stealth capabilities"""
     job_start_time = datetime.now()
     
-    # Get stealth configuration
-    stealth_config = get_stealth_session_config()
+    # Get configuration
+    config = get_stealth_session_config()
     is_local_testing = not os.environ.get("OUTPUT_BUCKET")
     
-    # Determine mode and limits
-    if stealth_config['stealth_mode']:
-        max_properties_limit = stealth_config['max_properties']
-        mode_name = "STEALTH MODE"
-        log_structured_message("INFO", "STEALTH MODE: Session-based distributed scraping", 
-                             session_id=stealth_config['session_id'],
+    # Determine mode and limits based on new event-driven configuration
+    mode = config['mode']
+    
+    if mode == 'testing':
+        max_properties_limit = config['max_properties'] or 5
+        mode_name = "TESTING MODE"
+        stealth_enabled = False
+        log_structured_message("INFO", "TESTING MODE: Limited scope for testing", 
+                             session_id=config['session_id'],
                              max_properties=max_properties_limit,
-                             entry_point=stealth_config['entry_point'],
+                             areas=config['areas'],
                              start_time=job_start_time.isoformat())
-        print(f"🥷 STEALTH MODE - Session: {stealth_config['session_id']}, Max Properties: {max_properties_limit}")
+        print(f"🧪 TESTING MODE - Session: {config['session_id']}, Max Properties: {max_properties_limit}, Areas: {config['areas']}")
+    elif mode == 'stealth' or config['stealth_mode']:
+        max_properties_limit = config['max_properties']
+        mode_name = "STEALTH MODE"
+        stealth_enabled = True
+        log_structured_message("INFO", "STEALTH MODE: Session-based distributed scraping", 
+                             session_id=config['session_id'],
+                             max_properties=max_properties_limit,
+                             entry_point=config['entry_point'],
+                             start_time=job_start_time.isoformat())
+        print(f"🥷 STEALTH MODE - Session: {config['session_id']}, Max Properties: {max_properties_limit}")
+    elif mode == 'normal':
+        max_properties_limit = config['max_properties'] or 500
+        mode_name = "NORMAL MODE"
+        stealth_enabled = False
+        log_structured_message("INFO", "NORMAL MODE: Standard scraping", 
+                             session_id=config['session_id'],
+                             max_properties=max_properties_limit,
+                             areas=config['areas'],
+                             start_time=job_start_time.isoformat())
+        print(f"📊 NORMAL MODE - Session: {config['session_id']}, Max Properties: {max_properties_limit}, Areas: {config['areas']}")
     elif is_local_testing:
         max_properties_limit = 5
         mode_name = "LOCAL TESTING"
+        stealth_enabled = False
         log_structured_message("INFO", "LOCAL TESTING MODE: Limited to 5 listings", start_time=job_start_time.isoformat())
         print("🧪 LOCAL TESTING MODE - Processing only 5 listings for quick testing")
     else:
-        max_properties_limit = 500  # Default limit for normal mode
+        max_properties_limit = 500  # Default limit
         mode_name = "PRODUCTION"
+        stealth_enabled = False
         log_structured_message("INFO", "Starting HTTP scraper job", start_time=job_start_time.isoformat())
     
     error_count = 0
@@ -1429,34 +1553,42 @@ def main():
         # Configuration
         date_key = datetime.now().strftime('%Y-%m-%d')
         
-        # Step 0: Discover all Tokyo areas and get session assignment
-        if stealth_config['stealth_mode']:
+        # Step 0: Determine areas based on mode
+        if mode == 'testing':
+            # Use specific areas from configuration or default to chofu-city
+            session_areas = config['areas'] if config['areas'] else ["chofu-city"]
+            print(f"🧪 TESTING MODE - Using areas: {session_areas}")
+        elif mode == 'normal':
+            # Use specific areas from configuration or default to chofu-city
+            session_areas = config['areas'] if config['areas'] else ["chofu-city"]
+            print(f"📊 NORMAL MODE - Using areas: {session_areas}")
+        elif stealth_enabled:
             print(f"\n🗖️ Discovering Tokyo areas and calculating session assignment...")
             all_tokyo_areas = discover_tokyo_areas()
-            session_areas = get_daily_area_distribution(all_tokyo_areas, stealth_config['session_id'], date_key)
+            session_areas = get_daily_area_distribution(all_tokyo_areas, config['session_id'], date_key)
             
             if not session_areas:
-                raise Exception(f"No areas assigned to session {stealth_config['session_id']}")
+                raise Exception(f"No areas assigned to session {config['session_id']}")
             
-            print(f"🏆 Session {stealth_config['session_id']} assigned areas: {session_areas}")
+            print(f"🏆 Session {config['session_id']} assigned areas: {session_areas}")
             log_structured_message("INFO", "Session area assignment", 
-                                 session_id=stealth_config['session_id'],
+                                 session_id=config['session_id'],
                                  assigned_areas=session_areas,
                                  total_tokyo_areas=len(all_tokyo_areas))
         else:
-            # Fallback to single area for non-stealth mode
+            # Fallback to single area for other modes
             session_areas = ["chofu-city"]
         
         # Step 1: Collect all listing URLs with stealth capabilities
         print(f"\n🔗 Collecting listing URLs from {len(session_areas)} areas ({mode_name})...")
         
         if len(session_areas) > 1:
-            all_urls, session = collect_multiple_areas_urls(session_areas, stealth_config)
+            all_urls, session = collect_multiple_areas_urls(session_areas, config)
         else:
             # Single area fallback - collect all pages
             BASE_URL = f"https://www.homes.co.jp/mansion/chuko/tokyo/{session_areas[0]}/list"
             max_pages = 1 if is_local_testing else None  # No limit in production
-            all_urls, session = collect_all_listing_urls(BASE_URL, max_pages, stealth_config)
+            all_urls, session = collect_all_listing_urls(BASE_URL, max_pages, config)
         
         if not all_urls:
             raise Exception("No listing URLs found")
@@ -1468,7 +1600,7 @@ def main():
         else:
             # In production/stealth mode: scrape ALL properties found
             print(f"🚀 PROCESSING ALL {len(all_urls)} PROPERTIES FOUND")
-            if stealth_config['stealth_mode']:
+            if stealth_enabled:
                 print(f"🥷 STEALTH MODE: Using human-like delays for {len(all_urls)} properties")
         
         log_structured_message("INFO", "URL collection completed", total_urls=len(all_urls))
@@ -1481,7 +1613,7 @@ def main():
         request_start_times = []
         
         # Use conservative threading - single thread in stealth mode
-        if stealth_config['stealth_mode']:
+        if stealth_enabled:
             max_threads = 1  # Single-threaded for maximum stealth
             print("🥷 Using single-threaded extraction for stealth")
         else:
@@ -1559,8 +1691,8 @@ def main():
                                              processed_count=len(listings_data))
                         
                         # Send detection metrics in stealth mode
-                        if stealth_config.get('stealth_mode'):
-                            send_detection_metrics(risk_level, indicators, stealth_config)
+                        if stealth_enabled:
+                            send_detection_metrics(risk_level, indicators, config)
         
         # Step 3: Save data
         df = pd.DataFrame(listings_data)
@@ -1608,9 +1740,9 @@ def main():
             "duration_seconds": duration,
             "scraper_type": "HTTP_SESSION_FLOW",
             "mode": mode_name,
-            "stealth_mode": stealth_config['stealth_mode'],
-            "session_id": stealth_config.get('session_id'),
-            "entry_point": stealth_config.get('entry_point'),
+            "stealth_mode": stealth_enabled,
+            "session_id": config.get('session_id'),
+            "entry_point": config.get('entry_point'),
             "max_properties_limit": max_properties_limit,
             "total_urls_found": len(all_urls),
             "successful_scrapes": success_count,
@@ -1626,7 +1758,7 @@ def main():
         
         # Step 6: Send CloudWatch metrics and final detection check
         if not is_local_testing:
-            send_cloudwatch_metrics(success_count, error_count, duration, len(all_urls), stealth_config)
+            send_cloudwatch_metrics(success_count, error_count, duration, len(all_urls), config)
             
             # Final detection risk assessment
             if response_times:
@@ -1635,16 +1767,16 @@ def main():
                                      risk_level=final_risk_level, 
                                      indicators=final_indicators)
                 
-                if stealth_config.get('stealth_mode'):
-                    send_detection_metrics(final_risk_level, final_indicators, stealth_config)
+                if stealth_enabled:
+                    send_detection_metrics(final_risk_level, final_indicators, config)
         else:
             log_structured_message("INFO", f"{mode_name}: Skipping CloudWatch metrics")
         
         log_structured_message("INFO", "HTTP scraper job completed successfully", **summary_data)
         
         print(f"\n✅ {mode_name} scraping completed successfully!")
-        if stealth_config['stealth_mode']:
-            print(f"🥷 Session: {stealth_config['session_id']}")
+        if stealth_enabled:
+            print(f"🥷 Session: {config['session_id']}")
         print(f"📊 Results: {success_count} successful, {error_count} failed")
         print(f"⏱️ Duration: {duration:.1f} seconds")
         print(f"💾 Output: {local_path}")
@@ -1661,8 +1793,8 @@ def main():
             "duration_seconds": duration,
             "scraper_type": "HTTP_SESSION_FLOW",
             "mode": locals().get('mode_name', 'UNKNOWN'),
-            "stealth_mode": stealth_config.get('stealth_mode', False),
-            "session_id": stealth_config.get('session_id'),
+            "stealth_mode": locals().get('stealth_enabled', False),
+            "session_id": locals().get('config', {}).get('session_id'),
             "status": "ERROR",
             "error": str(e)
         }

@@ -4,7 +4,7 @@ set -e
 # === Configuration ===
 REGION="ap-northeast-1"
 KEY_NAME="lifull-key"
-OUTPUT_BUCKET="lifull-scrape-tokyo"
+OUTPUT_BUCKET="tokyo-real-estate-ai-data"
 INFRA_STACK_NAME="scraper-infra-stack"
 COMPUTE_STACK_NAME="scraper-compute-stack"
 
