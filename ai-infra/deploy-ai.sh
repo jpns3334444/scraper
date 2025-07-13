@@ -23,7 +23,19 @@ echo "================================================="
 command -v docker >/dev/null || error "Docker not found"
 command -v aws >/dev/null || error "AWS CLI not found"
 aws sts get-caller-identity >/dev/null || error "AWS credentials not configured"
-[ -f "ai-stack-cfn.yaml" ] || error "CloudFormation template ai-stack-cfn.yaml not found"
+[ -f "ai-stack.yaml" ] || error "CloudFormation template ai-stack.yaml not found"
+
+# Debug Python availability
+info "Checking Python availability..."
+for py_cmd in python3 python py python.exe; do
+    if command -v $py_cmd >/dev/null 2>&1; then
+        if $py_cmd -c "import sys; print('✓ ' + sys.executable + ' - Python ' + sys.version)" 2>/dev/null; then
+            info "Found working Python: $py_cmd"
+        else
+            warn "Found $py_cmd but it doesn't work properly"
+        fi
+    fi
+done
 
 status "Prerequisites OK"
 
@@ -96,15 +108,92 @@ else
     info "Skipping layer build - using cached version"
 fi
 
-# Always package Lambda functions (these change frequently)
+# Always package Lambda functions (these change frequently) - Windows compatible ZIP
 status "Packaging Lambda functions..."
 for func in etl prompt_builder llm_batch report_sender; do
     [ -d "../lambda/$func" ] || error "Function directory lambda/$func not found"
     
     info "Packaging $func..."
-    (cd ../lambda/$func && tar -czf ../../ai-infra/$func.tar.gz --exclude="*.pyc" --exclude="*/__pycache__/*" . >/dev/null)
-    aws s3 cp $func.tar.gz s3://$BUCKET_NAME/functions/$func.tar.gz --region $REGION
-    rm $func.tar.gz
+    
+    # Windows-compatible ZIP creation using Python - try multiple Python commands
+    PYTHON_CMD=""
+    for py_cmd in python3 python py python.exe; do
+        if command -v $py_cmd >/dev/null 2>&1; then
+            # Test if it actually works (not just the Windows Store redirect)
+            if $py_cmd -c "import sys; print('Python works')" >/dev/null 2>&1; then
+                PYTHON_CMD="$py_cmd"
+                info "Using Python command: $py_cmd"
+                break
+            fi
+        fi
+    done
+    
+    if [ -n "$PYTHON_CMD" ]; then
+        # Use Python method
+        $PYTHON_CMD -c "
+import zipfile
+import os
+import sys
+
+def create_zip(source_dir, output_zip):
+    with zipfile.ZipFile(output_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, dirs, files in os.walk(source_dir):
+            # Skip __pycache__ directories
+            dirs[:] = [d for d in dirs if d != '__pycache__']
+            
+            for file in files:
+                # Skip .pyc files
+                if file.endswith('.pyc'):
+                    continue
+                    
+                file_path = os.path.join(root, file)
+                arc_name = os.path.relpath(file_path, source_dir)
+                zipf.write(file_path, arc_name)
+
+create_zip('../lambda/$func', '$func.zip')
+print('Created $func.zip')
+"
+    else
+        # Fallback to PowerShell
+        warn "Python not found, using PowerShell as fallback"
+        powershell.exe -Command "
+            \$source = '../lambda/$func'
+            \$destination = './$func.zip'
+            
+            if (Test-Path \$destination) { Remove-Item \$destination -Force }
+            
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            
+            # Create temporary directory for filtered files
+            \$tempDir = New-TemporaryFile | %{ rm \$_; mkdir \$_ }
+            
+            # Copy files excluding .pyc and __pycache__
+            Get-ChildItem -Path \$source -Recurse | Where-Object {
+                \$_.Extension -ne '.pyc' -and 
+                \$_.FullName -notlike '*__pycache__*' -and
+                -not \$_.PSIsContainer
+            } | ForEach-Object {
+                \$relativePath = \$_.FullName.Substring(\$source.Length + 1)
+                \$destPath = Join-Path \$tempDir \$relativePath
+                \$destDir = Split-Path \$destPath
+                if (-not (Test-Path \$destDir)) { New-Item -ItemType Directory -Path \$destDir -Force | Out-Null }
+                Copy-Item \$_.FullName \$destPath
+            }
+            
+            # Create zip file
+            [System.IO.Compression.ZipFile]::CreateFromDirectory(\$tempDir, \$destination)
+            
+            # Cleanup
+            Remove-Item \$tempDir -Recurse -Force
+            
+            Write-Host 'Created $func.zip using PowerShell'
+        "
+    fi
+    
+    [ -f "$func.zip" ] || error "Failed to create $func.zip"
+    
+    aws s3 cp $func.zip s3://$BUCKET_NAME/functions/$func.zip --region $REGION
+    rm $func.zip
     
     status "✅ $func packaged and uploaded"
 done
@@ -140,7 +229,7 @@ fi
 # Deploy CloudFormation stack
 status "Deploying CloudFormation stack..."
 aws cloudformation deploy \
-    --template-file ai-stack-cfn.yaml \
+    --template-file ai-stack.yaml \
     --stack-name $STACK_NAME \
     --capabilities CAPABILITY_IAM \
     --region $REGION \

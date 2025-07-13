@@ -86,7 +86,7 @@ Resources:
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
         S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/etl.tar.gz
+        S3Key: functions/etl.zip
       Timeout: 900
       MemorySize: 1024
       Layers:
@@ -104,7 +104,7 @@ Resources:
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
         S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/prompt_builder.tar.gz
+        S3Key: functions/prompt_builder.zip
       Timeout: 900
       MemorySize: 1024
       Layers:
@@ -122,7 +122,7 @@ Resources:
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
         S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/llm_batch.tar.gz
+        S3Key: functions/llm_batch.zip
       Timeout: 900
       MemorySize: 1024
       Layers:
@@ -141,7 +141,7 @@ Resources:
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
         S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/report_sender.tar.gz
+        S3Key: functions/report_sender.zip
       Timeout: 900
       MemorySize: 1024
       Layers:
