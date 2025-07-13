@@ -43,22 +43,6 @@ echo "  Notification Email: ${NOTIFICATION_EMAIL:-"(not set)"}"
 echo "  Notification Enabled: $NOTIFICATION_ENABLED"
 echo
 
-# === Deploy S3 Bucket Stack ===
-echo "📦 Deploying S3 bucket stack..."
-if ! aws cloudformation describe-stacks --stack-name "$S3_STACK_NAME" --region "$REGION" > /dev/null 2>&1; then
-  aws cloudformation create-stack \
-    --stack-name "$S3_STACK_NAME" \
-    --template-body file://s3-bucket-stack.yaml \
-    --parameters ParameterKey=BucketName,ParameterValue="$OUTPUT_BUCKET" \
-    --region "$REGION"
-  
-  echo "Waiting for S3 bucket stack to complete..."
-  aws cloudformation wait stack-create-complete --stack-name "$S3_STACK_NAME" --region "$REGION"
-  echo "✅ S3 bucket stack created successfully"
-else
-  echo "✅ S3 bucket stack already exists"
-fi
-
 # === Deploy Infrastructure Stack ===
 echo "🏗️  Deploying infrastructure stack..."
 aws cloudformation deploy \

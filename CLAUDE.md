@@ -179,3 +179,59 @@ Each Lambda function in `lambda/*/` follows this pattern:
 
 - **Cleanup Procedures**:
   - Whenever we stop using a file/process... delete it! Delete any unused, unnecessary files you come across as well.
+
+Scraper System Directory Structure
+scraper-infra/                   # CloudFormation Infrastructure Templates
+├── s3-bucket-stack.yaml         # S3 bucket for data storage (create once)
+├── infra-stack.yaml            # IAM roles, security groups, SNS (create once)
+├── compute-stack.yaml          # EC2 instance for scraper (recreate frequently)
+├── automation-stack.yaml      # Basic Lambda triggers + EventBridge
+├── stealth-stack.yaml         # Advanced: DynamoDB + Step Functions for stealth
+└── stealth-automation-stack.yaml # Advanced: Distributed stealth scraping
+
+scraper/                        # Scraper Application & Deployment
+├── scrape.py                   # Main scraper with HTTP + stealth capabilities
+├── deploy-all.sh              # Initial setup - creates all 4 CloudFormation stacks
+├── deploy-compute.sh          # Essential - quick EC2 recreation for development
+├── deploy-stealth.sh          # Advanced stealth mode deployment
+├── test-multi-area.py         # Tests area discovery and distribution logic
+└── test_scraper.py            # Unit tests for scraper functions
+
+tests/                          # AI System Tests (High Quality)
+├── conftest.py               # Comprehensive test fixtures with mocked AWS services
+├── test_etl.py              # Tests data processing pipeline
+├── test_prompt_builder.py   # Tests AI prompt generation for LLM
+├── test_llm_batch.py        # Tests OpenAI batch processing
+├── test_report_sender.py    # Tests email report generation
+└── requirements.txt         # Test dependencies (pytest, moto, etc.)
+Scraper System CloudFormation Architecture
+The scraper infrastructure uses 4 separate stacks for modularity:
+
+s3-bucket-stack - Data storage bucket (create once, DeletionPolicy: Retain)
+scraper-infra-stack - IAM roles, security groups, SNS topics (create once)
+scraper-compute-stack - EC2 instance running the scraper (recreate frequently during development)
+scraper-automation-stack - Lambda functions and EventBridge scheduling (create once)
+
+Scraper Deployment Workflow
+Initial Setup:
+bashcd scraper/
+./deploy-all.sh  # Creates all 4 stacks (~10 minutes)
+Development Cycle (Most Common):
+bash# After updating scraper code in GitHub:
+./deploy-compute.sh --recreate  # Just recreate EC2 instance (~3 minutes)
+Advanced Features:
+bash./deploy-stealth.sh  # Add distributed stealth scraping capabilities
+Why Multiple Deployment Scripts?
+Problem: During scraper development, you frequently need to update the scraper code, but recreating all infrastructure is slow and risky.
+Solution: Modular stacks allow targeted updates:
+
+deploy-all.sh - Use once for initial setup
+deploy-compute.sh --recreate - Use repeatedly during development to pull latest scraper code
+deploy-stealth.sh - Use when adding advanced behavioral mimicry features
+
+This separation prevents accidentally deleting S3 data or IAM configurations while iterating on scraper code.
+Key Development Notes
+
+deploy-compute.sh is essential for development - it recreates only the EC2 instance to pull fresh scraper code from GitHub without touching other infrastructure
+compute-stack.yaml contains the UserData script that installs dependencies and downloads the latest scraper code
+The scraper system is independent but complementary to the AI analysis system - it provides the raw data that the AI system processes
