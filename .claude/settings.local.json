@@ -1,5 +1,4 @@
 {
-  "timeout": 600,
   "permissions": {
     "allow": [
       "Bash(NOTIFICATION_EMAIL=\"jpns3334444@gmail.com\" ./deploy.sh)",

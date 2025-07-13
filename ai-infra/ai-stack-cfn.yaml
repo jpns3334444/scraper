@@ -1,39 +1,33 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'AI layer for daily real estate analysis - Lambda functions, Step Functions, and EventBridge'
+Description: 'AI Real Estate Analysis Stack - Simplified'
 
 Parameters:
+  DeploymentBucket:
+    Type: String
+    Description: S3 bucket containing Lambda packages
   OutputBucket:
     Type: String
-    Default: tokyo-real-estate-ai-data
-    Description: S3 bucket name for storing outputs
-  OpenAIAPIKey:
-    Type: String
-    NoEcho: true
-    Description: OpenAI API key for GPT-4.1 requests
+    Default: re-stock
+    Description: S3 bucket for storing outputs
   EmailFrom:
     Type: String
+    Default: noreply@example.com
     Description: From email address for SES notifications
   EmailTo:
     Type: String
+    Default: admin@example.com
     Description: To email address for reports
-  DeploymentBucket:
-    Type: String
-    Description: S3 bucket containing Lambda deployment packages
-  OpenAIDepsLayerKey:
-    Type: String
-    Default: layers/openai-deps.zip
-    Description: S3 key for OpenAI dependencies layer
 
 Resources:
-  # Lambda Layers - Using hybrid approach with AWS prebuilt layers
-  OpenAIDepsLayer:
+  # OpenAI Layer (built by deploy script)
+  OpenAILayer:
     Type: AWS::Lambda::LayerVersion
     Properties:
-      LayerName: !Sub '${AWS::StackName}-openai-deps'
-      Description: 'OpenAI SDK and dependencies (minimal custom layer)'
+      LayerName: !Sub '${AWS::StackName}-openai'
+      Description: 'OpenAI SDK layer'
       Content:
         S3Bucket: !Ref DeploymentBucket
-        S3Key: !Ref OpenAIDepsLayerKey
+        S3Key: layers/openai-layer.zip
       CompatibleRuntimes:
         - python3.12
 
@@ -82,7 +76,83 @@ Resources:
                   - ses:SendRawEmail
                 Resource: '*'
 
-  # Step Functions execution role
+  # Lambda Functions (using AWS prebuilt layers + our OpenAI layer)
+  ETLFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-etl'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/etl.tar.gz
+      Timeout: 900
+      MemorySize: 1024
+      Layers:
+        - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref OutputBucket
+
+  PromptBuilderFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-prompt-builder'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/prompt_builder.tar.gz
+      Timeout: 900
+      MemorySize: 1024
+      Layers:
+        - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref OutputBucket
+
+  LLMBatchFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-llm-batch'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/llm_batch.tar.gz
+      Timeout: 900
+      MemorySize: 1024
+      Layers:
+        - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
+        - !Ref OpenAILayer
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref OutputBucket
+
+  ReportSenderFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-report-sender'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/report_sender.tar.gz
+      Timeout: 900
+      MemorySize: 1024
+      Layers:
+        - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref OutputBucket
+          EMAIL_FROM: !Ref EmailFrom
+          EMAIL_TO: !Ref EmailTo
+
+  # Step Functions
   StepFunctionsExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -107,91 +177,6 @@ Resources:
                   - !GetAtt LLMBatchFunction.Arn
                   - !GetAtt ReportSenderFunction.Arn
 
-  # Lambda Functions
-  ETLFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${AWS::StackName}-etl'
-      Runtime: python3.12
-      Handler: app.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/etl.zip
-      Timeout: 900
-      MemorySize: 1024
-      Layers:
-        - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
-      Environment:
-        Variables:
-          OUTPUT_BUCKET: !Ref OutputBucket
-          OPENAI_SECRET_NAME: ai-scraper/openai-api-key
-          FUNCTION_NAME: etl
-
-  PromptBuilderFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${AWS::StackName}-prompt-builder'
-      Runtime: python3.12
-      Handler: app.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/prompt_builder.zip
-      Timeout: 900
-      MemorySize: 1024
-      Layers:
-        - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
-      Environment:
-        Variables:
-          OUTPUT_BUCKET: !Ref OutputBucket
-          OPENAI_SECRET_NAME: ai-scraper/openai-api-key
-          FUNCTION_NAME: prompt_builder
-
-  LLMBatchFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${AWS::StackName}-llm-batch'
-      Runtime: python3.12
-      Handler: app.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/llm_batch.zip
-      Timeout: 900
-      MemorySize: 1024
-      Layers:
-        - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
-        - !Ref OpenAIDepsLayer
-      Environment:
-        Variables:
-          OUTPUT_BUCKET: !Ref OutputBucket
-          OPENAI_SECRET_NAME: ai-scraper/openai-api-key
-          FUNCTION_NAME: llm_batch
-
-  ReportSenderFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${AWS::StackName}-report-sender'
-      Runtime: python3.12
-      Handler: app.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/report_sender.zip
-      Timeout: 900
-      MemorySize: 1024
-      Layers:
-        - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
-      Environment:
-        Variables:
-          OUTPUT_BUCKET: !Ref OutputBucket
-          OPENAI_SECRET_NAME: ai-scraper/openai-api-key
-          FUNCTION_NAME: report_sender
-          EMAIL_FROM: !Ref EmailFrom
-          EMAIL_TO: !Ref EmailTo
-
-  # Step Functions State Machine
   AIAnalysisStateMachine:
     Type: AWS::StepFunctions::StateMachine
     Properties:
@@ -257,7 +242,7 @@ Resources:
           }
         }
 
-  # EventBridge rule for daily execution
+  # EventBridge rule for daily execution (optional)
   DailyAnalysisRule:
     Type: AWS::Events::Rule
     Properties:
@@ -307,3 +292,9 @@ Outputs:
     Value: !GetAtt ETLFunction.Arn
     Export:
       Name: !Sub '${AWS::StackName}-ETLFunctionArn'
+
+  OpenAILayerArn:
+    Description: 'ARN of the OpenAI layer'
+    Value: !Ref OpenAILayer
+    Export:
+      Name: !Sub '${AWS::StackName}-OpenAILayerArn'
