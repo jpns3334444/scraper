@@ -1094,12 +1094,11 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
                         delay = random.uniform(0.2, 0.8)
                         if stealth_mode:
                             delay += random.uniform(0.5, 1.5)
-                        time.sleep(delay)
-                        
-                except Exception as e:
-                    print(f"Failed to download image {i} from {img_url}: {str(e)}")
-                    continue
-        
+                        time.sleep(delay)        
+            except Exception as e:
+                print(f"Failed to download image {i} from {img_url}: {str(e)}")
+                continue
+
         print(f"Successfully processed {len(s3_keys)} images for property {property_id}")
         return s3_keys
         
