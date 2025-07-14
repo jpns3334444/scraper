@@ -20,6 +20,9 @@ from enum import Enum
 from typing import Optional, Dict, Any, List
 import urllib.parse
 import io
+import argparse
+import logging
+from PIL import Image
 
 # Enhanced browser profiles for stealth mode
 BROWSER_PROFILES = [
@@ -116,7 +119,8 @@ class CircuitBreaker:
             if self.state == CircuitBreakerState.OPEN:
                 if self._should_attempt_reset():
                     self.state = CircuitBreakerState.HALF_OPEN
-                    log_structured_message("INFO", "Circuit breaker transitioning to HALF_OPEN")
+                    if 'logger' in globals() and logger:
+                        log_structured_message(logger, "INFO", "Circuit breaker transitioning to HALF_OPEN")
                 else:
                     raise Exception("Circuit breaker is OPEN - refusing request")
             
@@ -143,7 +147,8 @@ class CircuitBreaker:
                 if self.success_count >= self.success_threshold:
                     self.state = CircuitBreakerState.CLOSED
                     self.success_count = 0
-                    log_structured_message("INFO", "Circuit breaker reset to CLOSED")
+                    if 'logger' in globals() and logger:
+                        log_structured_message(logger, "INFO", "Circuit breaker reset to CLOSED")
             elif self.state == CircuitBreakerState.CLOSED:
                 # Reset success count for closed state
                 self.success_count = 0
@@ -156,12 +161,14 @@ class CircuitBreaker:
             
             if self.state == CircuitBreakerState.HALF_OPEN:
                 self.state = CircuitBreakerState.OPEN
-                log_structured_message("WARNING", "Circuit breaker opened from HALF_OPEN state")
+                if 'logger' in globals() and logger:
+                    log_structured_message(logger, "WARNING", "Circuit breaker opened from HALF_OPEN state")
             elif self.failure_count >= self.failure_threshold:
                 self.state = CircuitBreakerState.OPEN
-                log_structured_message("WARNING", "Circuit breaker opened", 
-                                     failure_count=self.failure_count,
-                                     threshold=self.failure_threshold)
+                if 'logger' in globals() and logger:
+                    log_structured_message(logger, "WARNING", "Circuit breaker opened", 
+                                         failure_count=self.failure_count,
+                                         threshold=self.failure_threshold)
     
     def get_state(self):
         """Get current circuit breaker state"""
@@ -169,24 +176,25 @@ class CircuitBreaker:
 
 
 class SessionPool:
-    def __init__(self, pool_size=3, max_age_seconds=300):
+    def __init__(self, pool_size=3, max_age_seconds=300, stealth_mode=False, logger=None):
         self.pool = Queue(maxsize=pool_size)
         self.pool_size = pool_size
         self.max_age_seconds = max_age_seconds
         self.lock = threading.Lock()
         self.session_metadata = {}
+        self.stealth_mode = stealth_mode
+        self.logger = logger
         self._initialize_pool()
     
     def _initialize_pool(self):
         """Initialize the session pool with fresh sessions"""
         for _ in range(self.pool_size):
-            session = self._create_fresh_session()
+            session = self._create_fresh_session(self.stealth_mode, self.logger)
             self.pool.put(session)
     
-    def _create_fresh_session(self):
+    def _create_fresh_session(self, stealth_mode=False, logger=None):
         """Create a new session with metadata tracking"""
-        stealth_mode = os.environ.get("STEALTH_MODE", "false").lower() == "true"
-        session = create_stealth_session(stealth_mode=stealth_mode)
+        session = create_stealth_session(stealth_mode=stealth_mode, logger=logger)
         session_id = id(session)
         self.session_metadata[session_id] = {
             'created_at': time.time(),
@@ -215,7 +223,8 @@ class SessionPool:
             
             return session
         except Empty:
-            log_structured_message("WARNING", "Session pool exhausted, creating new session")
+            if self.logger:
+                log_structured_message(self.logger, "WARNING", "Session pool exhausted, creating new session")
             return self._create_fresh_session()
     
     def return_session(self, session):
@@ -264,7 +273,7 @@ def categorize_error(error, response=None):
         return ErrorCategory.UNKNOWN
 
 
-def create_stealth_session(stealth_mode=False):
+def create_stealth_session(stealth_mode=False, logger=None):
     """Create HTTP session with stealth capabilities and browser fingerprint variation"""
     session = requests.Session()
     
@@ -301,14 +310,13 @@ def create_stealth_session(stealth_mode=False):
             
         session.headers.update(base_headers)
         
-        # Log session creation (function defined later in file)
-        try:
-            log_structured_message("INFO", "Stealth session created", 
-                                 profile=profile["name"], 
-                                 user_agent=base_headers["User-Agent"][:50] + "...")
-        except NameError:
-            # Function not yet defined during import, skip logging
-            pass
+        # Log session creation
+        if logger:
+            logger.info(json.dumps({
+                "message": "Stealth session created",
+                "profile": profile["name"],
+                "user_agent": base_headers["User-Agent"][:50] + "..."
+            }))
     else:
         # Legacy mode for compatibility
         headers = {
@@ -352,13 +360,13 @@ def simulate_navigation_delay():
     page_load_wait = random.uniform(1.0, 3.0)  # Wait for page load
     return click_delay + page_load_wait
 
-def simulate_search_behavior(session, base_url):
+def simulate_search_behavior(session, base_url, stealth_mode=False, logger=None):
     """Simulate realistic search behavior before scraping"""
-    stealth_mode = os.environ.get("STEALTH_MODE", "false").lower() == "true"
     if not stealth_mode:
         return  # Skip simulation in normal mode
     
-    log_structured_message("INFO", "Simulating search behavior for stealth")
+    if logger:
+        logger.info(json.dumps({"message": "Simulating search behavior for stealth"}))
     
     try:
         # Simulate search query
@@ -370,7 +378,8 @@ def simulate_search_behavior(session, base_url):
         
         response = session.get(search_url, timeout=15)
         if response.status_code == 200:
-            log_structured_message("INFO", "Search simulation successful", query=search_query)
+            if logger:
+                log_structured_message(logger, "INFO", "Search simulation successful", query=search_query)
             
             # Simulate reading search results
             time.sleep(simulate_navigation_delay())
@@ -378,15 +387,16 @@ def simulate_search_behavior(session, base_url):
             # Sometimes navigate back to main listing
             if random.random() < 0.7:  # 70% chance to go back to listings
                 session.get(base_url, timeout=15)
-                log_structured_message("INFO", "Navigated back to main listings")
+                if logger:
+                    log_structured_message(logger, "INFO", "Navigated back to main listings")
                 time.sleep(simulate_navigation_delay())
         
     except Exception as e:
-        log_structured_message("WARNING", "Search simulation failed", error=str(e))
+        if logger:
+            log_structured_message(logger, "WARNING", "Search simulation failed", error=str(e))
 
-def simulate_browsing_patterns(session, all_urls, entry_point="default"):
+def simulate_browsing_patterns(session, all_urls, entry_point="default", stealth_mode=False, logger=None):
     """Simulate realistic browsing patterns based on entry point"""
-    stealth_mode = os.environ.get("STEALTH_MODE", "false").lower() == "true"
     if not stealth_mode:
         return all_urls  # Return unchanged in normal mode
     
@@ -394,8 +404,9 @@ def simulate_browsing_patterns(session, all_urls, entry_point="default"):
     entry_path = ENTRY_POINTS.get(entry_point, ENTRY_POINTS["default"])
     entry_url = f"{base_url}{entry_path}"
     
-    log_structured_message("INFO", "Simulating browsing patterns", 
-                         entry_point=entry_point, entry_url=entry_url)
+    if logger:
+        log_structured_message(logger, "INFO", "Simulating browsing patterns", 
+                             entry_point=entry_point, entry_url=entry_url)
     
     try:
         # Start from the specified entry point
@@ -421,7 +432,8 @@ def simulate_browsing_patterns(session, all_urls, entry_point="default"):
                     browse_response = session.get(browse_url, timeout=15)
                     
                     if browse_response.status_code == 200:
-                        log_structured_message("INFO", "Browsed additional page", page=page_num)
+                        if logger:
+                            log_structured_message(logger, "INFO", "Browsed additional page", page=page_num)
                         time.sleep(simulate_navigation_delay())
                         session.headers['Referer'] = browse_url
             
@@ -432,7 +444,8 @@ def simulate_browsing_patterns(session, all_urls, entry_point="default"):
             return randomized_urls
             
     except Exception as e:
-        log_structured_message("WARNING", "Browsing simulation failed", error=str(e))
+        if logger:
+            log_structured_message(logger, "WARNING", "Browsing simulation failed", error=str(e))
     
     return all_urls  # Return original list if simulation fails
 
@@ -526,23 +539,25 @@ def send_detection_metrics(risk_level, indicators, stealth_config=None):
             MetricData=metric_data
         )
         
-        log_structured_message("INFO", "Detection metrics sent", 
-                             risk_level=risk_level, 
-                             indicators_count=len(indicators),
-                             session_id=session_id)
+        if 'logger' in globals() and logger:
+            log_structured_message(logger, "INFO", "Detection metrics sent", 
+                                 risk_level=risk_level, 
+                                 indicators_count=len(indicators),
+                                 session_id=session_id)
         
     except Exception as e:
-        log_structured_message("ERROR", "Failed to send detection metrics", error=str(e))
+        if 'logger' in globals() and logger:
+            log_structured_message(logger, "ERROR", "Failed to send detection metrics", error=str(e))
 
-def discover_tokyo_areas():
+def discover_tokyo_areas(stealth_mode=False, logger=None):
     """Discover all Tokyo area URLs from the city listing page"""
-    stealth_mode = os.environ.get("STEALTH_MODE", "false").lower() == "true"
-    session = create_stealth_session(stealth_mode=stealth_mode)
+    session = create_stealth_session(stealth_mode=stealth_mode, logger=logger)
     
     city_listing_url = "https://www.homes.co.jp/mansion/chuko/tokyo/city/"
     
     try:
-        log_structured_message("INFO", "Discovering Tokyo areas", url=city_listing_url)
+        if logger:
+            log_structured_message(logger, "INFO", "Discovering Tokyo areas", url=city_listing_url)
         
         response = session.get(city_listing_url, timeout=15)
         if response.status_code != 200:
@@ -581,7 +596,8 @@ def discover_tokyo_areas():
             ]
             
             # Validate which areas actually exist by testing URLs
-            log_structured_message("INFO", "Using fallback area list, validating URLs")
+            if logger:
+                log_structured_message(logger, "INFO", "Using fallback area list, validating URLs")
             for area in known_areas:
                 test_url = f"https://www.homes.co.jp/mansion/chuko/tokyo/{area}/list/"
                 try:
@@ -595,21 +611,24 @@ def discover_tokyo_areas():
         # Remove duplicates and sort
         unique_areas = sorted(list(set(area_links)))
         
-        log_structured_message("INFO", "Tokyo areas discovered", 
-                             total_areas=len(unique_areas), 
-                             areas=unique_areas[:10])  # Log first 10 for brevity
+        if logger:
+            log_structured_message(logger, "INFO", "Tokyo areas discovered", 
+                                 total_areas=len(unique_areas), 
+                                 areas=unique_areas[:10])  # Log first 10 for brevity
         
         return unique_areas
         
     except Exception as e:
-        log_structured_message("ERROR", "Failed to discover Tokyo areas", error=str(e))
+        if logger:
+            log_structured_message(logger, "ERROR", "Failed to discover Tokyo areas", error=str(e))
         
         # Return fallback list if discovery fails
         fallback_areas = [
             'chofu-city', 'shibuya-ku', 'shinjuku-ku', 'setagaya-ku', 
             'minato-ku', 'chiyoda-ku', 'nerima-ku', 'suginami-ku'
         ]
-        log_structured_message("WARNING", "Using fallback area list", areas=fallback_areas)
+        if logger:
+            log_structured_message(logger, "WARNING", "Using fallback area list", areas=fallback_areas)
         return fallback_areas
     
     finally:
@@ -650,33 +669,37 @@ def get_daily_area_distribution(all_areas, session_id, date_key):
     # Get areas for the requested session
     assigned_areas = session_areas.get(session_id, [])
     
-    log_structured_message("INFO", "Daily area distribution calculated", 
-                         session_id=session_id, 
-                         date_key=date_key,
-                         assigned_areas=assigned_areas,
-                         total_sessions=len(session_order),
-                         total_areas=len(all_areas))
+    if 'logger' in globals() and logger:
+        log_structured_message(logger, "INFO", "Daily area distribution calculated", 
+                             session_id=session_id, 
+                             date_key=date_key,
+                             assigned_areas=assigned_areas,
+                             total_sessions=len(session_order),
+                             total_areas=len(all_areas))
     
     return assigned_areas
 
-def get_stealth_session_config():
-    """Get scraper configuration from environment variables"""
-    mode = os.environ.get('MODE', 'normal')  # 'testing', 'stealth', 'normal'
-    areas_env = os.environ.get('AREAS', '')
-    areas = [area.strip() for area in areas_env.split(',') if area.strip()] if areas_env else []
+def get_stealth_session_config(args):
+    """Get scraper configuration from command line arguments"""
+    areas = [area.strip() for area in args.areas.split(',') if area.strip()] if args.areas else []
+    
+    # Determine stealth mode - either explicit stealth mode or if mode is 'stealth'
+    stealth_mode = args.mode == 'stealth'
     
     return {
-        'session_id': os.environ.get('SESSION_ID', f'session-{int(time.time())}'),
-        'max_properties': int(os.environ.get('MAX_PROPERTIES', '50')),
-        'entry_point': os.environ.get('ENTRY_POINT', 'default'),
-        'stealth_mode': os.environ.get('STEALTH_MODE', 'false').lower() == 'true',
-        'mode': mode,
-        'areas': areas
+        'session_id': f'session-{int(time.time())}',
+        'max_properties': args.max_properties,
+        'entry_point': 'default',
+        'stealth_mode': stealth_mode,
+        'mode': args.mode,
+        'areas': areas,
+        'max_threads': args.max_threads,
+        'output_bucket': args.output_bucket
     }
 
-# Global circuit breaker and session pool instances
+# Global circuit breaker instance
 circuit_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=60)
-session_pool = SessionPool(pool_size=3)
+# Session pool will be initialized in main()
 
 
 def extract_listing_urls_from_html(html_content):
@@ -690,26 +713,28 @@ def extract_listing_urls_from_html(html_content):
     
     return list(unique_listings)
 
-def collect_area_listing_urls(area_name, max_pages=None, session=None, stealth_config=None):
+def collect_area_listing_urls(area_name, max_pages=None, session=None, stealth_config=None, logger=None):
     """Collect listing URLs from a specific Tokyo area"""
     base_url = f"https://www.homes.co.jp/mansion/chuko/tokyo/{area_name}/list"
     stealth_mode = stealth_config and stealth_config.get('stealth_mode', False)
     
     # Use provided session or create new one
     if session is None:
-        session = create_stealth_session(stealth_mode=stealth_mode)
+        session = create_stealth_session(stealth_mode=stealth_mode, logger=logger)
         should_close_session = True
     else:
         should_close_session = False
     
     all_links = set()
     
-    log_structured_message("INFO", "Starting area URL collection", 
-                         area=area_name, base_url=base_url, stealth_mode=stealth_mode)
+    if logger:
+        log_structured_message(logger, "INFO", "Starting area URL collection", 
+                             area=area_name, base_url=base_url, stealth_mode=stealth_mode)
     
     try:
         # Step 1: Get page 1 to establish session
-        print(f"=== Collecting from {area_name} (page 1) ===")
+        if logger:
+            logger.info(f"=== Collecting from {area_name} (page 1) ===")
         response = session.get(base_url, timeout=15)
         
         if response.status_code != 200:
@@ -731,24 +756,28 @@ def collect_area_listing_urls(area_name, max_pages=None, session=None, stealth_c
         
         # Log if we're limiting pages
         if max_pages and total_pages > max_pages:
-            log_structured_message("INFO", "Page limit applied", 
-                                 area=area_name, total_pages=total_pages, max_pages=max_pages)
+            if logger:
+                log_structured_message(logger, "INFO", "Page limit applied", 
+                                     area=area_name, total_pages=total_pages, max_pages=max_pages)
         
-        log_structured_message("INFO", "Area pagination info parsed", 
-                             area=area_name, total_listings=total_count, 
-                             total_pages=total_pages, max_page=max_page)
+        if logger:
+            log_structured_message(logger, "INFO", "Area pagination info parsed", 
+                                 area=area_name, total_listings=total_count, 
+                                 total_pages=total_pages, max_page=max_page)
         
         # Extract listings from page 1
         page1_listings = extract_listing_urls_from_html(response.text)
         all_links.update(page1_listings)
-        print(f"{area_name} page 1: Found {len(page1_listings)} listings")
+        if logger:
+            logger.info(f"{area_name} page 1: Found {len(page1_listings)} listings")
         
         # Set referer for subsequent requests
         session.headers['Referer'] = base_url
         
         # Step 2: Get remaining pages with stealth timing
         for page_num in range(2, max_page + 1):
-            print(f"=== Collecting from {area_name} (page {page_num}) ===")
+            if logger:
+                logger.info(f"=== Collecting from {area_name} (page {page_num}) ===")
             
             # Use human-like delays in stealth mode
             if stealth_mode:
@@ -763,103 +792,118 @@ def collect_area_listing_urls(area_name, max_pages=None, session=None, stealth_c
                 response = session.get(page_url, timeout=15)
                 
                 if response.status_code != 200:
-                    log_structured_message("WARNING", "Failed to access area page", 
-                                         area=area_name, page=page_num, status_code=response.status_code)
+                    if logger:
+                        log_structured_message(logger, "WARNING", "Failed to access area page", 
+                                             area=area_name, page=page_num, status_code=response.status_code)
                     continue
                 
                 if "pardon our interruption" in response.text.lower():
-                    log_structured_message("ERROR", "Anti-bot protection triggered", 
-                                         area=area_name, page=page_num)
+                    if logger:
+                        log_structured_message(logger, "ERROR", "Anti-bot protection triggered", 
+                                             area=area_name, page=page_num)
                     break
                 
                 page_listings = extract_listing_urls_from_html(response.text)
                 all_links.update(page_listings)
-                print(f"{area_name} page {page_num}: Found {len(page_listings)} listings")
+                if logger:
+                    logger.info(f"{area_name} page {page_num}: Found {len(page_listings)} listings")
                 
                 session.headers['Referer'] = page_url
-                log_structured_message("INFO", "Area page scraped successfully", 
-                                     area=area_name, page=page_num, listings_found=len(page_listings))
+                if logger:
+                    log_structured_message(logger, "INFO", "Area page scraped successfully", 
+                                         area=area_name, page=page_num, listings_found=len(page_listings))
                 
             except Exception as e:
-                log_structured_message("ERROR", "Error fetching area page", 
-                                     area=area_name, page=page_num, error=str(e))
+                if logger:
+                    log_structured_message(logger, "ERROR", "Error fetching area page", 
+                                         area=area_name, page=page_num, error=str(e))
                 continue
         
         area_links_list = list(all_links)
-        log_structured_message("INFO", "Area URL collection completed", 
-                             area=area_name, total_unique_links=len(area_links_list))
+        if logger:
+            log_structured_message(logger, "INFO", "Area URL collection completed", 
+                                 area=area_name, total_unique_links=len(area_links_list))
         
         return area_links_list
         
     except Exception as e:
-        log_structured_message("ERROR", "Error in area URL collection", area=area_name, error=str(e))
+        if logger:
+            log_structured_message(logger, "ERROR", "Error in area URL collection", area=area_name, error=str(e))
         return []
     
     finally:
         if should_close_session:
             session.close()
 
-def collect_multiple_areas_urls(areas, stealth_config=None):
+def collect_multiple_areas_urls(areas, stealth_config=None, logger=None):
     """Collect listing URLs from multiple Tokyo areas in one session"""
     stealth_mode = stealth_config and stealth_config.get('stealth_mode', False)
-    session = create_stealth_session(stealth_mode=stealth_mode)
+    session = create_stealth_session(stealth_mode=stealth_mode, logger=logger)
     all_urls = []
     
-    log_structured_message("INFO", "Starting multi-area URL collection", 
-                         areas=areas, total_areas=len(areas), stealth_mode=stealth_mode)
+    if logger:
+        log_structured_message(logger, "INFO", "Starting multi-area URL collection", 
+                             areas=areas, total_areas=len(areas), stealth_mode=stealth_mode)
     
     try:
         # Simulate search behavior once at the beginning in stealth mode
         if stealth_mode and areas:
             first_area_url = f"https://www.homes.co.jp/mansion/chuko/tokyo/{areas[0]}/list"
-            simulate_search_behavior(session, first_area_url)
+            simulate_search_behavior(session, first_area_url, stealth_mode, logger)
         
         for i, area in enumerate(areas):
-            print(f"\n=== Processing area {i+1}/{len(areas)}: {area} ===")
+            if logger:
+                logger.info(f"\n=== Processing area {i+1}/{len(areas)}: {area} ===")
             
             # Add delay between areas in stealth mode
             if stealth_mode and i > 0:
                 area_transition_delay = simulate_navigation_delay() + random.uniform(5, 15)
-                print(f"Stealth mode: Area transition delay {area_transition_delay:.1f}s")
+                if logger:
+                    logger.info(f"Stealth mode: Area transition delay {area_transition_delay:.1f}s")
                 time.sleep(area_transition_delay)
             
             # Collect ALL pages from this area (no limit)
-            area_urls = collect_area_listing_urls(area, max_pages=None, session=session, stealth_config=stealth_config)
+            area_urls = collect_area_listing_urls(area, max_pages=None, session=session, stealth_config=stealth_config, logger=logger)
             all_urls.extend(area_urls)
             
-            print(f"Area {area}: Collected {len(area_urls)} URLs (Total: {len(all_urls)})")
+            if logger:
+                logger.info(f"Area {area}: Collected {len(area_urls)} URLs (Total: {len(all_urls)})")
         
         # Apply browsing patterns in stealth mode
         if stealth_mode and stealth_config:
             entry_point = stealth_config.get('entry_point', 'default')
-            all_urls = simulate_browsing_patterns(session, all_urls, entry_point)
+            all_urls = simulate_browsing_patterns(session, all_urls, entry_point, stealth_mode, logger)
         
-        log_structured_message("INFO", "Multi-area URL collection completed", 
-                             total_areas=len(areas), total_urls=len(all_urls), stealth_mode=stealth_mode)
+        if logger:
+            log_structured_message(logger, "INFO", "Multi-area URL collection completed", 
+                                 total_areas=len(areas), total_urls=len(all_urls), stealth_mode=stealth_mode)
         
         return all_urls, session
         
     except Exception as e:
-        log_structured_message("ERROR", "Error in multi-area URL collection", error=str(e))
+        if logger:
+            log_structured_message(logger, "ERROR", "Error in multi-area URL collection", error=str(e))
         session.close()
         raise
 
-def collect_all_listing_urls(base_url, max_pages=10, stealth_config=None):
+def collect_all_listing_urls(base_url, max_pages=10, stealth_config=None, logger=None):
     """Legacy function - collect listing URLs from single area (for backward compatibility)"""
     stealth_mode = stealth_config and stealth_config.get('stealth_mode', False)
-    session = create_stealth_session(stealth_mode=stealth_mode)
+    session = create_stealth_session(stealth_mode=stealth_mode, logger=logger)
     all_links = set()
     
     # Simulate search behavior in stealth mode
     if stealth_mode:
-        simulate_search_behavior(session, base_url)
+        simulate_search_behavior(session, base_url, stealth_mode, logger)
     
-    log_structured_message("INFO", "Starting listing URL collection", 
-                         base_url=base_url, stealth_mode=stealth_mode)
+    if logger:
+        log_structured_message(logger, "INFO", "Starting listing URL collection", 
+                             base_url=base_url, stealth_mode=stealth_mode)
     
     try:
         # Step 1: Get page 1 to establish session
-        print(f"=== Collecting listing URLs from page 1 ===")
+        if logger:
+            logger.info(f"=== Collecting listing URLs from page 1 ===")
         response = session.get(base_url, timeout=15)
         
         if response.status_code != 200:
@@ -878,20 +922,23 @@ def collect_all_listing_urls(base_url, max_pages=10, stealth_config=None):
         if max_pages is not None:
             max_page = min(max_page, max_pages)
         
-        log_structured_message("INFO", "Pagination info parsed", 
-                             total_listings=total_count, max_page=max_page)
+        if logger:
+            log_structured_message(logger, "INFO", "Pagination info parsed", 
+                                 total_listings=total_count, max_page=max_page)
         
         # Extract listings from page 1
         page1_listings = extract_listing_urls_from_html(response.text)
         all_links.update(page1_listings)
-        print(f"Page 1: Found {len(page1_listings)} listings")
+        if logger:
+            logger.info(f"Page 1: Found {len(page1_listings)} listings")
         
         # Set referer for subsequent requests
         session.headers['Referer'] = base_url
         
         # Step 2: Get remaining pages with stealth timing
         for page_num in range(2, max_page + 1):
-            print(f"=== Collecting listings from page {page_num} ===")
+            if logger:
+                logger.info(f"=== Collecting listings from page {page_num} ===")
             
             # Use human-like delays in stealth mode
             if stealth_mode:
@@ -906,25 +953,30 @@ def collect_all_listing_urls(base_url, max_pages=10, stealth_config=None):
                 response = session.get(page_url, timeout=15)
                 
                 if response.status_code != 200:
-                    log_structured_message("WARNING", "Failed to access page", 
-                                         page=page_num, status_code=response.status_code)
+                    if logger:
+                        log_structured_message(logger, "WARNING", "Failed to access page", 
+                                             page=page_num, status_code=response.status_code)
                     continue
                 
                 if "pardon our interruption" in response.text.lower():
-                    log_structured_message("ERROR", "Anti-bot protection triggered", page=page_num)
+                    if logger:
+                        log_structured_message(logger, "ERROR", "Anti-bot protection triggered", page=page_num)
                     break
                 
                 page_listings = extract_listing_urls_from_html(response.text)
                 all_links.update(page_listings)
-                print(f"Page {page_num}: Found {len(page_listings)} listings")
+                if logger:
+                    logger.info(f"Page {page_num}: Found {len(page_listings)} listings")
                 
                 session.headers['Referer'] = page_url
-                log_structured_message("INFO", "Page scraped successfully", 
-                                     page=page_num, listings_found=len(page_listings))
+                if logger:
+                    log_structured_message(logger, "INFO", "Page scraped successfully", 
+                                         page=page_num, listings_found=len(page_listings))
                 
             except Exception as e:
-                log_structured_message("ERROR", "Error fetching page", 
-                                     page=page_num, error=str(e))
+                if logger:
+                    log_structured_message(logger, "ERROR", "Error fetching page", 
+                                         page=page_num, error=str(e))
                 continue
         
         all_links_list = list(all_links)
@@ -932,38 +984,47 @@ def collect_all_listing_urls(base_url, max_pages=10, stealth_config=None):
         # Apply browsing patterns in stealth mode
         if stealth_mode and stealth_config:
             entry_point = stealth_config.get('entry_point', 'default')
-            all_links_list = simulate_browsing_patterns(session, all_links_list, entry_point)
+            all_links_list = simulate_browsing_patterns(session, all_links_list, entry_point, stealth_mode, logger)
         
-        log_structured_message("INFO", "URL collection completed", 
-                             total_unique_links=len(all_links_list),
-                             stealth_mode=stealth_mode)
+        if logger:
+            log_structured_message(logger, "INFO", "URL collection completed", 
+                                 total_unique_links=len(all_links_list),
+                                 stealth_mode=stealth_mode)
         
         return all_links_list, session
         
     except Exception as e:
-        log_structured_message("ERROR", "Error in URL collection", error=str(e))
+        if logger:
+            log_structured_message(logger, "ERROR", "Error in URL collection", error=str(e))
         session.close()
         raise
 
-def extract_property_details_with_circuit_breaker(property_url, referer_url, retries=3):
+def extract_property_details_with_circuit_breaker(property_url, referer_url, retries=3, config=None, logger=None):
     """Extract detailed property information using circuit breaker pattern"""
     session = None
     try:
+        # Create a session pool if it doesn't exist
+        if 'session_pool' not in globals():
+            global session_pool
+            stealth_mode = config.get('stealth_mode', False) if config else False
+            session_pool = SessionPool(pool_size=3, stealth_mode=stealth_mode, logger=logger)
+        
         # Get session from pool
         session = session_pool.get_session()
         
         # Use circuit breaker to protect the scraping operation
         result = circuit_breaker.call(
             _extract_property_details_core,
-            session, property_url, referer_url, retries
+            session, property_url, referer_url, retries, config, logger
         )
         
         return result
         
     except Exception as e:
         error_category = categorize_error(e)
-        log_structured_message("ERROR", "Circuit breaker protected extraction failed", 
-                             url=property_url, error=str(e), category=error_category.value)
+        if logger:
+            log_structured_message(logger, "ERROR", "Circuit breaker protected extraction failed", 
+                                 url=property_url, error=str(e), category=error_category.value)
         
         # Return structured error response
         return {
@@ -978,11 +1039,12 @@ def extract_property_details_with_circuit_breaker(property_url, referer_url, ret
             session_pool.return_session(session)
 
 
-def extract_property_images(soup, session, base_url, bucket=None, property_id=None):
+def extract_property_images(soup, session, base_url, bucket=None, property_id=None, config=None, logger=None):
     """Extract property images and upload to S3, return S3 keys"""
     s3_keys = []
     image_urls = set()
-    stealth_mode = os.environ.get("STEALTH_MODE", "false").lower() == "true"
+    stealth_mode = config.get('stealth_mode', False) if config else False
+    mode = config.get('mode', 'normal') if config else 'normal'
     
     try:
         # Updated selectors specifically for homes.co.jp structure
@@ -1057,10 +1119,18 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
                         img_url = base_url + '/' + img_url.lstrip('/')
                     image_urls.add(img_url)
         
-        print(f"Found {len(image_urls)} potential images for property {property_id}")
+        if logger:
+            logger.info(f"Found {len(image_urls)} potential images for property {property_id}")
         
-        # Download and process ALL images (remove the [:5] limit)
-        for i, img_url in enumerate(list(image_urls)):
+        # Apply per-property image cap in testing mode
+        urls = list(image_urls)
+        if mode == 'testing':
+            urls = urls[:5]  # Only process first 5 images in testing mode
+            if logger:
+                logger.info(f"Testing mode: limiting to 5 images per property")
+        
+        # Download and process images
+        for i, img_url in enumerate(urls):
             try:
                 img_response = session.get(img_url, timeout=10)
                 if img_response.status_code == 200:
@@ -1071,24 +1141,48 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
                         # Check image size to filter out tiny images
                         content_length = len(img_response.content)
                         if content_length < 1000:  # Skip very small images (< 1KB)
-                            print(f"Skipping small image {i}: {img_url} ({content_length} bytes)")
+                            if logger:
+                                logger.info(f"Skipping small image {i}: {img_url} ({content_length} bytes)")
                             continue
                         
-                        # Upload to S3 if bucket provided
-                        if bucket and property_id:
-                            s3_key = upload_image_to_s3(
-                                img_response.content, 
-                                bucket, 
-                                property_id, 
-                                i, 
-                                content_type
-                            )
-                            if s3_key:
-                                s3_keys.append(s3_key)
-                        else:
-                            # Local mode - store reference with proper naming
-                            filename = f"{property_id}_image_{i}_{img_url.split('/')[-1]}"
-                            s3_keys.append(filename)
+                        try:
+                            # Convert image to JPEG and resize
+                            img = Image.open(io.BytesIO(img_response.content))
+                            
+                            # Convert to RGB if necessary (handles RGBA, grayscale, etc.)
+                            if img.mode not in ('RGB', 'L'):
+                                img = img.convert('RGB')
+                            
+                            # Resize if larger than 1024x1024, preserving aspect ratio
+                            img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+                            
+                            # Save to bytes buffer as JPEG
+                            output_buffer = io.BytesIO()
+                            img.save(output_buffer, format='JPEG', quality=85, optimize=True)
+                            output_buffer.seek(0)
+                            processed_image_bytes = output_buffer.getvalue()
+                            
+                            # Upload to S3 if bucket provided
+                            if bucket and property_id:
+                                s3_key = upload_image_to_s3(
+                                    processed_image_bytes, 
+                                    bucket, 
+                                    property_id, 
+                                    i, 
+                                    'image/jpeg',  # Always JPEG now
+                                    logger=logger
+                                )
+                                if s3_key:
+                                    s3_keys.append(s3_key)
+                            else:
+                                # Local mode - store reference with .jpg extension
+                                filename = f"{property_id}_image_{i}.jpg"
+                                s3_keys.append(filename)
+                                
+                        except Exception as e:
+                            if logger:
+                                logger.error(f"Failed to process image {i}: {str(e)}")
+                            continue
                         
                         # Smaller delay between downloads
                         delay = random.uniform(0.2, 0.8)
@@ -1096,23 +1190,26 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
                             delay += random.uniform(0.5, 1.5)
                         time.sleep(delay)        
             except Exception as e:
-                print(f"Failed to download image {i} from {img_url}: {str(e)}")
+                if logger:
+                    logger.warning(f"Failed to download image {i} from {img_url}: {str(e)}")
                 continue
 
-        print(f"Successfully processed {len(s3_keys)} images for property {property_id}")
+        if logger:
+            logger.info(f"Successfully processed {len(s3_keys)} images for property {property_id}")
         return s3_keys
         
     except Exception as e:
-        log_structured_message("ERROR", "Image extraction failed", 
-                             property_id=property_id, error=str(e))
+        if logger:
+            log_structured_message(logger, "ERROR", "Image extraction failed", 
+                                 property_id=property_id, error=str(e))
         return []
 
 
-def _extract_property_details_core(session, property_url, referer_url, retries=3):
+def _extract_property_details_core(session, property_url, referer_url, retries=3, config=None, logger=None):
     """Core property extraction logic with enhanced error handling, stealth timing, and improved image capture"""
     last_error = None
-    stealth_mode = os.environ.get("STEALTH_MODE", "false").lower() == "true"
-    output_bucket = os.environ.get("OUTPUT_BUCKET")
+    stealth_mode = config.get('stealth_mode', False) if config else False
+    output_bucket = config.get('output_bucket', '') if config else ''
     
     for attempt in range(retries + 1):
         try:
@@ -1123,12 +1220,14 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
             if stealth_mode:
                 delay = simulate_human_reading_time()
                 delay = min(delay, 180)  # Max 3 minutes
-                print(f"Stealth mode: Simulating {delay:.1f}s human reading time")
+                if logger:
+                    logger.info(f"Stealth mode: Simulating {delay:.1f}s human reading time")
                 time.sleep(delay)
             else:
                 time.sleep(random.uniform(2, 5))
             
-            print(f"Scraping: {property_url}")
+            if logger:
+                logger.info(f"Scraping: {property_url}")
             response = session.get(property_url, timeout=15)
             
             if response.status_code != 200:
@@ -1161,7 +1260,8 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
                 match = re.search(pattern, property_url)
                 if match:
                     property_id = match.group(1)
-                    print(f"Extracted property ID: {property_id} using pattern: {pattern}")
+                    if logger:
+                        logger.debug(f"Extracted property ID: {property_id} using pattern: {pattern}")
                     break
             
             # If still unknown, try to extract from page content
@@ -1174,7 +1274,8 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
                         id_match = re.search(r'(\d{8,})', content)
                         if id_match:
                             property_id = id_match.group(1)
-                            print(f"Found property ID in meta content: {property_id}")
+                            if logger:
+                                logger.debug(f"Found property ID in meta content: {property_id}")
                             break
                 
                 # Look for ID in script tags or data attributes
@@ -1185,7 +1286,8 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
                             id_matches = re.findall(r'(?:property|mansion|id)["\']?\s*[:=]\s*["\']?(\d{8,})', script.string)
                             if id_matches:
                                 property_id = id_matches[0]
-                                print(f"Found property ID in script: {property_id}")
+                                if logger:
+                                    logger.debug(f"Found property ID in script: {property_id}")
                                 break
             
             # Store the extracted ID
@@ -1219,28 +1321,34 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
             
             # IMPROVED: Extract property images with better naming
             try:
-                print(f"Starting image extraction for property {property_id}...")
+                if logger:
+                    logger.info(f"Starting image extraction for property {property_id}...")
                 s3_keys = extract_property_images(
                     soup, session, "https://www.homes.co.jp", 
-                    bucket=output_bucket, property_id=property_id
+                    bucket=output_bucket, property_id=property_id,
+                    config=config, logger=logger
                 )
                 if s3_keys:
                     data["photo_filenames"] = "|".join(s3_keys)
                     data["image_count"] = len(s3_keys)
-                    log_structured_message("INFO", "Images processed", 
-                                         url=property_url, property_id=property_id,
-                                         image_count=len(s3_keys), 
-                                         has_s3_bucket=bool(output_bucket))
+                    if logger:
+                        log_structured_message(logger, "INFO", "Images processed", 
+                                             url=property_url, property_id=property_id,
+                                             image_count=len(s3_keys), 
+                                             has_s3_bucket=bool(output_bucket))
                 else:
-                    print(f"No images found for property {property_id}")
+                    if logger:
+                        logger.warning(f"No images found for property {property_id}")
                     
             except Exception as e:
-                log_structured_message("WARNING", "Image processing failed", 
-                                     url=property_url, property_id=property_id, error=str(e))
+                if logger:
+                    log_structured_message(logger, "WARNING", "Image processing failed", 
+                                         url=property_url, property_id=property_id, error=str(e))
             
             # Log successful extraction
-            log_structured_message("INFO", "Property details extracted successfully", 
-                                 url=property_url, fields_extracted=len(data))
+            if logger:
+                log_structured_message(logger, "INFO", "Property details extracted successfully", 
+                                     url=property_url, fields_extracted=len(data))
             
             return data
             
@@ -1248,9 +1356,10 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
             last_error = e
             error_category = categorize_error(e, response if 'response' in locals() else None)
             
-            log_structured_message("WARNING", f"Extraction attempt {attempt + 1} failed", 
-                                 url=property_url, error=str(e), 
-                                 category=error_category.value, attempt=attempt + 1)
+            if logger:
+                log_structured_message(logger, "WARNING", f"Extraction attempt {attempt + 1} failed", 
+                                     url=property_url, error=str(e), 
+                                     category=error_category.value, attempt=attempt + 1)
             
             if attempt == retries:
                 break
@@ -1265,18 +1374,11 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
     else:
         raise Exception("Max retries exceeded")
 
-def upload_image_to_s3(image_content, bucket, property_id, image_index, content_type="image/jpeg"):
+def upload_image_to_s3(image_content, bucket, property_id, image_index, content_type="image/jpeg", logger=None):
     """Upload image content to S3 and return S3 key"""
     try:
-        # Determine file extension based on content type
-        if 'png' in content_type.lower():
-            file_extension = '.png'
-        elif 'gif' in content_type.lower():
-            file_extension = '.gif'
-        elif 'webp' in content_type.lower():
-            file_extension = '.webp'
-        else:
-            file_extension = '.jpg'  # Default to JPEG
+        # Always use .jpg extension now since we standardize to JPEG
+        file_extension = '.jpg'
         
         # Generate current date for S3 path
         date_str = datetime.now().strftime('%Y-%m-%d')
@@ -1288,29 +1390,33 @@ def upload_image_to_s3(image_content, bucket, property_id, image_index, content_
             Bucket=bucket,
             Key=s3_key,
             Body=image_content,
-            ContentType=content_type
+            ContentType='image/jpeg'  # Always JPEG
         )
         
-        log_structured_message("INFO", "Image uploaded to S3", 
-                             s3_key=s3_key, property_id=property_id, 
-                             image_index=image_index, content_type=content_type)
+        if logger:
+            log_structured_message(logger, "INFO", "Image uploaded to S3", 
+                                 s3_key=s3_key, property_id=property_id, 
+                                 image_index=image_index, content_type='image/jpeg')
         return s3_key
         
     except Exception as e:
-        log_structured_message("ERROR", "S3 image upload failed", 
-                             property_id=property_id, image_index=image_index, 
-                             error=str(e))
+        if logger:
+            log_structured_message(logger, "ERROR", "S3 image upload failed", 
+                                 property_id=property_id, image_index=image_index, 
+                                 error=str(e))
         return None
 
-def upload_to_s3(file_path, bucket, s3_key):
+def upload_to_s3(file_path, bucket, s3_key, logger=None):
     """Upload file to S3"""
     try:
         s3 = boto3.client("s3")
         s3.upload_file(file_path, bucket, s3_key)
-        print(f"📤 Uploaded to s3://{bucket}/{s3_key}")
+        if logger:
+            logger.info(f"📤 Uploaded to s3://{bucket}/{s3_key}")
         return True
     except Exception as e:
-        print(f"❌ S3 upload failed: {e}")
+        if logger:
+            logger.error(f"❌ S3 upload failed: {e}")
         return False
 
 def send_cloudwatch_metrics(success_count, error_count, duration_seconds, total_properties, stealth_config=None):
@@ -1412,14 +1518,16 @@ def send_cloudwatch_metrics(success_count, error_count, duration_seconds, total_
             MetricData=metric_data
         )
         
-        log_structured_message("INFO", "CloudWatch metrics sent", 
-                             success_count=success_count, 
-                             error_count=error_count,
-                             duration_seconds=duration_seconds)
+        if 'logger' in globals() and logger:
+            log_structured_message(logger, "INFO", "CloudWatch metrics sent", 
+                                 success_count=success_count, 
+                                 error_count=error_count,
+                                 duration_seconds=duration_seconds)
         return True
         
     except Exception as e:
-        log_structured_message("ERROR", "Failed to send CloudWatch metrics", error=str(e))
+        if 'logger' in globals() and logger:
+            log_structured_message(logger, "ERROR", "Failed to send CloudWatch metrics", error=str(e))
         return False
 
 def write_job_summary(summary_data):
@@ -1439,15 +1547,55 @@ def write_job_summary(summary_data):
         except:
             print(f"❌ Failed to write job summary: {e}")
 
-def log_structured_message(level, message, **kwargs):
+def setup_logging():
+    """Configure logging with JSON formatting"""
+    # Configure root logger
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(message)s',  # Just the message, as we'll format it as JSON
+        handlers=[
+            logging.StreamHandler()  # Output to stdout
+        ]
+    )
+    
+    # Create a custom formatter that outputs JSON
+    class JSONFormatter(logging.Formatter):
+        def format(self, record):
+            log_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "level": record.levelname,
+                "message": record.getMessage(),
+                "module": record.module,
+                "function": record.funcName
+            }
+            # Add any extra fields from the record
+            if hasattr(record, 'extra_fields'):
+                log_entry.update(record.extra_fields)
+            return json.dumps(log_entry)
+    
+    # Apply JSON formatter to all handlers
+    json_formatter = JSONFormatter()
+    for handler in logging.root.handlers:
+        handler.setFormatter(json_formatter)
+    
+    return logging.getLogger(__name__)
+
+def log_structured_message(logger, level, message, **kwargs):
     """Log structured message in JSON format"""
-    log_entry = {
-        "timestamp": datetime.now().isoformat(),
-        "level": level,
-        "message": message,
-        **kwargs
-    }
-    print(json.dumps(log_entry))
+    if not logger:
+        return
+    
+    # Create a custom log record with extra fields
+    extra = {'extra_fields': kwargs}
+    
+    if level == "INFO":
+        logger.info(message, extra=extra)
+    elif level == "WARNING":
+        logger.warning(message, extra=extra)
+    elif level == "ERROR":
+        logger.error(message, extra=extra)
+    elif level == "DEBUG":
+        logger.debug(message, extra=extra)
 
 def validate_property_data(property_data):
     """Validate and clean property data"""
@@ -1491,58 +1639,108 @@ def validate_property_data(property_data):
     
     return True, "Data validation passed"
 
+def parse_arguments():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(
+        description="HTTP-based scraper for homes.co.jp with session management"
+    )
+    
+    parser.add_argument(
+        '--mode',
+        choices=['normal', 'testing', 'stealth'],
+        default='normal',
+        help='Scraping mode (default: normal)'
+    )
+    
+    parser.add_argument(
+        '--max-properties',
+        type=int,
+        default=5,  # Default to 5 for safety
+        help='Maximum number of properties to scrape (default: 5)'
+    )
+    
+    parser.add_argument(
+        '--output-bucket',
+        type=str,
+        default='',
+        help='S3 bucket for output (optional)'
+    )
+    
+    parser.add_argument(
+        '--max-threads',
+        type=int,
+        default=2,
+        help='Maximum number of threads for concurrent scraping (default: 2)'
+    )
+    
+    parser.add_argument(
+        '--areas',
+        type=str,
+        default='',
+        help='Comma-separated list of Tokyo areas to scrape'
+    )
+    
+    return parser.parse_args()
+
 def main():
     """Main scraper function using HTTP with session flow and stealth capabilities"""
+    # Parse command line arguments
+    args = parse_arguments()
+    
+    # Setup logging
+    logger = setup_logging()
+    
     job_start_time = datetime.now()
     
-    # Get configuration
-    config = get_stealth_session_config()
-    is_local_testing = not os.environ.get("OUTPUT_BUCKET")
+    # Get configuration from args
+    config = get_stealth_session_config(args)
+    is_local_testing = not config['output_bucket']
     
-    # Determine mode and limits based on new event-driven configuration
+    # Determine mode and limits based on configuration
     mode = config['mode']
     
+    # Enforce hard 5-property limit in testing mode
     if mode == 'testing':
-        max_properties_limit = config['max_properties'] or 5
+        max_properties_limit = 5  # Hard limit for testing
         mode_name = "TESTING MODE"
         stealth_enabled = False
-        log_structured_message("INFO", "TESTING MODE: Limited scope for testing", 
+        log_structured_message(logger, "INFO", "TESTING MODE: Limited scope for testing", 
                              session_id=config['session_id'],
                              max_properties=max_properties_limit,
                              areas=config['areas'],
                              start_time=job_start_time.isoformat())
-        print(f"🧪 TESTING MODE - Session: {config['session_id']}, Max Properties: {max_properties_limit}, Areas: {config['areas']}")
+        logger.info(f"🧪 TESTING MODE - Session: {config['session_id']}, Max Properties: {max_properties_limit}, Areas: {config['areas']}")
     elif mode == 'stealth' or config['stealth_mode']:
         max_properties_limit = config['max_properties']
         mode_name = "STEALTH MODE"
         stealth_enabled = True
-        log_structured_message("INFO", "STEALTH MODE: Session-based distributed scraping", 
+        log_structured_message(logger, "INFO", "STEALTH MODE: Session-based distributed scraping", 
                              session_id=config['session_id'],
                              max_properties=max_properties_limit,
                              entry_point=config['entry_point'],
                              start_time=job_start_time.isoformat())
-        print(f"🥷 STEALTH MODE - Session: {config['session_id']}, Max Properties: {max_properties_limit}")
+        logger.info(f"🥷 STEALTH MODE - Session: {config['session_id']}, Max Properties: {max_properties_limit}")
     elif mode == 'normal':
         max_properties_limit = config['max_properties'] or 500
         mode_name = "NORMAL MODE"
         stealth_enabled = False
-        log_structured_message("INFO", "NORMAL MODE: Standard scraping", 
+        log_structured_message(logger, "INFO", "NORMAL MODE: Standard scraping", 
                              session_id=config['session_id'],
                              max_properties=max_properties_limit,
                              areas=config['areas'],
                              start_time=job_start_time.isoformat())
-        print(f"📊 NORMAL MODE - Session: {config['session_id']}, Max Properties: {max_properties_limit}, Areas: {config['areas']}")
+        logger.info(f"📊 NORMAL MODE - Session: {config['session_id']}, Max Properties: {max_properties_limit}, Areas: {config['areas']}")
     elif is_local_testing:
         max_properties_limit = 5
         mode_name = "LOCAL TESTING"
         stealth_enabled = False
-        log_structured_message("INFO", "LOCAL TESTING MODE: Limited to 5 listings", start_time=job_start_time.isoformat())
-        print("🧪 LOCAL TESTING MODE - Processing only 5 listings for quick testing")
+        log_structured_message(logger, "INFO", "LOCAL TESTING MODE: Limited to 5 listings", start_time=job_start_time.isoformat())
+        logger.info("🧪 LOCAL TESTING MODE - Processing only 5 listings for quick testing")
     else:
         max_properties_limit = 500  # Default limit
         mode_name = "PRODUCTION"
         stealth_enabled = False
-        log_structured_message("INFO", "Starting HTTP scraper job", start_time=job_start_time.isoformat())
+        log_structured_message(logger, "INFO", "Starting HTTP scraper job", start_time=job_start_time.isoformat())
     
     error_count = 0
     success_count = 0
@@ -1556,21 +1754,21 @@ def main():
         if mode == 'testing':
             # Use specific areas from configuration or default to chofu-city
             session_areas = config['areas'] if config['areas'] else ["chofu-city"]
-            print(f"🧪 TESTING MODE - Using areas: {session_areas}")
+            logger.info(f"🧪 TESTING MODE - Using areas: {session_areas}")
         elif mode == 'normal':
             # Use specific areas from configuration or default to chofu-city
             session_areas = config['areas'] if config['areas'] else ["chofu-city"]
-            print(f"📊 NORMAL MODE - Using areas: {session_areas}")
+            logger.info(f"📊 NORMAL MODE - Using areas: {session_areas}")
         elif stealth_enabled:
-            print(f"\n🗖️ Discovering Tokyo areas and calculating session assignment...")
-            all_tokyo_areas = discover_tokyo_areas()
+            logger.info(f"\n🗖️ Discovering Tokyo areas and calculating session assignment...")
+            all_tokyo_areas = discover_tokyo_areas(stealth_mode=stealth_enabled, logger=logger)
             session_areas = get_daily_area_distribution(all_tokyo_areas, config['session_id'], date_key)
             
             if not session_areas:
                 raise Exception(f"No areas assigned to session {config['session_id']}")
             
-            print(f"🏆 Session {config['session_id']} assigned areas: {session_areas}")
-            log_structured_message("INFO", "Session area assignment", 
+            logger.info(f"🏆 Session {config['session_id']} assigned areas: {session_areas}")
+            log_structured_message(logger, "INFO", "Session area assignment", 
                                  session_id=config['session_id'],
                                  assigned_areas=session_areas,
                                  total_tokyo_areas=len(all_tokyo_areas))
@@ -1579,49 +1777,56 @@ def main():
             session_areas = ["chofu-city"]
         
         # Step 1: Collect all listing URLs with stealth capabilities
-        print(f"\n🔗 Collecting listing URLs from {len(session_areas)} areas ({mode_name})...")
+        logger.info(f"\n🔗 Collecting listing URLs from {len(session_areas)} areas ({mode_name})...")
         
         if len(session_areas) > 1:
-            all_urls, session = collect_multiple_areas_urls(session_areas, config)
+            all_urls, session = collect_multiple_areas_urls(session_areas, config, logger)
+            BASE_URL = "https://www.homes.co.jp"  # Base URL for multi-area
         else:
             # Single area fallback - collect all pages
             BASE_URL = f"https://www.homes.co.jp/mansion/chuko/tokyo/{session_areas[0]}/list"
             max_pages = 1 if is_local_testing else None  # No limit in production
-            all_urls, session = collect_all_listing_urls(BASE_URL, max_pages, config)
+            all_urls, session = collect_all_listing_urls(BASE_URL, max_pages, config, logger)
         
         if not all_urls:
             raise Exception("No listing URLs found")
         
-        # Only limit URLs in local testing mode
-        if is_local_testing:
-            all_urls = all_urls[:5]  # Only process first 5 listings for testing
-            print(f"🧪 LIMITED TO {len(all_urls)} LISTINGS FOR LOCAL TESTING")
+        # Apply hard limit in testing mode
+        if mode == 'testing':
+            max_props = 5  # Hard limit for testing mode
+            all_urls = all_urls[:max_props]
+            logger.info(f"🧪 TESTING MODE: LIMITED TO {len(all_urls)} PROPERTIES")
+        elif config['max_properties'] and config['max_properties'] > 0:
+            # Apply user-specified limit in other modes
+            all_urls = all_urls[:config['max_properties']]
+            logger.info(f"🌐 LIMITED TO {len(all_urls)} PROPERTIES (user specified)")
         else:
-            # In production/stealth mode: scrape ALL properties found
-            print(f"🚀 PROCESSING ALL {len(all_urls)} PROPERTIES FOUND")
+            # No limit - process all found properties
+            logger.info(f"🚀 PROCESSING ALL {len(all_urls)} PROPERTIES FOUND")
             if stealth_enabled:
-                print(f"🥷 STEALTH MODE: Using human-like delays for {len(all_urls)} properties")
+                logger.info(f"🥷 STEALTH MODE: Using human-like delays for {len(all_urls)} properties")
         
-        log_structured_message("INFO", "URL collection completed", total_urls=len(all_urls))
+        log_structured_message(logger, "INFO", "URL collection completed", total_urls=len(all_urls))
         
         # Step 2: Extract detailed information from each property with circuit breaker protection
-        print(f"\n📋 Extracting details from {len(all_urls)} properties...")
+        logger.info(f"\n📋 Extracting details from {len(all_urls)} properties...")
         listings_data = []
         circuit_breaker_triggered = False
         response_times = []
         request_start_times = []
         
-        # Use conservative threading - single thread in stealth mode
-        if stealth_enabled:
-            max_threads = 1  # Single-threaded for maximum stealth
-            print("🥷 Using single-threaded extraction for stealth")
+        # Use configured thread pool size
+        max_threads = config.get('max_threads', 2)
+        if stealth_enabled and max_threads > 1:
+            max_threads = 1  # Force single-threaded for stealth mode
+            logger.info("🥷 Using single-threaded extraction for stealth")
         else:
-            max_threads = 2  # Conservative threading for normal mode
+            logger.info(f"🔧 Using {max_threads} threads for extraction")
         
         with ThreadPoolExecutor(max_workers=max_threads) as executor:
             # Submit all tasks using circuit breaker enhanced function
             futures = {
-                executor.submit(extract_property_details_with_circuit_breaker, url, BASE_URL): url 
+                executor.submit(extract_property_details_with_circuit_breaker, url, BASE_URL, config=config, logger=logger): url 
                 for url in all_urls
             }
             
@@ -1638,14 +1843,14 @@ def main():
                     # Check if circuit breaker was triggered
                     if "circuit_breaker_state" in result and result["circuit_breaker_state"] == "OPEN":
                         circuit_breaker_triggered = True
-                        log_structured_message("WARNING", "Circuit breaker triggered - degrading gracefully", 
+                        log_structured_message(logger, "WARNING", "Circuit breaker triggered - degrading gracefully", 
                                              url=url, circuit_breaker_state=result["circuit_breaker_state"])
                     
                     # Validate and clean property data
                     if "error" not in result:
                         is_valid, validation_message = validate_property_data(result)
                         if not is_valid:
-                            log_structured_message("WARNING", "Data validation failed", url=url, reason=validation_message)
+                            log_structured_message(logger, "WARNING", "Data validation failed", url=url, reason=validation_message)
                             result["validation_error"] = validation_message
                             error_count += 1
                         else:
@@ -1657,7 +1862,7 @@ def main():
                         
                 except Exception as e:
                     error_category = categorize_error(e)
-                    log_structured_message("ERROR", "Error processing property", 
+                    log_structured_message(logger, "ERROR", "Error processing property", 
                                          url=url, error=str(e), category=error_category.value)
                     error_count += 1
                     listings_data.append({
@@ -1668,14 +1873,14 @@ def main():
                     
                     # Implement graceful degradation if too many errors
                     if error_count > len(all_urls) * 0.5:  # More than 50% errors
-                        log_structured_message("WARNING", "High error rate detected - considering early termination",
+                        log_structured_message(logger, "WARNING", "High error rate detected - considering early termination",
                                              error_rate=error_count / len(listings_data) if listings_data else 1.0,
                                              total_processed=len(listings_data),
                                              total_errors=error_count)
                         
                         # If circuit breaker is open and we have high errors, stop processing
                         if circuit_breaker_triggered and error_count > 10:
-                            log_structured_message("ERROR", "Circuit breaker open with high error rate - stopping processing",
+                            log_structured_message(logger, "ERROR", "Circuit breaker open with high error rate - stopping processing",
                                                  error_count=error_count, processed_count=len(listings_data))
                             break
                 
@@ -1684,7 +1889,7 @@ def main():
                     # Check detection indicators every 10 requests
                     risk_level, indicators = check_detection_indicators(response_times, error_count, len(listings_data))
                     if risk_level != "LOW":
-                        log_structured_message("WARNING", "Detection risk elevated", 
+                        log_structured_message(logger, "WARNING", "Detection risk elevated", 
                                              risk_level=risk_level, 
                                              indicators=indicators,
                                              processed_count=len(listings_data))
@@ -1713,21 +1918,21 @@ def main():
             local_path = filename
             df.to_csv(local_path, index=False)
         
-        log_structured_message("INFO", "Data saved locally", file_path=local_path)
+        log_structured_message(logger, "INFO", "Data saved locally", file_path=local_path)
         
         # Step 4: Upload to S3
         s3_upload_success = False
-        output_bucket = os.environ.get("OUTPUT_BUCKET")
+        output_bucket = config.get('output_bucket', '')
         s3_key = None
         
         if output_bucket and not is_local_testing:
             s3_key = f"scraper-output/{filename}"
-            s3_upload_success = upload_to_s3(local_path, output_bucket, s3_key)
+            s3_upload_success = upload_to_s3(local_path, output_bucket, s3_key, logger)
         elif is_local_testing:
-            print("🧪 LOCAL TESTING: Skipping S3 upload")
-            log_structured_message("INFO", "LOCAL TESTING: S3 upload skipped")
+            logger.info("🧪 LOCAL TESTING: Skipping S3 upload")
+            log_structured_message(logger, "INFO", "LOCAL TESTING: S3 upload skipped")
         else:
-            log_structured_message("WARNING", "OUTPUT_BUCKET environment variable not set")
+            log_structured_message(logger, "WARNING", "OUTPUT_BUCKET environment variable not set")
         
         # Step 5: Generate job summary
         job_end_time = datetime.now()
@@ -1762,25 +1967,25 @@ def main():
             # Final detection risk assessment
             if response_times:
                 final_risk_level, final_indicators = check_detection_indicators(response_times, error_count, len(listings_data))
-                log_structured_message("INFO", "Final detection risk assessment", 
+                log_structured_message(logger, "INFO", "Final detection risk assessment", 
                                      risk_level=final_risk_level, 
                                      indicators=final_indicators)
                 
                 if stealth_enabled:
                     send_detection_metrics(final_risk_level, final_indicators, config)
         else:
-            log_structured_message("INFO", f"{mode_name}: Skipping CloudWatch metrics")
+            log_structured_message(logger, "INFO", f"{mode_name}: Skipping CloudWatch metrics")
         
-        log_structured_message("INFO", "HTTP scraper job completed successfully", **summary_data)
+        log_structured_message(logger, "INFO", "HTTP scraper job completed successfully", **summary_data)
         
-        print(f"\n✅ {mode_name} scraping completed successfully!")
+        logger.info(f"\n✅ {mode_name} scraping completed successfully!")
         if stealth_enabled:
-            print(f"🥷 Session: {config['session_id']}")
-        print(f"📊 Results: {success_count} successful, {error_count} failed")
-        print(f"⏱️ Duration: {duration:.1f} seconds")
-        print(f"💾 Output: {local_path}")
+            logger.info(f"🥷 Session: {config['session_id']}")
+        logger.info(f"📊 Results: {success_count} successful, {error_count} failed")
+        logger.info(f"⏱️ Duration: {duration:.1f} seconds")
+        logger.info(f"💾 Output: {local_path}")
         if s3_upload_success:
-            print(f"☁️ S3: s3://{output_bucket}/{s3_key}")
+            logger.info(f"☁️ S3: s3://{output_bucket}/{s3_key}")
         
     except Exception as e:
         job_end_time = datetime.now()
@@ -1799,14 +2004,11 @@ def main():
         }
         
         write_job_summary(summary_data)
-        log_structured_message("ERROR", "HTTP scraper job failed", **summary_data)
-        print(f"\n❌ Scraping failed: {e}")
+        log_structured_message(logger, "ERROR", "HTTP scraper job failed", **summary_data)
+        logger.error(f"\n❌ Scraping failed: {e}")
         raise
     
     finally:
-        # Clean up session pool
-        session_pool.close_all()
-        
         # Close the original session if it exists
         if session:
             session.close()
