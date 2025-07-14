@@ -28,6 +28,10 @@ echo ""
 INSTANCE_ID=$(aws cloudformation describe-stacks --stack-name scraper-compute-stack --query "Stacks[0].Outputs[?OutputKey=='ScraperInstanceId'].OutputValue" --output text 2>/dev/null)
 echo -e "${YELLOW}Instance ID: $INSTANCE_ID${NC}"
 
+# Debug: Check what Lambda log groups exist
+echo -e "${YELLOW}Available Lambda log groups:${NC}"
+aws logs describe-log-groups --log-group-name-prefix "/aws/lambda/" --query 'logGroups[*].logGroupName' --output text | tr '\t' '\n' | grep -i scraper || echo "No scraper-related log groups found"
+
 # Start monitoring
 START_TIME=$(($(date +%s) * 1000))
 LAST_LAMBDA_COUNT=0
@@ -36,13 +40,21 @@ NO_NEW_LOGS_COUNT=0
 
 echo ""
 echo -e "${GREEN}=== MONITORING LOGS ===${NC}"
+echo -e "${BLUE}🔷 BLUE = Lambda logs${NC}"
+echo -e "${ORANGE}🔶 ORANGE = EC2 logs${NC}"
+echo ""
 
 while true; do
     echo -e "${YELLOW}[$(date +'%H:%M:%S')] Checking logs...${NC}"
     
-    # Check Lambda logs
+    # Check Lambda logs - try both possible log group names
     LAMBDA_LOGS=$(aws logs filter-log-events \
         --log-group-name "/aws/lambda/trigger-scraper" \
+        --start-time $START_TIME \
+        --query 'events[*].message' \
+        --output text 2>/dev/null || \
+        aws logs filter-log-events \
+        --log-group-name "/aws/lambda/ScraperTriggerLambda" \
         --start-time $START_TIME \
         --query 'events[*].message' \
         --output text 2>/dev/null || echo "")
@@ -50,9 +62,9 @@ while true; do
     LAMBDA_COUNT=$(echo "$LAMBDA_LOGS" | wc -l)
     
     if [[ $LAMBDA_COUNT -gt $LAST_LAMBDA_COUNT ]]; then
-        echo -e "${BLUE}🔷 === LAMBDA LOGS ===${NC}"
-        echo "$LAMBDA_LOGS" | tail -n +$((LAST_LAMBDA_COUNT + 1)) | sed "s/^/  ${BLUE}LAMBDA:${NC} /"
-        echo -e "${BLUE}🔷 === END LAMBDA ===${NC}"
+        echo "$LAMBDA_LOGS" | tail -n +$((LAST_LAMBDA_COUNT + 1)) | while IFS= read -r line; do
+            echo -e "${BLUE}LAMBDA: $line${NC}"
+        done
         LAST_LAMBDA_COUNT=$LAMBDA_COUNT
         NO_NEW_LOGS_COUNT=0
     fi
@@ -77,11 +89,23 @@ while true; do
             EC2_COUNT=$(echo "$EC2_LOGS" | wc -l)
             
             if [[ "$EC2_LOGS" != "NO_LOGS" && $EC2_COUNT -gt $LAST_EC2_COUNT ]]; then
-                echo -e "${ORANGE}🔶 === EC2 LOGS ===${NC}"
-                echo "$EC2_LOGS" | tail -n +$((LAST_EC2_COUNT + 1)) | sed "s/^/  ${ORANGE}EC2:${NC} /"
-                echo -e "${ORANGE}🔶 === END EC2 ===${NC}"
+                echo "$EC2_LOGS" | tail -n +$((LAST_EC2_COUNT + 1)) | while IFS= read -r line; do
+                    echo -e "${ORANGE}EC2: $line${NC}"
+                done
                 LAST_EC2_COUNT=$EC2_COUNT
                 NO_NEW_LOGS_COUNT=0
+            fi
+            
+            # Also check SSM command status for debugging
+            if [[ -n "$COMMAND_ID" ]]; then
+                SSM_STATUS=$(aws ssm get-command-invocation \
+                    --command-id "$COMMAND_ID" \
+                    --instance-id "$INSTANCE_ID" \
+                    --query 'Status' \
+                    --output text 2>/dev/null || echo "UNKNOWN")
+                if [[ "$SSM_STATUS" != "InProgress" ]]; then
+                    echo -e "${ORANGE}SSM Command Status: $SSM_STATUS${NC}"
+                fi
             fi
         fi
     fi
