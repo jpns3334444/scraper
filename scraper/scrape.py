@@ -687,9 +687,9 @@ def get_stealth_session_config(args):
     stealth_mode = args.mode == 'stealth'
     
     return {
-        'session_id': f'session-{int(time.time())}',
+        'session_id': os.environ.get('SESSION_ID', f'session-{int(time.time())}'),
         'max_properties': args.max_properties,
-        'entry_point': 'default',
+        'entry_point': os.environ.get('ENTRY_POINT', 'default'),
         'stealth_mode': stealth_mode,
         'mode': args.mode,
         'areas': areas,
@@ -1640,7 +1640,7 @@ def validate_property_data(property_data):
     return True, "Data validation passed"
 
 def parse_arguments():
-    """Parse command line arguments"""
+    """Parse command line arguments with environment variable fallbacks"""
     parser = argparse.ArgumentParser(
         description="HTTP-based scraper for homes.co.jp with session management"
     )
@@ -1648,35 +1648,35 @@ def parse_arguments():
     parser.add_argument(
         '--mode',
         choices=['normal', 'testing', 'stealth'],
-        default='normal',
+        default=os.environ.get('MODE', 'normal'),
         help='Scraping mode (default: normal)'
     )
     
     parser.add_argument(
         '--max-properties',
         type=int,
-        default=5,  # Default to 5 for safety
+        default=int(os.environ.get('MAX_PROPERTIES', '5')),
         help='Maximum number of properties to scrape (default: 5)'
     )
     
     parser.add_argument(
         '--output-bucket',
         type=str,
-        default='',
+        default=os.environ.get('OUTPUT_BUCKET', ''),
         help='S3 bucket for output (optional)'
     )
     
     parser.add_argument(
         '--max-threads',
         type=int,
-        default=2,
+        default=int(os.environ.get('MAX_THREADS', '2')),
         help='Maximum number of threads for concurrent scraping (default: 2)'
     )
     
     parser.add_argument(
         '--areas',
         type=str,
-        default='',
+        default=os.environ.get('AREAS', ''),
         help='Comma-separated list of Tokyo areas to scrape'
     )
     

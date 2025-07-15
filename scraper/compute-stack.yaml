@@ -98,7 +98,8 @@ Resources:
               - "\"\n"
               - "echo \"Using S3 bucket: $OUTPUT_BUCKET_NAME\" >> /var/log/scraper/run.log\n"
               - "echo \"Cloning scraper from GitHub...\" >> /var/log/scraper/run.log\n"
-              - "pip3 install pandas requests beautifulsoup4 boto3 lxml\n"
+              - "pip3 install --upgrade pip\n"
+              - "pip3 install --upgrade pandas requests beautifulsoup4 boto3 lxml Pillow\n"
               - "echo \"Retrieving GitHub token from Secrets Manager...\" >> /var/log/scraper/run.log\n"
               - "GITHUB_TOKEN=$(aws secretsmanager get-secret-value --secret-id github-token --region "
               - !Ref AWS::Region
