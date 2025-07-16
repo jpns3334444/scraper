@@ -35,7 +35,7 @@ aws stepfunctions list-executions \
   --max-items 1
 
 # Check S3 for today's data
-aws s3 ls s3://re-stock/reports/$(date +%Y-%m-%d)/
+aws s3 ls s3://tokyo-real-estate-ai-data/reports/$(date +%Y-%m-%d)/
 
 # Check CloudWatch logs for errors
 aws logs filter-log-events \
@@ -68,7 +68,7 @@ aws stepfunctions get-execution-history \
 
 **ETL Step Failed**
 - **Cause**: CSV file missing or malformed
-- **Check**: `aws s3 ls s3://re-stock/raw/$(date +%Y-%m-%d)/`
+- **Check**: `aws s3 ls s3://tokyo-real-estate-ai-data/raw/$(date +%Y-%m-%d)/`
 - **Solution**: Verify scraper infrastructure is running
 
 **Prompt Builder Failed**
@@ -95,10 +95,10 @@ aws stepfunctions get-execution-history \
 #### Diagnosis
 ```bash
 # Check raw data volume
-aws s3 ls s3://re-stock/raw/$(date +%Y-%m-%d)/ --human-readable
+aws s3 ls s3://tokyo-real-estate-ai-data/raw/$(date +%Y-%m-%d)/ --human-readable
 
 # Check processed JSONL
-aws s3 cp s3://re-stock/clean/$(date +%Y-%m-%d)/listings.jsonl - | wc -l
+aws s3 cp s3://tokyo-real-estate-ai-data/clean/$(date +%Y-%m-%d)/listings.jsonl - | wc -l
 ```
 
 #### Solutions
@@ -186,13 +186,13 @@ aws stepfunctions start-execution \
 
 ```bash
 # Check if source data exists
-aws s3 ls s3://re-stock/raw/2025-07-07/
+aws s3 ls s3://tokyo-real-estate-ai-data/raw/2025-07-07/
 
 # Clean up partial results
-aws s3 rm s3://re-stock/clean/2025-07-07/ --recursive
-aws s3 rm s3://re-stock/prompts/2025-07-07/ --recursive
-aws s3 rm s3://re-stock/batch_output/2025-07-07/ --recursive
-aws s3 rm s3://re-stock/reports/2025-07-07/ --recursive
+aws s3 rm s3://tokyo-real-estate-ai-data/clean/2025-07-07/ --recursive
+aws s3 rm s3://tokyo-real-estate-ai-data/prompts/2025-07-07/ --recursive
+aws s3 rm s3://tokyo-real-estate-ai-data/batch_output/2025-07-07/ --recursive
+aws s3 rm s3://tokyo-real-estate-ai-data/reports/2025-07-07/ --recursive
 
 # Restart execution
 aws stepfunctions start-execution \
@@ -213,7 +213,7 @@ aws lambda invoke \
 # Test Prompt Builder
 aws lambda invoke \
   --function-name STACK-prompt-builder \
-  --payload '{"date":"2025-07-07","bucket":"re-stock","jsonl_key":"clean/2025-07-07/listings.jsonl"}' \
+  --payload '{"date":"2025-07-07","bucket":"tokyo-real-estate-ai-data","jsonl_key":"clean/2025-07-07/listings.jsonl"}' \
   response.json
 
 # Test Report Sender (with mock data)
@@ -384,7 +384,7 @@ aws events delete-rule --name STACK-daily-analysis
 ## Disaster Recovery
 
 ### Data Backup
-- S3 versioning enabled on re-stock bucket
+- S3 versioning enabled on tokyo-real-estate-ai-data bucket
 - Cross-region replication recommended for critical data
 - CloudFormation templates stored in version control
 

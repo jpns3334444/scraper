@@ -312,7 +312,7 @@ if __name__ == "__main__":
     # For local testing
     test_event = {
         'date': '2025-07-07',
-        'bucket': 're-stock',
+        'bucket': 'tokyo-real-estate-ai-data',
         'jsonl_key': 'clean/2025-07-07/listings.jsonl'
     }
     result = lambda_handler(test_event, None)

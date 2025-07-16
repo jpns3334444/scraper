@@ -140,7 +140,7 @@ The deployment issues are caused by CONFLICTING CONFIGURATIONS:
 **Error**: `NoSuchBucket: The specified bucket does not exist`
 **Error**: `Parameter validation failed: Invalid type for parameter Key, value: None`
 **Cause**: Lambda functions expect specific S3 buckets and data files that don't exist
-**Status**: Need to create test data or use proper S3 bucket (re-stock)
+**Status**: Need to create test data or use proper S3 bucket (tokyo-real-estate-ai-data)
 
 ### Issue 6: Missing Function Parameters
 **Error**: Functions expecting specific input parameters for S3 keys and data

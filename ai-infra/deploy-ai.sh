@@ -7,7 +7,7 @@ REGION="${AWS_REGION:-ap-northeast-1}"
 STACK_NAME="${STACK_NAME:-ai-scraper-dev}"
 BUCKET_NAME="ai-scraper-artifacts-$REGION"
 LAYER_VERSION_FILE=".layer-version"
-CURRENT_OPENAI_VERSION="1.42.0"  # Update this when you want to rebuild layer
+CURRENT_OPENAI_VERSION="1.95.0"  # Update this when you want to rebuild layer
 
 # Colors
 G='\033[0;32m' R='\033[0;31m' Y='\033[1;33m' B='\033[0;34m' NC='\033[0m'
@@ -99,6 +99,12 @@ EOF
     aws s3 cp openai-layer.zip s3://$BUCKET_NAME/layers/openai-layer.zip --region $REGION
     status "✅ Layer uploaded to S3"
     
+    # ── grab the version ID we just wrote ─────────────────────────────
+    LAYER_OBJECT_VERSION=$(aws s3api head-object \
+    --bucket $BUCKET_NAME \
+    --key layers/openai-layer.zip \
+    --region $REGION \
+    --query VersionId --output text)
     # Save version
     echo "$CURRENT_OPENAI_VERSION" > $LAYER_VERSION_FILE
     
@@ -110,8 +116,15 @@ fi
 
 # Always package Lambda functions (these change frequently) - Windows compatible ZIP
 status "Packaging Lambda functions..."
+
+# Initialize version variables
+ETL_VERSION="latest"
+PROMPT_BUILDER_VERSION="latest"
+LLM_BATCH_VERSION="latest"
+REPORT_SENDER_VERSION="latest"
+
 for func in etl prompt_builder llm_batch report_sender; do
-    [ -d "../lambda/$func" ] || error "Function directory lambda/$func not found"
+    [ -d "lambda/$func" ] || error "Function directory lambda/$func not found"
     
     info "Packaging $func..."
     
@@ -150,14 +163,14 @@ def create_zip(source_dir, output_zip):
                 arc_name = os.path.relpath(file_path, source_dir)
                 zipf.write(file_path, arc_name)
 
-create_zip('../lambda/$func', '$func.zip')
+create_zip('lambda/$func', '$func.zip')
 print('Created $func.zip')
 "
     else
         # Fallback to PowerShell
         warn "Python not found, using PowerShell as fallback"
         powershell.exe -Command "
-            \$source = '../lambda/$func'
+            \$source = 'lambda/$func'
             \$destination = './$func.zip'
             
             if (Test-Path \$destination) { Remove-Item \$destination -Force }
@@ -192,10 +205,31 @@ print('Created $func.zip')
     
     [ -f "$func.zip" ] || error "Failed to create $func.zip"
     
+    # Upload to S3 and capture version
     aws s3 cp $func.zip s3://$BUCKET_NAME/functions/$func.zip --region $REGION
+    
+    # Get the S3 object version
+    OBJECT_VERSION=$(aws s3api head-object --bucket $BUCKET_NAME --key functions/$func.zip --region $REGION --query 'VersionId' --output text)
+    
+    # Store version in appropriate variable
+    case $func in
+        etl)
+            ETL_VERSION="$OBJECT_VERSION"
+            ;;
+        prompt_builder)
+            PROMPT_BUILDER_VERSION="$OBJECT_VERSION"
+            ;;
+        llm_batch)
+            LLM_BATCH_VERSION="$OBJECT_VERSION"
+            ;;
+        report_sender)
+            REPORT_SENDER_VERSION="$OBJECT_VERSION"
+            ;;
+    esac
+    
     rm $func.zip
     
-    status "✅ $func packaged and uploaded"
+    status "✅ $func packaged and uploaded (version: $OBJECT_VERSION)"
 done
 
 # Handle OpenAI secret
@@ -226,19 +260,33 @@ if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
     status "✅ Stack deleted successfully"
 fi
 
+# Always get the layer version ID (whether we built it or not)
+if [ -z "$LAYER_OBJECT_VERSION" ]; then
+    info "Retrieving existing layer version ID..."
+    LAYER_OBJECT_VERSION=$(aws s3api head-object \
+        --bucket $BUCKET_NAME \
+        --key layers/openai-layer.zip \
+        --region $REGION \
+        --query VersionId --output text)
+    info "Layer version ID: $LAYER_OBJECT_VERSION"
+fi
+
 # Deploy CloudFormation stack
-status "Deploying CloudFormation stack..."
 aws cloudformation deploy \
-    --template-file ai-stack.yaml \
-    --stack-name $STACK_NAME \
-    --capabilities CAPABILITY_IAM \
-    --region $REGION \
-    --parameter-overrides \
-        DeploymentBucket=$BUCKET_NAME \
-        OutputBucket=tokyo-real-estate-ai-data \
-        EmailFrom=noreply@example.com \
-        EmailTo=admin@example.com \
-    || error "CloudFormation deployment failed"
+  --template-file ai-stack.yaml \
+  --stack-name $STACK_NAME \
+  --capabilities CAPABILITY_IAM \
+  --region $REGION \
+  --parameter-overrides \
+      DeploymentBucket=$BUCKET_NAME \
+      OutputBucket=tokyo-real-estate-ai-data \
+      EmailFrom=jpns3334444@gmail.com \
+      EmailTo=jpns3334444@gmail.com \
+      ETLCodeVersion=$ETL_VERSION \
+      PromptBuilderCodeVersion=$PROMPT_BUILDER_VERSION \
+      LLMBatchCodeVersion=$LLM_BATCH_VERSION \
+      ReportSenderCodeVersion=$REPORT_SENDER_VERSION \
+      OpenAILayerObjectVersion=$LAYER_OBJECT_VERSION
 
 status "✅ CloudFormation stack deployed"
 

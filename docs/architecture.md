@@ -15,7 +15,7 @@ This document focuses on the AI Analysis subsystem architecture. For scraper sys
 graph TB
     subgraph "Data Collection System (EC2)"
         WEB[Real Estate Websites] --> SCRAPER[Web Scraper<br/>scrape.py]
-        SCRAPER --> S3[(S3 Bucket<br/>re-stock)]
+        SCRAPER --> S3[(S3 Bucket<br/>tokyo-real-estate-ai-data)]
         CRON1[Daily Cron] --> SCRAPER
     end
     
@@ -179,7 +179,7 @@ listing1,"Spacious apartment",25000000,65.5,2010,8,Shibuya,"living_room.jpg|bedr
 ## Security & IAM
 
 ### Lambda Execution Role Permissions
-- **S3**: GetObject, PutObject, ListBucket on `re-stock` bucket
+- **S3**: GetObject, PutObject, ListBucket on `tokyo-real-estate-ai-data` bucket
 - **SSM**: GetParameter for OpenAI API key and Slack webhook
 - **SES**: SendEmail, SendRawEmail for notifications
 

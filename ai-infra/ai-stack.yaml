@@ -1,35 +1,46 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'AI Real Estate Analysis Stack - Simplified'
+Description: AI Real Estate Analysis Stack - Simplified
 
 Parameters:
   DeploymentBucket:
     Type: String
-    Description: S3 bucket containing Lambda packages
   OutputBucket:
     Type: String
-    Default: re-stock
-    Description: S3 bucket for storing outputs
+    Default: tokyo-real-estate-ai-data
   EmailFrom:
     Type: String
-    Default: noreply@example.com
-    Description: From email address for SES notifications
+    Default: jpns3334444@gmail.com
   EmailTo:
     Type: String
-    Default: admin@example.com
-    Description: To email address for reports
+    Default: jpns3334444@gmail.com
+  ETLCodeVersion:
+    Type: String
+    Default: latest
+  PromptBuilderCodeVersion:
+    Type: String
+    Default: latest
+  LLMBatchCodeVersion:
+    Type: String
+    Default: latest
+  ReportSenderCodeVersion:
+    Type: String
+    Default: latest
+  OpenAILayerObjectVersion:
+    Type: String
+    Default: ""
+    Description: S3 object‑version ID for openai-layer.zip
 
 Resources:
-  # OpenAI Layer (built by deploy script)
   OpenAILayer:
     Type: AWS::Lambda::LayerVersion
     Properties:
       LayerName: !Sub '${AWS::StackName}-openai'
-      Description: 'OpenAI SDK layer'
+      CompatibleRuntimes: [ python3.12 ]
+      Description: OpenAI SDK layer
       Content:
         S3Bucket: !Ref DeploymentBucket
         S3Key: layers/openai-layer.zip
-      CompatibleRuntimes:
-        - python3.12
+        S3ObjectVersion: !Ref OpenAILayerObjectVersion
 
   # IAM Role for Lambda functions
   LambdaExecutionRole:
@@ -87,6 +98,7 @@ Resources:
       Code:
         S3Bucket: !Ref DeploymentBucket
         S3Key: functions/etl.zip
+        S3ObjectVersion: !Ref ETLCodeVersion
       Timeout: 900
       MemorySize: 1024
       Layers:
@@ -105,10 +117,12 @@ Resources:
       Code:
         S3Bucket: !Ref DeploymentBucket
         S3Key: functions/prompt_builder.zip
+        S3ObjectVersion: !Ref PromptBuilderCodeVersion
       Timeout: 900
       MemorySize: 1024
       Layers:
         - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
+        - !Ref OpenAILayer
       Environment:
         Variables:
           OUTPUT_BUCKET: !Ref OutputBucket
@@ -123,6 +137,7 @@ Resources:
       Code:
         S3Bucket: !Ref DeploymentBucket
         S3Key: functions/llm_batch.zip
+        S3ObjectVersion: !Ref LLMBatchCodeVersion
       Timeout: 900
       MemorySize: 1024
       Layers:
@@ -142,10 +157,12 @@ Resources:
       Code:
         S3Bucket: !Ref DeploymentBucket
         S3Key: functions/report_sender.zip
+        S3ObjectVersion: !Ref ReportSenderCodeVersion
       Timeout: 900
       MemorySize: 1024
       Layers:
         - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
+        - !Ref OpenAILayer
       Environment:
         Variables:
           OUTPUT_BUCKET: !Ref OutputBucket

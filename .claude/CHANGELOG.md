@@ -63,7 +63,7 @@ CRITICAL RULES - FOLLOW EXACTLY:
 
 ### Infrastructure
 - Created S3 bucket `ai-scraper-sam-deploy-artifacts` for AWS SAM deployment artifacts
-- Bucket is separate from data storage buckets (`lifull-scrape-tokyo`, `re-stock`)
+- Bucket is separate from data storage buckets (`lifull-scrape-tokyo`, `tokyo-real-estate-ai-data`)
 - Resolved version conflict: SAM template uses python3.8, removed conflicting python:3.12 Dockerfiles
 - AI infrastructure now uses consistent ZIP-based Lambda deployment without containers
 - Eliminated Docker dependency eliminating major deployment complexity

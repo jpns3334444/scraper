@@ -9,7 +9,9 @@ import time
 from typing import Any, Dict
 
 import boto3
+import openai                      # ← add this
 from openai import OpenAI
+logging.getLogger().info("OpenAI SDK %s", openai.__version__)
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -266,7 +268,7 @@ if __name__ == "__main__":
     # For local testing
     test_event = {
         'date': '2025-07-07',
-        'bucket': 're-stock',
+        'bucket': 'tokyo-real-estate-ai-data',
         'prompt_key': 'prompts/2025-07-07/payload.json'
     }
     result = lambda_handler(test_event, None)

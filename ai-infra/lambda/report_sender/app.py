@@ -341,7 +341,7 @@ if __name__ == "__main__":
     # For local testing
     test_event = {
         'date': '2025-07-07',
-        'bucket': 're-stock',
+        'bucket': 'tokyo-real-estate-ai-data',
         'result_key': 'batch_output/2025-07-07/response.json',
         'batch_result': {
             'top_picks': [
