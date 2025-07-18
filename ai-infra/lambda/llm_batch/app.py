@@ -2,6 +2,7 @@
 LLM Batch Lambda function for OpenAI Batch API processing.
 Creates batch jobs, polls for completion, and saves results.
 """
+import io
 import json
 import logging
 import os
@@ -41,11 +42,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # Initialize OpenAI client
         openai_client = get_openai_client()
         
-        # Load prompt payload from S3
-        prompt_payload = load_prompt_from_s3(bucket, prompt_key)
+        # Load batch requests JSONL from S3
+        batch_requests_jsonl = load_batch_requests_from_s3(bucket, prompt_key)
         
         # Create batch job
-        batch_job = create_batch_job(openai_client, prompt_payload, date_str)
+        batch_job = create_batch_job(openai_client, batch_requests_jsonl, date_str)
         
         logger.info(f"Created batch job: {batch_job.id}")
         
@@ -93,58 +94,63 @@ def get_openai_client() -> OpenAI:
         raise
 
 
-def load_prompt_from_s3(bucket: str, key: str) -> Dict[str, Any]:
+def load_batch_requests_from_s3(bucket: str, key: str) -> str:
     """
-    Load prompt payload from S3.
+    Load batch requests JSONL from S3.
     
     Args:
         bucket: S3 bucket name
-        key: S3 key for prompt file
+        key: S3 key for JSONL file
         
     Returns:
-        Prompt payload dictionary
+        JSONL content as string
     """
     try:
         response = s3_client.get_object(Bucket=bucket, Key=key)
         content = response['Body'].read().decode('utf-8')
-        return json.loads(content)
+        
+        # Validate that it's valid JSONL
+        lines = content.strip().split('\n')
+        for i, line in enumerate(lines):
+            if line.strip():
+                try:
+                    json.loads(line)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Invalid JSON on line {i+1}: {e}")
+                    raise
+        
+        logger.info(f"Loaded {len(lines)} batch requests from JSONL")
+        return content
         
     except Exception as e:
-        logger.error(f"Failed to load prompt from s3://{bucket}/{key}: {e}")
+        logger.error(f"Failed to load batch requests from s3://{bucket}/{key}: {e}")
         raise
 
 
-def create_batch_job(client: OpenAI, prompt_payload: Dict[str, Any], date_str: str) -> Any:
+def create_batch_job(client: OpenAI, batch_requests_jsonl: str, date_str: str) -> Any:
     """
-    Create OpenAI batch job.
+    Create OpenAI batch job from JSONL content.
     
     Args:
         client: OpenAI client instance
-        prompt_payload: Prompt payload dictionary
+        batch_requests_jsonl: JSONL content with batch requests
         date_str: Processing date string
         
     Returns:
         Batch job object
     """
     try:
-        # Prepare batch request format
-        batch_request = {
-            "custom_id": f"listing-analysis-{date_str}",
-            "method": "POST",
-            "url": "/v1/chat/completions",
-            "body": prompt_payload
-        }
-        
-        # Create temporary file for batch input
-        batch_input_content = json.dumps(batch_request, ensure_ascii=False)
-        
-        # Upload batch input file
+        # Upload batch input file (JSONL is already in correct format)
         batch_input_file = client.files.create(
-            file=batch_input_content.encode('utf-8'),
+            file=io.BytesIO(batch_requests_jsonl.encode('utf-8')),
             purpose="batch"
         )
         
         logger.info(f"Created batch input file: {batch_input_file.id}")
+        
+        # Count number of requests
+        request_count = len([line for line in batch_requests_jsonl.strip().split('\n') if line.strip()])
+        logger.info(f"Batch contains {request_count} individual listing analysis requests")
         
         # Create batch job
         batch_job = client.batches.create(
@@ -153,7 +159,8 @@ def create_batch_job(client: OpenAI, prompt_payload: Dict[str, Any], date_str: s
             completion_window="24h",
             metadata={
                 "date": date_str,
-                "purpose": "real-estate-analysis"
+                "purpose": "real-estate-analysis",
+                "request_count": str(request_count)
             }
         )
         
@@ -232,20 +239,36 @@ def download_batch_results(client: OpenAI, batch: Any, bucket: str, result_key: 
         output_file_content = client.files.content(output_file_id)
         output_content = output_file_content.read().decode('utf-8')
         
-        # Parse the result
-        result_line = output_content.strip().split('\n')[0]  # First line contains our result
-        result_data = json.loads(result_line)
+        # Parse multiple results (one per line for each listing)
+        result_lines = output_content.strip().split('\n')
+        individual_results = []
         
-        # Extract the actual response
-        response_content = result_data.get('response', {}).get('body', {}).get('choices', [{}])[0].get('message', {}).get('content', '{}')
-        batch_result = json.loads(response_content)
+        for line in result_lines:
+            if line.strip():
+                try:
+                    result_data = json.loads(line)
+                    custom_id = result_data.get('custom_id', 'unknown')
+                    
+                    # Extract the JSON analysis from model response
+                    analysis_json = result_data.get('response', {}).get('body', {}).get('choices', [{}])[0].get('message', {}).get('content', '')
+                    
+                    individual_results.append({
+                        'custom_id': custom_id,
+                        'analysis': analysis_json,
+                        'full_response': result_data
+                    })
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse result line: {e}")
+                    continue
         
-        # Save full response to S3
+        logger.info(f"Processed {len(individual_results)} individual listing results")
+        
+        # Save individual results to S3
         full_result = {
             'batch_id': batch.id,
             'status': batch.status,
-            'raw_response': result_data,
-            'parsed_result': batch_result
+            'total_results': len(individual_results),
+            'individual_results': individual_results
         }
         
         s3_client.put_object(
@@ -257,7 +280,7 @@ def download_batch_results(client: OpenAI, batch: Any, bucket: str, result_key: 
         
         logger.info(f"Saved batch results to s3://{bucket}/{result_key}")
         
-        return batch_result
+        return full_result
         
     except Exception as e:
         logger.error(f"Failed to download batch results: {e}")

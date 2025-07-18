@@ -10,7 +10,7 @@ import boto3
 # Import the prompt builder function
 import sys
 sys.path.append('/mnt/c/Users/azure/Desktop/scraper/lambda/prompt_builder')
-from app import lambda_handler, sort_and_filter_listings, build_vision_prompt, generate_presigned_url
+from app import lambda_handler, sort_and_filter_listings, build_batch_requests, generate_presigned_url, prioritize_images
 
 
 class TestPromptBuilder:
@@ -144,13 +144,13 @@ class TestPromptBuilder:
         
         assert prompt['model'] == 'gpt-4o'
         assert prompt['temperature'] == 0.2
-        assert prompt['response_format']['type'] == 'json_object'
+        # HTML output - no response format constraint
         assert prompt['max_tokens'] == 4000
         
         messages = prompt['messages']
         assert len(messages) == 2
         assert messages[0]['role'] == 'system'
-        assert 'aggressive Tokyo condo investor' in messages[0]['content']
+        assert 'Tokyo real estate investment analyst' in messages[0]['content']
         
         user_content = messages[1]['content']
         assert isinstance(user_content, list)
@@ -162,8 +162,8 @@ class TestPromptBuilder:
         assert len(text_items) >= 3  # Header + 2 listings
         assert len(image_items) == 3  # 2 + 1 interior photos
         
-        # Verify first text item is header
-        assert 'Listings scraped on 2025-07-07' in text_items[0]['text']
+        # Verify first text item mentions HTML output
+        assert 'HTML' in text_items[0]['text'] or 'HTML' in text_items[-1]['text']
         
         # Verify image items have correct structure
         for image_item in image_items:

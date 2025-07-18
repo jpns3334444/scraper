@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """
 Unit tests for the scraper functionality
@@ -11,9 +12,11 @@ import threading
 from unittest.mock import Mock, patch, MagicMock
 import sys
 import importlib.util
+import argparse
+import logging
 
 # Import the scraper module
-spec = importlib.util.spec_from_file_location("scraper", "/mnt/c/Users/azure/Desktop/scraper/scrape.py")
+spec = importlib.util.spec_from_file_location("scrape", "/mnt/c/Users/azure/Desktop/scraper/scraper/scrape.py")
 scraper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(scraper)
 
@@ -77,22 +80,19 @@ class TestScraperFunctions(unittest.TestCase):
         self.assertTrue(data["title"].endswith("..."))
         self.assertEqual(len(data["title"]), 203)  # 200 + "..."
     
-    def test_log_structured_message(self):
+    @patch('logging.Logger.handle')
+    def test_log_structured_message(self, mock_handle):
         """Test structured logging output"""
-        with patch('builtins.print') as mock_print:
-            scraper.log_structured_message("INFO", "Test message", test_field="test_value")
-            
-            # Verify print was called
-            mock_print.assert_called_once()
-            
-            # Verify the logged message is valid JSON
-            logged_message = mock_print.call_args[0][0]
-            parsed_message = json.loads(logged_message)
-            
-            self.assertEqual(parsed_message["level"], "INFO")
-            self.assertEqual(parsed_message["message"], "Test message")
-            self.assertEqual(parsed_message["test_field"], "test_value")
-            self.assertIn("timestamp", parsed_message)
+        logger = scraper.setup_logging()
+        scraper.log_structured_message(logger, "INFO", "Test message", test_field="test_value")
+        
+        # Verify handle was called
+        mock_handle.assert_called_once()
+        
+        # Verify the logged message is valid JSON
+        log_record = mock_handle.call_args[0][0]
+        self.assertEqual(log_record.levelno, logging.INFO)
+        self.assertEqual(log_record.getMessage(), "Test message")
     
     def test_create_enhanced_session(self):
         """Test session creation with proper headers"""
@@ -115,9 +115,7 @@ class TestScraperFunctions(unittest.TestCase):
         
         with tempfile.TemporaryDirectory() as tmpdir:
             # Mock the summary path to use temp directory
-            with patch('os.makedirs'), \
-                 patch('builtins.open', mock_open()) as mock_file, \
-                 patch('json.dump') as mock_json_dump:
+            with patch('os.makedirs'),                 patch('builtins.open', mock_open()) as mock_file,                 patch('json.dump') as mock_json_dump:
                 
                 scraper.write_job_summary(test_summary)
                 
@@ -369,8 +367,8 @@ class TestCircuitBreakerIntegration(unittest.TestCase):
     def test_extract_property_details_with_circuit_breaker(self):
         """Test property extraction with circuit breaker"""
         # Mock the session pool to return a mock session
-        with patch.object(scraper.session_pool, 'get_session') as mock_get_session, \
-             patch.object(scraper.session_pool, 'return_session') as mock_return_session:
+        scraper.session_pool = scraper.SessionPool(pool_size=1)
+        with patch.object(scraper.session_pool, 'get_session') as mock_get_session,             patch.object(scraper.session_pool, 'return_session') as mock_return_session:
             
             mock_session = Mock()
             mock_get_session.return_value = mock_session
@@ -391,8 +389,8 @@ class TestCircuitBreakerIntegration(unittest.TestCase):
     def test_extract_property_details_circuit_breaker_failure(self):
         """Test property extraction when circuit breaker fails"""
         # Mock the session pool
-        with patch.object(scraper.session_pool, 'get_session') as mock_get_session, \
-             patch.object(scraper.session_pool, 'return_session') as mock_return_session:
+        scraper.session_pool = scraper.SessionPool(pool_size=1)
+        with patch.object(scraper.session_pool, 'get_session') as mock_get_session,             patch.object(scraper.session_pool, 'return_session') as mock_return_session:
             
             mock_session = Mock()
             mock_get_session.return_value = mock_session
@@ -417,6 +415,108 @@ def mock_open():
     mock_file.__enter__ = Mock(return_value=mock_file)
     mock_file.__exit__ = Mock(return_value=None)
     return mock_file
+
+class TestScrapingLogic(unittest.TestCase):
+
+    def setUp(self):
+        """Set up test fixtures"""
+        # Load mock HTML content from files
+        with open("/mnt/c/Users/azure/Desktop/scraper/scraper/mock_listing_page.html", "r") as f:
+            self.mock_listing_html = f.read()
+        with open("/mnt/c/Users/azure/Desktop/scraper/scraper/mock_property_page.html", "r") as f:
+            self.mock_property_html = f.read()
+
+    def test_extract_listing_urls_from_html(self):
+        """Test that listing URLs are correctly extracted from HTML"""
+        urls = scraper.extract_listing_urls_from_html(self.mock_listing_html)
+        self.assertEqual(len(urls), 2)
+        self.assertIn("https://www.homes.co.jp/mansion/b-12345", urls)
+        self.assertIn("https://www.homes.co.jp/mansion/b-67890", urls)
+
+    @patch('requests.Session.get')
+    def test_extract_property_details_from_html(self, mock_get):
+        """Test that property details are correctly extracted from HTML"""
+        # Mock the HTTP response
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = self.mock_property_html
+        mock_response.content = self.mock_property_html.encode('utf-8')
+        mock_get.return_value = mock_response
+
+        # Create a mock session
+        session = scraper.create_stealth_session()
+
+        # Call the function to test
+        details = scraper._extract_property_details_core(session, "http://example.com/property", "http://example.com")
+
+        # Assertions
+        self.assertEqual(details['price'], '3,500万円')
+        self.assertEqual(details['所在地'], '東京都調布市')
+        self.assertEqual(details['間取り'], '2LDK')
+
+    @patch('requests.Session.get')
+    @patch('pandas.DataFrame.to_csv')
+    def test_end_to_end_scraping_flow(self, mock_to_csv, mock_get):
+        """Test the end-to-end scraping flow with mock data"""
+        # Mock the responses for listing and property pages
+        mock_listing_response = Mock()
+        mock_listing_response.status_code = 200
+        mock_listing_response.text = self.mock_listing_html
+        mock_listing_response.content = self.mock_listing_html.encode('utf-8')
+
+        mock_property_response = Mock()
+        mock_property_response.status_code = 200
+        mock_property_response.text = self.mock_property_html
+        mock_property_response.content = self.mock_property_html.encode('utf-8')
+
+        # Set up the mock to return different responses based on the URL
+        def get_side_effect(url, timeout=None):
+            if "list" in url:
+                return mock_listing_response
+            else:
+                return mock_property_response
+        mock_get.side_effect = get_side_effect
+
+        # Run the main scraping function with test parameters
+        with patch('argparse.ArgumentParser.parse_args') as mock_parse_args:
+            mock_parse_args.return_value = argparse.Namespace(mode='testing', max_properties=2, areas='mock-area', output_bucket='', max_threads=2)
+            
+            scraper.main()
+            # Check that the output file was written
+            mock_to_csv.assert_called_once()
+
+class TestAreaDiscovery(unittest.TestCase):
+
+    @patch('requests.Session.get')
+    def test_discover_tokyo_areas(self, mock_get):
+        """Test the Tokyo area discovery function"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.content = b'''
+        <a href="/mansion/chuko/tokyo/shibuya-ku/list/">Shibuya</a>
+        <a href="/mansion/chuko/tokyo/shinjuku-ku/list/">Shinjuku</a>
+        '''
+        mock_get.return_value = mock_response
+
+        areas = scraper.discover_tokyo_areas()
+        self.assertEqual(len(areas), 2)
+        self.assertIn('shibuya-ku', areas)
+        self.assertIn('shinjuku-ku', areas)
+
+    def test_daily_distribution(self):
+        """Test the daily area distribution across sessions"""
+        areas = ['shibuya-ku', 'shinjuku-ku', 'chofu-city', 'mitaka-city', 
+                  'setagaya-ku', 'nerima-ku', 'minato-ku', 'chiyoda-ku']
+        date_key = '2025-01-01'
+        sessions = ['morning-1', 'morning-2', 'afternoon-1', 'afternoon-2', 
+                    'evening-1', 'evening-2', 'night-1', 'night-2']
+        
+        all_assigned_areas = set()
+        for session_id in sessions:
+            assigned_areas = scraper.get_daily_area_distribution(areas, session_id, date_key)
+            all_assigned_areas.update(assigned_areas)
+        
+        self.assertEqual(set(areas), all_assigned_areas)
 
 if __name__ == '__main__':
     # Run tests

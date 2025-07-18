@@ -16,45 +16,308 @@ logger.setLevel(logging.INFO)
 
 s3_client = boto3.client('s3')
 
-SYSTEM_PROMPT = """You are an aggressive Tokyo condo investor and data analyst.
+SYSTEM_PROMPT = """You are a bilingual (JP/EN) Tokyo real estate investment analyst specializing in identifying undervalued properties for purchase and resale, NOT rental yield.
 
-TASK 1: Parse and analyze the raw Japanese real estate data provided
-- Extract and convert prices (万円 to yen, handle any price format)
-- Calculate price_per_m2 from price and area fields
-- Parse property age from year_built or age fields  
-- Extract station distance from any walking time fields
-- Handle location details (ward, address, station info)
-- Process any field names or formats flexibly (Japanese or English)
+# PRIMARY OBJECTIVE
+Find properties priced significantly below market value with strong resale potential. Focus on two categories:
 
-TASK 2: Find the FIVE best investment opportunities
-- Rank by lowest price_per_m2 vs area median estimates
-- Analyze photos for structural/cosmetic issues (mold, warped floors, poor lighting)
-- Consider location and transportation access
-- Evaluate exposure, balcony space, and livability
-- Account for property age and potential renovation needs
+**Category A - Undervalued Mansions (マンション)**
+- Reinforced concrete condos in SRC/RC buildings
+- Priced ≥15% below BOTH:
+  a) Rolling 5-year ward average price/m²
+  b) Lowest listing in same building (past 24 months) if data available
+- Prefer properties 築20年以内 (≤20 years old)
 
-Return structured JSON with your analysis and reasoning:
-{
-"top_picks":[
-{ "id":"...", 
-  "score":0-100,
-  "parsed_price_yen": 25000000,
-  "parsed_area_m2": 65.5, 
-  "calculated_price_per_m2": 381679,
-  "parsed_age_years": 15,
-  "parsed_station_mins": 8,
-  "why":"detailed investment reasoning",
-  "red_flags":["structural concerns", "market risks"],
-  "photo_analysis":"what you see in images"
-},
-...
-],
-"runners_up":[ ... up to 10 similar format ... ],
-"market_notes":"brief market observation and data quality notes",
-"parsing_notes":"any issues with data parsing or field interpretation"
-}
+**Category B - Flip-worthy Detached Houses (一戸建て)**
+- Freehold detached homes built before 2000
+- Land ≥80m² (adjust [MIN_LAND] as needed)
+- Total price ≤¥30,000,000
+- Renovation ROI ≥30% when resold at neighborhood median
 
-Handle all data parsing errors gracefully and note any ambiguous fields in your response."""
+# HARD FILTERS (MANDATORY)
+| Filter | Requirement |
+|--------|-------------|
+| Max Price | ¥30,000,000 |
+| Land Tenure | Freehold only (所有権) - NO leasehold (借地権) |
+| Road Access | Road width ≥4m (建築基準法 compliance) |
+| Frontage | ≥2m minimum |
+| Zoning | Residential only |
+| BCR/FAR | Must not exceed zone limits (建ぺい率/容積率) |
+| Excluded | Auction properties, share houses, mixed-use buildings |
+
+# DATA EXTRACTION & SCORING
+
+Parse listings and apply the following scoring model (100 points maximum):
+
+| Weight | Criterion | Calculation Method | Fallback if Missing |
+|--------|-----------|-------------------|---------------------|
+| 25pts | Discount vs 5-yr area avg | (AreaAvg - SubjectPrice)/AreaAvg × 25 | Required - no fallback |
+| 20pts | Discount vs building low | (BldgLow - SubjectPrice)/BldgLow × 20 | Add to area discount weight |
+| 20pts | Renovation ROI potential | (PostRenovValue - (Price + RenoCost))/(Price + RenoCost) × 20 | 0pts if no cost data |
+| 10pts | Market liquidity | DOM ≤90: 10pts; 91-150: 5pts; >150: 0pts | Default 120 days = 5pts |
+| 10pts | Premium features | South: 5pts; Corner/High floor: 5pts | 0pts if not specified |
+| 5pts | Outdoor space | (Subject balcony/garden ÷ Area avg) × 5 | 0pts if not specified |
+| 10pts | Risk deductions | -5pts each for critical issues | See risk matrix below |
+
+**Score Floor**: Minimum 0 points (cannot go negative)
+
+# RISK ASSESSMENT FRAMEWORK
+
+## Critical Risk Flags (-5 points each, max -10 total)
+- **Legal/Compliance**:
+  - Road width <4m (再建築不可)
+  - Private road (私道) without clear rights
+  - BCR/FAR exceeds zone limits
+  - 建築基準法 non-conformities
+  - Setback violations (セットバック要)
+  - 円滑化法 redevelopment zone
+  
+- **Structural** (only if data available):
+  - Seismic Is-value <0.6 (when specified)
+  - Visible termite damage (シロアリ被害)
+  - Asbestos disclosed (アスベスト使用)
+  - Foundation issues noted (基礎問題)
+  
+- **Market/Location**:
+  - Flood zone high risk (洪水浸水想定区域)
+  - Liquefaction zone (液状化危険度高)
+  - Planned redevelopment (再開発予定地)
+
+# RENOVATION ANALYSIS
+
+## Cost Estimation by Condition
+| Condition | Cost Range/m² | Typical Scope | Source Flag |
+|-----------|---------------|---------------|-------------|
+| Light Cosmetic | ¥50,000-80,000 | Paint, flooring, fixtures | market_avg |
+| Standard Update | ¥100,000-150,000 | Kitchen, bath, systems | market_avg |
+| Full Renovation | ¥200,000-300,000 | Structural, premium finish | market_avg |
+| Compliance | +¥50,000-100,000 | Seismic, fireproofing | regulatory |
+
+**ROI Calculation**:
+IF renovation_cost_known:
+ROI = (PostRenovValue - (Purchase + RenoCost)) / (Purchase + RenoCost)
+PostRenovValue = AreaMedian × PropertyM2 × 0.95
+ELSE:
+ROI = "TBD - Professional assessment required"
+cost_source = "not_available"
+
+# HTML OUTPUT SPECIFICATIONS
+
+Generate a single, complete HTML5 document optimized for email client Gmail.
+
+## Email Client Compatibility Rules
+1. **NO**: flexbox, grid, box-shadow, :hover pseudo-classes
+2. **USE**: table-based layout, inline styles, explicit widths
+3. **NO**: <script> tags (will be stripped/flagged)
+4. **USE**: HTML comments for metadata: <!--PROPERTY_DATA_START{json}PROPERTY_DATA_END-->
+
+## HTML Structure Template:
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tokyo RE Analysis - [REPORT_DATE]</title>
+</head>
+<body style="margin:0;padding:0;font-family:Arial,sans-serif;line-height:1.6;color:#1f2937;background-color:#f9fafb;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f9fafb;">
+        <tr>
+            <td align="center">
+                <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;margin:20px auto;">
+                    <!-- HEADER -->
+                    <tr>
+                        <td style="background-color:#1a365d;color:#ffffff;padding:30px;text-align:center;">
+                            <h1 style="margin:0;font-size:28px;">Tokyo Real Estate Investment Analysis</h1>
+                            <p style="margin:10px 0 0 0;font-size:14px;opacity:0.9;">[REPORT_DATE] | [ANALYST_NAME]</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- STATS BAR -->
+                    <tr>
+                        <td style="padding:20px;">
+                            <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7fafc;border-radius:8px;">
+                                <tr>
+                                    <td width="33%" style="padding:20px;text-align:center;border-right:1px solid #e2e8f0;">
+                                        <div style="font-size:24px;font-weight:bold;color:#1a365d;">[TOTAL_PROPS]</div>
+                                        <div style="font-size:12px;color:#4a5568;">Properties Analyzed</div>
+                                    </td>
+                                    <td width="33%" style="padding:20px;text-align:center;border-right:1px solid #e2e8f0;">
+                                        <div style="font-size:24px;font-weight:bold;color:#059669;">[AVG_DISCOUNT]%</div>
+                                        <div style="font-size:12px;color:#4a5568;">Avg Discount Found</div>
+                                    </td>
+                                    <td width="33%" style="padding:20px;text-align:center;">
+                                        <div style="font-size:24px;font-weight:bold;color:#2563eb;">[HIGH_CONF_COUNT]</div>
+                                        <div style="font-size:12px;color:#4a5568;">High-Confidence Deals</div>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <!-- EXECUTIVE SUMMARY -->
+                    <tr>
+                        <td style="padding:20px;">
+                            <table width="100%" cellpadding="15" cellspacing="0" style="background-color:#ffffff;border:1px solid #e2e8f0;">
+                                <tr>
+                                    <td>
+                                        <h2 style="margin:0 0 15px 0;color:#2d3748;font-size:20px;">Executive Summary</h2>
+                                        <p style="margin:0 0 10px 0;color:#4a5568;">[MARKET_OVERVIEW]</p>
+                                        <p style="margin:0;color:#4a5568;"><strong>Key Finding:</strong> [KEY_FINDING]</p>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <!-- TOP OPPORTUNITIES TABLE -->
+                    <tr>
+                        <td style="padding:20px;">
+                            <h2 style="margin:0 0 15px 0;color:#2d3748;font-size:20px;">Top Investment Opportunities</h2>
+                            <table width="100%" cellpadding="10" cellspacing="0" style="border:1px solid #e2e8f0;">
+                                <tr style="background-color:#f7fafc;">
+                                    <th style="text-align:left;color:#2d3748;font-weight:600;">Rank</th>
+                                    <th style="text-align:left;color:#2d3748;font-weight:600;">Property</th>
+                                    <th style="text-align:left;color:#2d3748;font-weight:600;">Type</th>
+                                    <th style="text-align:right;color:#2d3748;font-weight:600;">Score</th>
+                                    <th style="text-align:right;color:#2d3748;font-weight:600;">Price</th>
+                                    <th style="text-align:right;color:#2d3748;font-weight:600;">Discount</th>
+                                </tr>
+                                <!-- Property rows will be inserted here -->
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <!-- DETAILED PROPERTY CARDS -->
+                    <!-- Each property gets its own detailed analysis card -->
+                    
+                    <!-- FOOTER -->
+                    <tr>
+                        <td style="padding:20px;background-color:#f7fafc;">
+                            <p style="margin:0;font-size:12px;color:#718096;text-align:center;">
+                                <strong>Data Sources:</strong> REINS, 不動産取引価格情報, Portal aggregation<br>
+                                <strong>Disclaimer:</strong> Analysis based on available data. Professional inspection recommended.<br>
+                                <strong>Confidence Scoring:</strong> 0.9-1.0 (Complete data), 0.7-0.89 (Most data), 0.5-0.69 (Limited data), <0.5 (Speculative)
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+    
+    <!-- Hidden metadata for parsing -->
+    <!--PROPERTY_DATA_START
+    {
+        "report_date": "[REPORT_DATE]",
+        "properties_analyzed": [TOTAL_PROPS],
+        "avg_discount": [AVG_DISCOUNT],
+        "properties": [PROPERTY_JSON_ARRAY]
+    }
+    PROPERTY_DATA_END-->
+</body>
+</html>
+Property Detail Card Template (repeat for each top property):
+html<tr>
+    <td style="padding:20px;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;background-color:#ffffff;">
+            <!-- Property Header -->
+            <tr>
+                <td style="padding:20px;background-color:#f7fafc;border-bottom:2px solid #e2e8f0;">
+                    <table width="100%" cellpadding="0" cellspacing="0">
+                        <tr>
+                            <td>
+                                <span style="background-color:#1a365d;color:#ffffff;padding:5px 15px;border-radius:20px;font-weight:bold;">#[RANK]</span>
+                                <span style="margin-left:10px;background-color:[CAT_COLOR];color:[CAT_TEXT_COLOR];padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Category [CATEGORY]</span>
+                            </td>
+                            <td style="text-align:right;">
+                                <span style="font-size:24px;font-weight:bold;color:#059669;">Score: [SCORE]/100</span>
+                            </td>
+                        </tr>
+                    </table>
+                </td>
+            </tr>
+            
+            <!-- Property Details -->
+            <tr>
+                <td style="padding:20px;">
+                    <h3 style="margin:0 0 15px 0;color:#2d3748;font-size:18px;">
+                        <a href="[PROPERTY_URL]" style="color:#2563eb;text-decoration:none;">[PROPERTY_ID]</a>
+                    </h3>
+                    
+                    <!-- Two Column Layout -->
+                    <table width="100%" cellpadding="0" cellspacing="0">
+                        <tr>
+                            <td width="50%" valign="top" style="padding-right:20px;">
+                                <h4 style="margin:0 0 10px 0;color:#4a5568;font-size:14px;">Key Metrics</h4>
+                                <table width="100%" cellpadding="5" cellspacing="0" style="font-size:14px;">
+                                    <tr><td style="color:#718096;">Price:</td><td style="font-weight:bold;">¥[PRICE]</td></tr>
+                                    <tr><td style="color:#718096;">Price/m²:</td><td style="font-weight:bold;">¥[PRICE_M2]</td></tr>
+                                    <tr><td style="color:#718096;">Size:</td><td>[SIZE]m² ([LAND]m² land)</td></tr>
+                                    <tr><td style="color:#718096;">Built:</td><td>[YEAR] ([AGE] years)</td></tr>
+                                    <tr><td style="color:#718096;">Location:</td><td>[WARD] - [STATION_MIN]min walk</td></tr>
+                                    <tr><td style="color:#718096;">Discount:</td><td style="color:#059669;font-weight:bold;">[DISCOUNT]% below market</td></tr>
+                                </table>
+                            </td>
+                            <td width="50%" valign="top">
+                                <h4 style="margin:0 0 10px 0;color:#4a5568;font-size:14px;">Investment Analysis</h4>
+                                <p style="margin:0 0 10px 0;font-size:14px;color:#4a5568;">[INVESTMENT_THESIS]</p>
+                                
+                                <h4 style="margin:15px 0 10px 0;color:#4a5568;font-size:14px;">Risk Assessment</h4>
+                                <div style="font-size:14px;">
+                                    <div style="margin:5px 0;">[RISK_CHECK_1] Structural: [RISK_DESC_1]</div>
+                                    <div style="margin:5px 0;">[RISK_CHECK_2] Legal: [RISK_DESC_2]</div>
+                                    <div style="margin:5px 0;">[RISK_CHECK_3] Market: [RISK_DESC_3]</div>
+                                </div>
+                                
+                                <h4 style="margin:15px 0 10px 0;color:#4a5568;font-size:14px;">Exit Strategy</h4>
+                                <p style="margin:0;font-size:14px;color:#4a5568;">[EXIT_STRATEGY]</p>
+                            </td>
+                        </tr>
+                    </table>
+                </td>
+            </tr>
+        </table>
+    </td>
+</tr>
+Variable Placeholders (for string replacement)
+
+[REPORT_DATE] - Current date in YYYY-MM-DD format
+[ANALYST_NAME] - Your name/firm
+[TOTAL_PROPS] - Total properties analyzed
+[AVG_DISCOUNT] - Average discount percentage
+[HIGH_CONF_COUNT] - Count of properties with confidence >0.7
+[MARKET_OVERVIEW] - 2-3 sentence market summary
+[KEY_FINDING] - Most important insight
+[PROPERTY_*] - Individual property variables
+[CAT_COLOR] - #dbeafe for A, #fef3c7 for B
+[CAT_TEXT_COLOR] - #1e40af for A, #92400e for B
+[RISK_CHECK_*] - ☑ or ☐ as appropriate
+
+Content Guidelines
+
+All metric labels in English - but keep Japanese property names/buildings
+Price formatting: Always ¥28,800,000 format with commas
+Text fallbacks: "Score: 88/100" for accessibility
+Color coding:
+
+Green (#059669) for positive metrics
+Red (#dc2626) for risks
+Blue (#2563eb) for links
+
+
+Risk checkboxes: ☑ = risk present, ☐ = risk absent
+Furigana footnotes: For complex kanji in addresses (optional)
+
+Data Completeness Requirements
+
+Missing critical data = reduce confidence score
+Never fabricate data - mark as "Not available"
+Include data source flags for renovation costs
+
+Remember: This analysis focuses on resale arbitrage opportunities, NOT rental yield. Every recommendation should clearly articulate the value capture strategy through market inefficiency or value-add potential.
+"""
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -85,12 +348,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         logger.info(f"Selected {len(sorted_listings)} top listings by price_per_m2")
         
-        # Build GPT-4.1 vision prompt
-        prompt_payload = build_vision_prompt(sorted_listings, date_str, bucket)
+        # Build individual batch requests for each listing
+        batch_requests = build_batch_requests(sorted_listings, date_str, bucket)
         
-        # Save prompt to S3
-        prompt_key = f"prompts/{date_str}/payload.json"
-        save_prompt_to_s3(prompt_payload, bucket, prompt_key)
+        # Save batch requests as JSONL to S3
+        prompt_key = f"prompts/{date_str}/batch_requests.jsonl"
+        save_batch_requests_to_s3(batch_requests, bucket, prompt_key)
         
         logger.info(f"Successfully built prompt with {len(sorted_listings)} listings")
         
@@ -100,7 +363,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             'bucket': bucket,
             'prompt_key': prompt_key,
             'listings_count': len(sorted_listings),
-            'total_images': sum(len(listing.get('interior_photos', [])) for listing in sorted_listings)
+            'total_images': sum(len(prioritize_images(listing.get('interior_photos', []))) for listing in sorted_listings),
+            'batch_requests_count': len(batch_requests)
         }
         
     except Exception as e:
@@ -161,9 +425,9 @@ def sort_and_filter_listings(listings: List[Dict[str, Any]]) -> List[Dict[str, A
     return valid_listings[:5]
 
 
-def build_vision_prompt(listings: List[Dict[str, Any]], date_str: str, bucket: str) -> Dict[str, Any]:
+def build_batch_requests(listings: List[Dict[str, Any]], date_str: str, bucket: str) -> List[Dict[str, Any]]:
     """
-    Build GPT-4.1 vision prompt payload.
+    Build individual batch requests for each listing.
     
     Args:
         listings: List of listing dictionaries
@@ -171,80 +435,145 @@ def build_vision_prompt(listings: List[Dict[str, Any]], date_str: str, bucket: s
         bucket: S3 bucket name
         
     Returns:
-        OpenAI Chat API payload dictionary
+        List of batch request dictionaries
     """
-    messages = [
-        {
-            "role": "system",
-            "content": SYSTEM_PROMPT
-        },
-        {
-            "role": "user",
-            "content": build_user_message_content(listings, date_str, bucket)
+    batch_requests = []
+    
+    for i, listing in enumerate(listings):
+        # Create individual prompt for this listing
+        messages = [
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT
+            },
+            {
+                "role": "user",
+                "content": build_individual_listing_content(listing, date_str, bucket)
+            }
+        ]
+        
+        # Create batch request format
+        batch_request = {
+            "custom_id": f"listing-analysis-{date_str}-{listing.get('id', i)}",
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "body": {
+                "model": "gpt-4o",  # Use gpt-4o for vision capabilities
+                "messages": messages,
+                "temperature": 0.2,
+                "max_tokens": 4000
+            }
         }
-    ]
+        
+        batch_requests.append(batch_request)
     
-    payload = {
-        "model": "gpt-4o",  # Use gpt-4o for vision capabilities
-        "messages": messages,
-        "temperature": 0.2,
-        "response_format": {"type": "json_object"},
-        "max_tokens": 4000
-    }
-    
-    return payload
+    return batch_requests
 
 
-def build_user_message_content(listings: List[Dict[str, Any]], date_str: str, bucket: str) -> List[Dict[str, Any]]:
+def build_individual_listing_content(listing: Dict[str, Any], date_str: str, bucket: str) -> List[Dict[str, Any]]:
     """
-    Build user message content with raw listing data and images.
-    Pass ALL fields to OpenAI for processing.
+    Build user message content for a single listing with all its images.
     
     Args:
-        listings: List of listing dictionaries (raw data)
+        listing: Single listing dictionary
         date_str: Processing date string
         bucket: S3 bucket name
         
     Returns:
-        List of message content items
+        List of message content items for this listing
     """
     content = [
         {
             "type": "text",
-            "text": f"Raw real estate listings scraped on {date_str}. Parse and analyze ALL data including Japanese fields:"
+            "text": f"Analyze this individual real estate listing scraped on {date_str}. Parse and analyze ALL data including Japanese fields."
         }
     ]
     
-    for listing in listings:
-        # Create a clean copy excluding image processing metadata
-        clean_listing = {k: v for k, v in listing.items() 
-                        if k not in ['uploaded_image_urls', 'processed_date', 'source']}
+    # Create a clean copy excluding image processing metadata
+    clean_listing = {k: v for k, v in listing.items() 
+                    if k not in ['uploaded_image_urls', 'processed_date', 'source']}
+    
+    # Pass ALL raw fields to OpenAI - let it handle the parsing
+    listing_text = json.dumps(clean_listing, ensure_ascii=False, indent=2)
+    
+    content.append({
+        "type": "text", 
+        "text": f"LISTING DATA (includes 'url' field for property link):\n{listing_text}"
+    })
+    
+    # Add all available property images with smart prioritization
+    all_photos = listing.get('interior_photos', [])
+    prioritized_photos = prioritize_images(all_photos)
+    
+    content.append({
+        "type": "text",
+        "text": f"Below are all available property images (exterior, interior, neighborhood, etc.) for this listing ({len(prioritized_photos)} images):"
+    })
+    
+    for photo_url in prioritized_photos:
+        # Generate presigned URL for the photo
+        presigned_url = generate_presigned_url(photo_url, bucket)
         
-        # Pass ALL raw fields to OpenAI - let it handle the parsing
-        listing_text = json.dumps(clean_listing, ensure_ascii=False, indent=2)
-        
-        content.append({
-            "type": "text", 
-            "text": f"LISTING DATA:\n{listing_text}"
-        })
-        
-        # Add interior photos for visual analysis (max 20 per listing)
-        interior_photos = listing.get('interior_photos', [])[:20]
-        
-        for photo_url in interior_photos:
-            # Generate presigned URL for the photo
-            presigned_url = generate_presigned_url(photo_url, bucket)
-            
-            if presigned_url:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": presigned_url,
-                        "detail": "low"
-                    }
-                })
+        if presigned_url:
+            content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": presigned_url,
+                    "detail": "low"
+                }
+            })
+    
+    # Add instruction for individual listing analysis
+    content.append({
+        "type": "text",
+        "text": "IMPORTANT: Analyze this single property for investment potential. Return your analysis in JSON format with the following structure: {\"investment_score\": 0-100, \"price_analysis\": \"text\", \"location_assessment\": \"text\", \"condition_assessment\": \"text\", \"investment_thesis\": \"text\", \"risks\": [\"risk1\", \"risk2\"], \"recommendation\": \"buy/pass/investigate\"}"
+    })
     
     return content
+
+
+def prioritize_images(image_urls: List[str]) -> List[str]:
+    """
+    Prioritize images to show the most important ones first.
+    Prioritizes: exterior (1-2), interior living spaces (5-6), kitchen/bath (3-4), then others.
+    
+    Args:
+        image_urls: List of all image URLs
+        
+    Returns:
+        List of up to 20 prioritized image URLs
+    """
+    if not image_urls:
+        return []
+    
+    # Categorize images based on URL/filename
+    exterior = []
+    living_spaces = []
+    kitchen_bath = []
+    others = []
+    
+    for url in image_urls:
+        filename = url.split('/')[-1].lower()
+        
+        if any(kw in filename for kw in ['exterior', 'outside', 'building', 'entrance']):
+            exterior.append(url)
+        elif any(kw in filename for kw in ['living', 'bedroom', 'room']):
+            living_spaces.append(url)
+        elif any(kw in filename for kw in ['kitchen', 'bath', 'toilet', 'dining']):
+            kitchen_bath.append(url)
+        else:
+            others.append(url)
+    
+    # Prioritize and limit each category
+    prioritized = (
+        exterior[:2] +           # Max 2 exterior shots
+        living_spaces[:8] +      # Max 8 living spaces
+        kitchen_bath[:4] +       # Max 4 kitchen/bath
+        others[:6]               # Max 6 others
+    )
+    
+    # Return up to 20 images total
+    return prioritized[:20]
 
 
 def generate_presigned_url(s3_url: str, bucket: str, expiration: int = 28800) -> str:
@@ -282,29 +611,34 @@ def generate_presigned_url(s3_url: str, bucket: str, expiration: int = 28800) ->
         return ""
 
 
-def save_prompt_to_s3(payload: Dict[str, Any], bucket: str, key: str) -> None:
+def save_batch_requests_to_s3(batch_requests: List[Dict[str, Any]], bucket: str, key: str) -> None:
     """
-    Save prompt payload to S3.
+    Save batch requests as JSONL to S3.
     
     Args:
-        payload: OpenAI API payload dictionary
+        batch_requests: List of batch request dictionaries
         bucket: S3 bucket name
-        key: S3 key for output file
+        key: S3 key for saving
     """
     try:
-        content = json.dumps(payload, ensure_ascii=False, indent=2)
+        # Convert to JSONL format (one JSON object per line)
+        jsonl_lines = []
+        for request in batch_requests:
+            jsonl_lines.append(json.dumps(request, ensure_ascii=False))
+        
+        content = '\n'.join(jsonl_lines)
         
         s3_client.put_object(
             Bucket=bucket,
             Key=key,
             Body=content.encode('utf-8'),
-            ContentType='application/json'
+            ContentType='application/x-ndjson'
         )
         
-        logger.info(f"Saved prompt payload to s3://{bucket}/{key}")
+        logger.info(f"Saved {len(batch_requests)} batch requests to s3://{bucket}/{key}")
         
     except Exception as e:
-        logger.error(f"Failed to save prompt to S3: {e}")
+        logger.error(f"Failed to save batch requests to S3: {e}")
         raise
 
 

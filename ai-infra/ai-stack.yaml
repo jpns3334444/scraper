@@ -85,6 +85,9 @@ Resources:
                 Action:
                   - ses:SendEmail
                   - ses:SendRawEmail
+                  - ses:GetIdentityVerificationAttributes
+                  - ses:GetSendQuota
+                  - ses:GetSendStatistics
                 Resource: '*'
 
   # Lambda Functions (using AWS prebuilt layers + our OpenAI layer)

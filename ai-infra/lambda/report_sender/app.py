@@ -1,5 +1,5 @@
 """
-Report Sender Lambda function for generating and delivering Markdown reports.
+Report Sender Lambda function for generating and delivering HTML reports.
 Processes LLM results and sends via SES email.
 """
 import json
@@ -42,25 +42,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         if not batch_result:
             batch_result = load_batch_results(bucket, result_key)
         
-        # Check if there are any picks
-        top_picks = batch_result.get('top_picks', [])
-        if not top_picks:
-            logger.info("No top picks found, skipping report generation")
-            return {
-                'statusCode': 200,
-                'message': 'No top picks found, report skipped',
-                'date': date_str
-            }
-        
-        # Generate Markdown report
-        markdown_report = generate_markdown_report(batch_result, date_str)
+        # Extract HTML report directly from OpenAI response
+        html_report = extract_openai_report(batch_result)
         
         # Save report to S3
-        report_key = f"reports/{date_str}/report.md"
-        save_report_to_s3(markdown_report, batch_result, bucket, report_key, date_str)
+        report_key = f"reports/{date_str}/report.html"
+        save_report_to_s3(html_report, batch_result, bucket, report_key, date_str)
         
         # Send via email
-        email_success = send_via_email(markdown_report, date_str)
+        email_success = send_via_email(html_report, date_str)
         
         logger.info(f"Successfully generated and sent report")
         
@@ -69,7 +59,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             'date': date_str,
             'bucket': bucket,
             'report_key': report_key,
-            'top_picks_count': len(top_picks),
             'email_sent': email_success
         }
         
@@ -93,120 +82,305 @@ def load_batch_results(bucket: str, key: str) -> Dict[str, Any]:
         response = s3_client.get_object(Bucket=bucket, Key=key)
         content = response['Body'].read().decode('utf-8')
         full_result = json.loads(content)
-        return full_result.get('parsed_result', {})
+        
+        # Log the structure to help debug
+        logger.info(f"Full result keys: {list(full_result.keys()) if isinstance(full_result, dict) else 'Not a dict'}")
+        
+        # Try to extract parsed_result first
+        if 'parsed_result' in full_result:
+            logger.info(f"Parsed result keys: {list(full_result['parsed_result'].keys()) if isinstance(full_result['parsed_result'], dict) else 'Not a dict'}")
+            return full_result.get('parsed_result', {})
+        
+        # If no parsed_result, return the full result
+        return full_result
         
     except Exception as e:
         logger.error(f"Failed to load batch results from s3://{bucket}/{key}: {e}")
         raise
 
 
-def generate_markdown_report(batch_result: Dict[str, Any], date_str: str) -> str:
+def extract_openai_report(batch_result: Dict[str, Any]) -> str:
     """
-    Generate Markdown report from batch results.
+    Extract the HTML report from OpenAI response or generate from data.
     
     Args:
-        batch_result: Parsed batch result dictionary
-        date_str: Processing date string
+        batch_result: Parsed batch result dictionary from OpenAI
         
     Returns:
-        Markdown report string
+        HTML report string
     """
-    top_picks = batch_result.get('top_picks', [])
-    runners_up = batch_result.get('runners_up', [])
-    market_notes = batch_result.get('market_notes', '')
-    
-    # Generate report header
-    report_lines = [
-        f"# Tokyo Real Estate Analysis - {date_str}",
-        "",
-        f"**Analysis Date**: {date_str}",
-        f"**Top Picks**: {len(top_picks)}",
-        f"**Runners Up**: {len(runners_up)}",
-        "",
-    ]
-    
-    # Add market notes if available
-    if market_notes:
-        report_lines.extend([
-            "## Market Overview",
-            "",
-            market_notes,
-            "",
-        ])
-    
-    # Add top picks section
-    if top_picks:
-        report_lines.extend([
-            "## 🏆 Top 5 Picks",
-            "",
-            "| Rank | ID | Score | Price (¥) | Area (m²) | Price/m² | Age | Walk (min) | Ward |",
-            "|------|----|----|----------|-----------|----------|-----|------------|------|"
-        ])
+    try:
+        logger.info(f"Processing batch_result type: {type(batch_result)}")
+        logger.info(f"Processing batch_result keys: {list(batch_result.keys()) if isinstance(batch_result, dict) else 'Not a dict'}")
         
-        for i, pick in enumerate(top_picks, 1):
-            price_yen = format_currency(pick.get('price_yen', 0))
-            area_m2 = pick.get('area_m2', 0)
-            price_per_m2 = format_currency(pick.get('price_per_m2', 0))
-            age_years = pick.get('age_years', 'N/A')
-            walk_mins = pick.get('walk_mins_station', 'N/A')
-            ward = pick.get('ward', 'N/A')
+        # If batch_result is a string that looks like JSON, parse it
+        if isinstance(batch_result, str):
+            try:
+                batch_result = json.loads(batch_result)
+                logger.info(f"Parsed string to dict with keys: {list(batch_result.keys())}")
+            except json.JSONDecodeError:
+                # If it's not JSON but contains HTML, return it
+                if '<html' in batch_result.lower():
+                    logger.info("Found HTML content as string")
+                    return batch_result
+        
+        # Check if OpenAI returned HTML report directly
+        if isinstance(batch_result, dict) and 'html_report' in batch_result:
+            logger.info("Found html_report field")
+            return batch_result['html_report']
             
-            report_lines.append(
-                f"| {i} | {pick.get('id', 'N/A')} | {pick.get('score', 'N/A')} | "
-                f"{price_yen} | {area_m2} | {price_per_m2} | {age_years} | {walk_mins} | {ward} |"
-            )
+        # Check for content field with HTML
+        if isinstance(batch_result, dict) and 'content' in batch_result:
+            content = batch_result['content']
+            if isinstance(content, str):
+                # Check if content is HTML
+                if '<html' in content.lower():
+                    logger.info("Found HTML in content field")
+                    return content
+                # Check if content is JSON string containing listings
+                try:
+                    content_parsed = json.loads(content)
+                    if 'listings' in content_parsed:
+                        logger.info("Found listings in parsed content field")
+                        return generate_html_from_data(content_parsed)
+                except json.JSONDecodeError:
+                    pass
         
-        report_lines.extend(["", "### Detailed Analysis", ""])
+        # If OpenAI returned structured data with listings
+        if isinstance(batch_result, dict) and 'listings' in batch_result:
+            logger.info("Found listings data, generating HTML report")
+            # Validate that listings is actually a list
+            listings = batch_result.get('listings', [])
+            if not isinstance(listings, list):
+                logger.warning(f"Listings is not a list: {type(listings)}")
+                # Try to convert to list if it's a single item
+                if isinstance(listings, dict):
+                    listings = [listings]
+                else:
+                    listings = []
+                batch_result['listings'] = listings
+            return generate_html_from_data(batch_result)
         
-        for i, pick in enumerate(top_picks, 1):
-            report_lines.extend([
-                f"#### {i}. Property {pick.get('id', 'N/A')} (Score: {pick.get('score', 'N/A')})",
-                "",
-                f"**Why**: {pick.get('why', 'No reasoning provided')}",
-                ""
-            ])
+        # Check for nested structures
+        if isinstance(batch_result, dict):
+            # Check if there's a 'response' field containing the actual data
+            if 'response' in batch_result:
+                return extract_openai_report(batch_result['response'])
             
-            red_flags = pick.get('red_flags', [])
-            if red_flags:
-                report_lines.extend([
-                    "**🚩 Red Flags**:",
-                    ""
-                ])
-                for flag in red_flags:
-                    report_lines.append(f"- {flag}")
-                report_lines.append("")
-    
-    # Add runners up section
-    if runners_up:
-        report_lines.extend([
-            "## 🥈 Runners Up",
-            "",
-            "| ID | Score | Price (¥) | Area (m²) | Price/m² | Ward |",
-            "|----|----|----------|-----------|----------|------|"
-        ])
+            # Check if there's a 'body' field containing the actual data
+            if 'body' in batch_result:
+                return extract_openai_report(batch_result['body'])
+                
+            # Check if there's a 'result' field containing the actual data
+            if 'result' in batch_result:
+                return extract_openai_report(batch_result['result'])
         
-        for runner in runners_up:
-            price_yen = format_currency(runner.get('price_yen', 0))
-            area_m2 = runner.get('area_m2', 0)
-            price_per_m2 = format_currency(runner.get('price_per_m2', 0))
-            ward = runner.get('ward', 'N/A')
+        # If we can't find any usable data, return error message
+        logger.error(f"Could not extract or generate HTML report from OpenAI response")
+        logger.error(f"Full response: {json.dumps(batch_result, indent=2) if isinstance(batch_result, (dict, list)) else str(batch_result)}")
+        return f"""<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Report Generation Error</title>
+</head>
+<body>
+    <h1>Report Generation Error</h1>
+    <p>Could not extract HTML report from OpenAI response.</p>
+    <h2>Debug Information:</h2>
+    <pre>{json.dumps(batch_result, indent=2, ensure_ascii=False) if isinstance(batch_result, (dict, list)) else str(batch_result)}</pre>
+</body>
+</html>"""
+        
+    except Exception as e:
+        logger.error(f"Error extracting OpenAI report: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return f"""<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Report Generation Error</title>
+</head>
+<body>
+    <h1>Report Generation Error</h1>
+    <p>Error extracting report: {str(e)}</p>
+    <h2>Debug Information:</h2>
+    <pre>{json.dumps(batch_result, indent=2, ensure_ascii=False) if isinstance(batch_result, (dict, list)) else str(batch_result)}</pre>
+</body>
+</html>"""
+
+
+def generate_html_from_data(data: Dict[str, Any]) -> str:
+    """
+    Generate HTML report from structured data returned by OpenAI.
+    
+    Args:
+        data: Structured data from OpenAI containing listings
+        
+    Returns:
+        HTML report string
+    """
+    try:
+        listings = data.get('listings', [])
+        
+        # Log the structure for debugging
+        logger.info(f"Data type: {type(data)}")
+        logger.info(f"Listings type: {type(listings)}")
+        if listings:
+            logger.info(f"First listing type: {type(listings[0])}")
+            logger.info(f"First listing content: {listings[0]}")
+        report_date = datetime.now().strftime('%Y-%m-%d')
+        
+        # Count valid listings (only count dicts that have required fields)
+        valid_listings = []
+        for l in listings:
+            if isinstance(l, dict) and l.get('title') and l.get('price'):
+                valid_listings.append(l)
+            elif isinstance(l, str):
+                try:
+                    parsed = json.loads(l)
+                    if isinstance(parsed, dict) and parsed.get('title') and parsed.get('price'):
+                        valid_listings.append(parsed)
+                except:
+                    pass
+        
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tokyo RE Analysis - {report_date}</title>
+</head>
+<body style="margin:0;padding:0;font-family:Arial,sans-serif;line-height:1.6;color:#1f2937;background-color:#f9fafb;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f9fafb;">
+        <tr>
+            <td align="center">
+                <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;margin:20px auto;">
+                    <!-- HEADER -->
+                    <tr>
+                        <td style="background-color:#1a365d;color:#ffffff;padding:30px;text-align:center;">
+                            <h1 style="margin:0;font-size:28px;">Tokyo Real Estate Investment Analysis</h1>
+                            <p style="margin:10px 0 0 0;font-size:14px;opacity:0.9;">{report_date} | AI-Powered Analysis</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- STATS BAR -->
+                    <tr>
+                        <td style="padding:20px;">
+                            <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7fafc;border-radius:8px;">
+                                <tr>
+                                    <td width="100%" style="padding:20px;text-align:center;">
+                                        <div style="font-size:24px;font-weight:bold;color:#1a365d;">{len(valid_listings)}</div>
+                                        <div style="font-size:12px;color:#4a5568;">Properties Analyzed</div>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <!-- PROPERTIES LIST -->
+                    <tr>
+                        <td style="padding:20px;">
+                            <h2 style="margin:0 0 15px 0;color:#2d3748;font-size:20px;">Property Details</h2>
+"""
+        
+        # Process each listing
+        for i, listing in enumerate(listings, 1):
+            # Handle case where listing might be a string (JSON) instead of dict
+            if isinstance(listing, str):
+                try:
+                    listing = json.loads(listing)
+                    logger.info(f"Parsed listing {i} from string to dict")
+                except json.JSONDecodeError:
+                    logger.error(f"Listing {i} is a string but not valid JSON: {listing}")
+                    continue
             
-            report_lines.append(
-                f"| {runner.get('id', 'N/A')} | {runner.get('score', 'N/A')} | "
-                f"{price_yen} | {area_m2} | {price_per_m2} | {ward} |"
-            )
+            # Skip if listing is not a dictionary
+            if not isinstance(listing, dict):
+                logger.error(f"Listing {i} is not a dictionary: {type(listing)}")
+                continue
+            
+            # Extract and clean data
+            title = listing.get('title', f'Property {i}')
+            price = listing.get('price', 'Price not available')
+            building_area = listing.get('building_area', 'N/A')
+            land_area = listing.get('land_area', 'N/A')
+            location = listing.get('location', 'Location not specified')
+            age = listing.get('age', 'Age not specified')
+            structure = listing.get('structure', 'N/A')
+            floor = listing.get('floor', 'N/A')
+            balcony = listing.get('balcony', 'N/A')
+            management_fee = listing.get('management_fee', 'N/A')
+            seismic = listing.get('seismic', 'N/A')
+            bcr_far = listing.get('bcr_far', 'N/A')
+            dom = listing.get('dom', 'N/A')
+            listing_url = listing.get('listing_url', '#')
+            
+            html += f"""
+                            <table width="100%" cellpadding="15" cellspacing="0" style="background-color:#ffffff;border:1px solid #e2e8f0;margin-bottom:20px;border-radius:8px;">
+                                <tr>
+                                    <td>
+                                        <h3 style="margin:0 0 10px 0;color:#2d3748;font-size:18px;">{title}</h3>
+                                        <table width="100%" cellpadding="5" cellspacing="0" style="font-size:14px;">
+                                            <tr><td style="color:#718096;width:150px;vertical-align:top;">Price:</td><td style="font-weight:bold;color:#e53e3e;">{price}</td></tr>
+                                            <tr><td style="color:#718096;vertical-align:top;">Location:</td><td>{location}</td></tr>
+                                            <tr><td style="color:#718096;vertical-align:top;">Building Area:</td><td>{building_area}</td></tr>
+                                            <tr><td style="color:#718096;vertical-align:top;">Land Area:</td><td>{land_area}</td></tr>
+                                            <tr><td style="color:#718096;vertical-align:top;">Age/Structure:</td><td>{age} / {structure}</td></tr>
+                                            <tr><td style="color:#718096;vertical-align:top;">Floor/Balcony:</td><td>{floor} / {balcony}</td></tr>
+                                            <tr><td style="color:#718096;vertical-align:top;">BCR/FAR:</td><td>{bcr_far}</td></tr>
+                                            <tr><td style="color:#718096;vertical-align:top;">Management:</td><td>{management_fee}</td></tr>
+                                            <tr><td style="color:#718096;vertical-align:top;">Seismic:</td><td>{seismic}</td></tr>
+                                            <tr><td style="color:#718096;vertical-align:top;">Days on Market:</td><td>{dom}</td></tr>
+                                        </table>
+                                        <div style="margin-top:10px;">
+                                            <a href="{listing_url}" style="color:#3182ce;text-decoration:none;font-size:12px;">View Listing →</a>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </table>
+"""
         
-        report_lines.append("")
-    
-    # Add footer
-    report_lines.extend([
-        "---",
-        "",
-        "🤖 *Generated by AI Real Estate Analysis System*",
-        f"*Report generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} JST*"
-    ])
-    
-    return "\n".join(report_lines)
+        # Add footer
+        html += """
+                        </td>
+                    </tr>
+                    
+                    <!-- FOOTER -->
+                    <tr>
+                        <td style="padding:20px;background-color:#f7fafc;">
+                            <p style="margin:0;font-size:12px;color:#718096;text-align:center;">
+                                <strong>Generated by:</strong> Tokyo Real Estate AI Analysis System<br>
+                                <strong>Data Source:</strong> OpenAI GPT Analysis<br>
+                                <strong>Note:</strong> This report was generated from structured data provided by the AI model.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+        
+        logger.info(f"Successfully generated HTML report with {len(listings)} listings")
+        return html
+        
+    except Exception as e:
+        logger.error(f"Error generating HTML from data: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return f"""<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Report Generation Error</title>
+</head>
+<body>
+    <h1>Report Generation Error</h1>
+    <p>Error generating HTML from data: {str(e)}</p>
+    <h2>Data Structure:</h2>
+    <pre>{json.dumps(data, indent=2, ensure_ascii=False)}</pre>
+</body>
+</html>"""
 
 
 def format_currency(amount: float) -> str:
@@ -217,24 +391,24 @@ def format_currency(amount: float) -> str:
         return "¥0"
 
 
-def save_report_to_s3(markdown_report: str, batch_result: Dict[str, Any], bucket: str, report_key: str, date_str: str) -> None:
+def save_report_to_s3(html_report: str, batch_result: Dict[str, Any], bucket: str, report_key: str, date_str: str) -> None:
     """
     Save report and results to S3.
     
     Args:
-        markdown_report: Markdown report content
+        html_report: HTML report content
         batch_result: Full batch result dictionary
         bucket: S3 bucket name
-        report_key: S3 key for Markdown report
+        report_key: S3 key for HTML report
         date_str: Processing date string
     """
     try:
-        # Save Markdown report
+        # Save HTML report
         s3_client.put_object(
             Bucket=bucket,
             Key=report_key,
-            Body=markdown_report.encode('utf-8'),
-            ContentType='text/markdown'
+            Body=html_report.encode('utf-8'),
+            ContentType='text/html'
         )
         
         # Save JSON results
@@ -255,12 +429,12 @@ def save_report_to_s3(markdown_report: str, batch_result: Dict[str, Any], bucket
 
 
 
-def send_via_email(markdown_report: str, date_str: str) -> bool:
+def send_via_email(html_report: str, date_str: str) -> bool:
     """
-    Send report via SES email.
+    Send report via SES email with enhanced debugging.
     
     Args:
-        markdown_report: Markdown report content
+        html_report: HTML report content
         date_str: Processing date string
         
     Returns:
@@ -270,23 +444,46 @@ def send_via_email(markdown_report: str, date_str: str) -> bool:
         email_from = os.environ.get('EMAIL_FROM')
         email_to = os.environ.get('EMAIL_TO')
         
+        logger.info(f"Email configuration - FROM: {email_from}, TO: {email_to}")
+        
         if not email_from or not email_to:
-            logger.warning("Email addresses not configured")
+            logger.error("Email addresses not configured in environment variables")
             return False
         
-        # Convert Markdown to plain text for email
-        plain_text = markdown_to_plain_text(markdown_report)
+        # Check SES verification status
+        try:
+            identity_verification = ses_client.get_identity_verification_attributes(
+                Identities=[email_from, email_to]
+            )
+            logger.info(f"SES verification status: {identity_verification}")
+        except Exception as e:
+            logger.warning(f"Could not check SES verification status: {e}")
+        
+        # Convert HTML to plain text for email
+        plain_text = html_to_plain_text(html_report)
         
         subject = f"Tokyo Real Estate Analysis - {date_str}"
+        
+        logger.info(f"Sending email with subject: {subject}")
+        logger.info(f"Content length - Plain: {len(plain_text)}, HTML: {len(html_report)}")
         
         response = ses_client.send_email(
             Source=email_from,
             Destination={'ToAddresses': [email_to]},
             Message={
-                'Subject': {'Data': subject},
+                'Subject': {
+                    'Data': subject,
+                    'Charset': 'UTF-8'
+                },
                 'Body': {
-                    'Text': {'Data': plain_text},
-                    'Html': {'Data': markdown_to_html(markdown_report)}
+                    'Text': {
+                        'Data': plain_text,
+                        'Charset': 'UTF-8'
+                    },
+                    'Html': {
+                        'Data': html_report,
+                        'Charset': 'UTF-8'
+                    }
                 }
             }
         )
@@ -295,72 +492,87 @@ def send_via_email(markdown_report: str, date_str: str) -> bool:
         return True
         
     except Exception as e:
-        logger.error(f"Failed to send email: {e}")
+        logger.error(f"Failed to send email: {str(e)}")
+        logger.error(f"Error type: {type(e).__name__}")
+        # Log additional details for debugging
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return False
 
 
-def markdown_to_plain_text(markdown: str) -> str:
-    """Convert Markdown to plain text."""
+def html_to_plain_text(html: str) -> str:
+    """Convert HTML to plain text."""
     import re
     
-    # Remove Markdown formatting
-    text = re.sub(r'#+\s+', '', markdown)  # Headers
-    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)  # Bold
-    text = re.sub(r'\*(.*?)\*', r'\1', text)  # Italic
-    text = re.sub(r'\[(.*?)\]\(.*?\)', r'\1', text)  # Links
-    text = re.sub(r'`(.*?)`', r'\1', text)  # Inline code
-    text = re.sub(r'^\|.*\|$', '', text, flags=re.MULTILINE)  # Table rows
-    text = re.sub(r'^\|.*\|$', '', text, flags=re.MULTILINE)  # Table headers
+    # Remove HTML tags while preserving content
+    text = re.sub(r'<[^>]+>', '', html)
+    
+    # Convert HTML entities
+    text = text.replace('&amp;', '&')
+    text = text.replace('&lt;', '<')
+    text = text.replace('&gt;', '>')
+    text = text.replace('&quot;', '"')
+    text = text.replace('&apos;', "'")
+    text = text.replace('&nbsp;', ' ')
+    text = text.replace('&rarr;', '→')
+    
+    # Clean up multiple whitespace
+    text = re.sub(r'\s+', ' ', text)
+    text = text.strip()
     
     return text
-
-
-def markdown_to_html(markdown: str) -> str:
-    """Convert Markdown to basic HTML."""
-    import re
-    
-    html = markdown
-    
-    # Headers
-    html = re.sub(r'^# (.*)', r'<h1>\1</h1>', html, flags=re.MULTILINE)
-    html = re.sub(r'^## (.*)', r'<h2>\1</h2>', html, flags=re.MULTILINE)
-    html = re.sub(r'^### (.*)', r'<h3>\1</h3>', html, flags=re.MULTILINE)
-    html = re.sub(r'^#### (.*)', r'<h4>\1</h4>', html, flags=re.MULTILINE)
-    
-    # Bold and italic
-    html = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', html)
-    html = re.sub(r'\*(.*?)\*', r'<em>\1</em>', html)
-    
-    # Convert newlines to <br>
-    html = html.replace('\n', '<br>\n')
-    
-    return f"<html><body>{html}</body></html>"
 
 
 if __name__ == "__main__":
     # For local testing
     test_event = {
-        'date': '2025-07-07',
+        'date': '2025-07-16',
         'bucket': 'tokyo-real-estate-ai-data',
-        'result_key': 'batch_output/2025-07-07/response.json',
+        'result_key': 'batch_output/2025-07-16/response.json',
         'batch_result': {
-            'top_picks': [
+            'listings': [
                 {
-                    'id': 'test123',
-                    'score': 85,
-                    'why': 'Great value property',
-                    'red_flags': ['Minor water damage visible'],
-                    'price_yen': 25000000,
-                    'area_m2': 65.5,
-                    'price_per_m2': 381679,
-                    'age_years': 15,
-                    'walk_mins_station': 8,
-                    'ward': 'Shibuya'
+                    'title': '物件ID: 12345 - 新宿区マンション',
+                    'price': '¥2,800万円',
+                    'building_area': '75m²',
+                    'land_area': '-',
+                    'price_per_m2': '-',
+                    'age': '築15年',
+                    'structure': 'RC',
+                    'road_width': '5m',
+                    'location': '新宿区西新宿',
+                    'building_name': 'サンシャインマンション',
+                    'floor': '3階/10階',
+                    'balcony': '10m²',
+                    'dom': '募集期間: 90日',
+                    'bcr_far': '建ぺい率: 60% / 容積率: 200%',
+                    'management_fee': '管理費: ¥15,000/月',
+                    'seismic': '耐震基準適合',
+                    'listing_url': 'https://example.com/12345'
+                },
+                {
+                    'title': '物件ID: 67890 - 杉並区一戸建て',
+                    'price': '¥2,500万円',
+                    'building_area': '100m²',
+                    'land_area': '100m²',
+                    'price_per_m2': '-',
+                    'age': '築25年',
+                    'structure': '木造',
+                    'road_width': '4.5m',
+                    'location': '杉並区高円寺',
+                    'building_name': '-',
+                    'floor': '-',
+                    'balcony': '-',
+                    'dom': '募集期間: 120日',
+                    'bcr_far': '建ぺい率: 50% / 容積率: 150%',
+                    'management_fee': '-',
+                    'seismic': '耐震基準適合',
+                    'listing_url': 'https://example.com/67890'
                 }
-            ],
-            'runners_up': [],
-            'market_notes': 'Strong market conditions in central Tokyo'
+            ]
         }
     }
-    result = lambda_handler(test_event, None)
-    print(json.dumps(result, indent=2))
+    
+    # Test the extraction
+    html = extract_openai_report(test_event['batch_result'])
+    print(html)

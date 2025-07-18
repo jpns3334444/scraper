@@ -84,12 +84,13 @@ Resources:
                   demo_delay = min(initial_delay, 30)  # Max 30 seconds for demo
                   time.sleep(demo_delay)
               
-              # Find EC2 instance by tag
+              # STEP 1: Start the EC2 instance if it's stopped
+              print("Checking EC2 instance status...")
               try:
                   response = ec2.describe_instances(
                       Filters=[
                           {'Name': 'tag:Name', 'Values': ['MarketScraper']},
-                          {'Name': 'instance-state-name', 'Values': ['running']}
+                          {'Name': 'instance-state-name', 'Values': ['stopped', 'stopping', 'running', 'pending']}
                       ]
                   )
                   
@@ -98,13 +99,13 @@ Resources:
                       instances.extend(reservation['Instances'])
                   
                   if not instances:
-                      error_msg = "No running MarketScraper instances found"
+                      error_msg = "No MarketScraper instance found"
                       print(error_msg)
                       
                       if notification_enabled and sns_topic_arn:
                           sns.publish(
                               TopicArn=sns_topic_arn,
-                              Message=f" {mode.title()} scraper job failed to start\\n\\nSession: {session_id}\\nError: {error_msg}",
+                              Message=f" {mode.title()} scraper job failed to start\n\nSession: {session_id}\nError: {error_msg}",
                               Subject=f"{mode.title()} Scraper Job - Error"
                           )
                       
@@ -113,17 +114,54 @@ Resources:
                           "body": json.dumps({"error": error_msg, "session_id": session_id, "mode": mode})
                       }
                   
-                  instance_id = instances[0]['InstanceId']
-                  print(f"Found MarketScraper instance: {instance_id}")
+                  instance = instances[0]
+                  instance_id = instance['InstanceId']
+                  current_state = instance['State']['Name']
+                  
+                  print(f"Instance {instance_id} is currently {current_state}")
+                  
+                  # Start instance if needed
+                  if current_state == 'stopped':
+                      print(f"Starting instance {instance_id}...")
+                      ec2.start_instances(InstanceIds=[instance_id])
+                      
+                      # Wait for instance to be running
+                      waiter = ec2.get_waiter('instance_running')
+                      waiter.wait(InstanceIds=[instance_id])
+                      print(f"Instance {instance_id} is now running")
+                      
+                      # Give it extra time to fully initialize
+                      print("Waiting 90 seconds for instance to fully boot...")
+                      time.sleep(90)
+                      
+                  elif current_state == 'stopping':
+                      print("Instance is stopping, waiting for it to stop before starting...")
+                      waiter = ec2.get_waiter('instance_stopped')
+                      waiter.wait(InstanceIds=[instance_id])
+                      
+                      # Now start it
+                      ec2.start_instances(InstanceIds=[instance_id])
+                      waiter = ec2.get_waiter('instance_running')
+                      waiter.wait(InstanceIds=[instance_id])
+                      time.sleep(90)
+                      
+                  elif current_state == 'pending':
+                      print("Instance is already starting, waiting for it to be ready...")
+                      waiter = ec2.get_waiter('instance_running')
+                      waiter.wait(InstanceIds=[instance_id])
+                      time.sleep(60)
+                  
+                  # Instance should now be running
+                  print(f"Instance {instance_id} is ready for scraping")
                   
               except Exception as e:
-                  error_msg = f"Error finding EC2 instance: {str(e)}"
+                  error_msg = f"Error managing EC2 instance: {str(e)}"
                   print(error_msg)
                   
                   if notification_enabled and sns_topic_arn:
                       sns.publish(
                           TopicArn=sns_topic_arn,
-                          Message=f" {mode.title()} scraper job failed to start\\n\\nSession: {session_id}\\nError: {error_msg}",
+                          Message=f" {mode.title()} scraper job failed to start\n\nSession: {session_id}\nError: {error_msg}",
                           Subject=f"{mode.title()} Scraper Job - Error"
                       )
                   
@@ -132,12 +170,15 @@ Resources:
                       "body": json.dumps({"error": error_msg, "session_id": session_id, "mode": mode})
                   }
               
+              # STEP 2: Run the scraper
               print(f"Starting {mode} scraper job - Session: {session_id}, Max Properties: {max_properties}")
               start_time = datetime.now()
               
               try:
                   # Build command with session parameters
                   areas_env = ','.join(areas) if areas else ''
+                  
+                  # Modified command to include instance shutdown after scraping
                   scraper_command = f"""
                   export OUTPUT_BUCKET=tokyo-real-estate-ai-data
                   export SESSION_ID="{session_id}"
@@ -146,7 +187,15 @@ Resources:
                   export ENTRY_POINT="{entry_point}"
                   export MODE="{mode}"
                   export AREAS="{areas_env}"
+                  
+                  # Run the scraper
                   cd /home/ubuntu && python3 scrape.py >> /var/log/scraper/run.log 2>&1
+                  SCRAPER_EXIT_CODE=$?
+                  
+                  # Log completion
+                  echo "Scraper completed with exit code: $SCRAPER_EXIT_CODE" >> /var/log/scraper/run.log
+                  
+                  # No shutdown command here, Lambda will handle it
                   """
                   
                   response = ssm.send_command(
@@ -207,12 +256,34 @@ Resources:
                   except:
                       pass
                   
+                  # --- NEW SHUTDOWN LOGIC ---
+                  if status == "Success":
+                      print(f"Scraper command completed successfully. Shutting down instance {instance_id}...")
+                      try:
+                          ssm.send_command(
+                              InstanceIds=[instance_id],
+                              DocumentName="AWS-RunShellScript",
+                              Parameters={
+                                  "commands": ["sudo /sbin/poweroff"],
+                                  "executionTimeout": ["60"]
+                              }
+                          )
+                          print(f"Shutdown command sent to {instance_id}.")
+                          instance_shutdown = True
+                      except Exception as shutdown_e:
+                          print(f"Failed to send shutdown command to {instance_id}: {shutdown_e}")
+                          instance_shutdown = False
+                  else:
+                      print(f"Scraper command failed with status {status}. Keeping instance {instance_id} running for debugging.")
+                      instance_shutdown = False
+                  # --- END NEW SHUTDOWN LOGIC ---
+
                   if notification_enabled and sns_topic_arn:
                       if status == "Success":
-                          message = f" {mode.title()} scraper session completed successfully\\n\\nSession ID: {session_id}\\nMode: {mode}\\nStart Time: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\\nEnd Time: {end_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\\nDuration: {duration:.1f} seconds\\nProperties Scraped: {properties_scraped}\\nMax Properties: {max_properties}\\nCommand ID: {command_id}\\nInstance ID: {instance_id}\\n\\nCheck S3 bucket for scraped data."
+                          message = f" {mode.title()} scraper session completed successfully\n\nSession ID: {session_id}\nMode: {mode}\nStart Time: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\nEnd Time: {end_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\nDuration: {duration:.1f} seconds\nProperties Scraped: {properties_scraped}\nMax Properties: {max_properties}\nCommand ID: {command_id}\nInstance ID: {instance_id}\nInstance Shutdown: {instance_shutdown}\n\nCheck S3 bucket for scraped data."
                           subject = f"{mode.title()} Scraper Session - Success"
                       else:
-                          message = f" {mode.title()} scraper session failed\\n\\nSession ID: {session_id}\\nMode: {mode}\\nStart Time: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\\nEnd Time: {end_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\\nDuration: {duration:.1f} seconds\\nStatus: {status}\\nCommand ID: {command_id}\\nInstance ID: {instance_id}\\n\\nError Output:\\n{error_output}"
+                          message = f" {mode.title()} scraper session failed\n\nSession ID: {session_id}\nMode: {mode}\nStart Time: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\nEnd Time: {end_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\nDuration: {duration:.1f} seconds\nStatus: {status}\nCommand ID: {command_id}\nInstance ID: {instance_id}\n\nError Output:\n{error_output}\n\nInstance kept running for debugging."
                           subject = f"{mode.title()} Scraper Session - Failed"
                       
                       sns.publish(
@@ -231,7 +302,8 @@ Resources:
                           "session_id": session_id,
                           "mode": mode,
                           "properties_scraped": properties_scraped,
-                          "max_properties": max_properties
+                          "max_properties": max_properties,
+                          "instance_shutdown": instance_shutdown
                       })
                   }
                   
@@ -242,7 +314,7 @@ Resources:
                   if notification_enabled and sns_topic_arn:
                       sns.publish(
                           TopicArn=sns_topic_arn,
-                          Message=f" {mode.title()} scraper session failed to start\\n\\nSession: {session_id}\\nError: {error_msg}",
+                          Message=f" {mode.title()} scraper session failed to start\n\nSession: {session_id}\nError: {error_msg}",
                           Subject=f"{mode.title()} Scraper Session - Error"
                       )
                   

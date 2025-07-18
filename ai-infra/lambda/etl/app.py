@@ -164,8 +164,8 @@ def process_listings(df: pd.DataFrame, bucket: str, date_str: str) -> List[Dict[
                 image_urls = process_and_upload_images(listing['photo_filenames'], bucket, date_str, listing.get('id', 'unknown'))
                 listing['uploaded_image_urls'] = image_urls
                 
-                # Extract interior photos for AI analysis
-                listing['interior_photos'] = extract_interior_photos(image_urls)
+                # Include ALL photos for comprehensive AI analysis (exterior, interior, neighborhood)
+                listing['interior_photos'] = image_urls  # Now includes all images, not just interior
             else:
                 listing['uploaded_image_urls'] = []
                 listing['interior_photos'] = []

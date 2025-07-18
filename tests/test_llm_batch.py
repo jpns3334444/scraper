@@ -27,21 +27,12 @@ class TestLLMBatch:
                 ]}
             ],
             "temperature": 0.2,
-            "response_format": {"type": "json_object"}
+            "max_tokens": 4000
         }
         
-        self.mock_openai_response = {
-            'top_picks': [
-                {
-                    'id': 'listing1',
-                    'score': 85,
-                    'why': 'Great value property',
-                    'red_flags': ['Minor wear visible']
-                }
-            ],
-            'runners_up': [],
-            'market_notes': 'Strong market'
-        }
+        self.mock_html_response = '''<!DOCTYPE html>
+<html><head><title>Tokyo Real Estate Analysis</title></head>
+<body><h1>Investment Report</h1><p>Sample HTML response</p></body></html>'''
     
     @patch('app.get_openai_client')
     def test_lambda_handler_success(self, mock_get_client, mock_s3_client, environment_variables, sample_llm_event):
@@ -81,7 +72,7 @@ class TestLLMBatch:
                 'body': {
                     'choices': [{
                         'message': {
-                            'content': json.dumps(self.mock_openai_response)
+                            'content': self.mock_html_response
                         }
                     }]
                 }
@@ -100,13 +91,13 @@ class TestLLMBatch:
         assert result['date'] == '2025-07-07'
         assert result['batch_id'] == 'batch_123'
         assert 'result_key' in result
-        assert result['batch_result'] == self.mock_openai_response
+        assert result['batch_result'] == self.mock_html_response
         
         # Verify result was saved to S3
         response = mock_s3_client.get_object(Bucket='test-bucket', Key=result['result_key'])
         saved_result = json.loads(response['Body'].read().decode('utf-8'))
         assert saved_result['batch_id'] == 'batch_123'
-        assert saved_result['parsed_result'] == self.mock_openai_response
+        assert saved_result['parsed_result'] == self.mock_html_response
     
     @patch('app.ssm_client')
     def test_get_openai_client_from_ssm(self, mock_ssm):
@@ -237,7 +228,7 @@ class TestLLMBatch:
                 'body': {
                     'choices': [{
                         'message': {
-                            'content': json.dumps(self.mock_openai_response)
+                            'content': self.mock_html_response
                         }
                     }]
                 }
@@ -249,13 +240,13 @@ class TestLLMBatch:
         with patch('app.s3_client', mock_s3_client):
             result = download_batch_results(mock_client, mock_batch, 'test-bucket', 'output/result.json')
         
-        assert result == self.mock_openai_response
+        assert result == self.mock_html_response
         
         # Verify file was saved to S3
         response = mock_s3_client.get_object(Bucket='test-bucket', Key='output/result.json')
         saved_data = json.loads(response['Body'].read().decode('utf-8'))
         assert saved_data['batch_id'] == 'batch_123'
-        assert saved_data['parsed_result'] == self.mock_openai_response
+        assert saved_data['parsed_result'] == self.mock_html_response
     
     def test_download_batch_results_no_output_file(self):
         """Test handling of missing output file."""

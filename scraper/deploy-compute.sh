@@ -20,6 +20,7 @@ if [ "$1" == "--recreate" ]; then
 fi
 
 echo "🚀 Deploying compute stack..."
+(cd "$(dirname "$0")" && \
 aws cloudformation deploy \
   --stack-name "$COMPUTE_STACK_NAME" \
   --template-file compute-stack.yaml \
@@ -27,7 +28,7 @@ aws cloudformation deploy \
       KeyName="$KEY_NAME" \
       OutputBucket="$OUTPUT_BUCKET" \
       InfraStackName="$INFRA_STACK_NAME" \
-  --region "$REGION"
+  --region "$REGION")
 
 echo "✅ Compute stack deployed successfully"
 
