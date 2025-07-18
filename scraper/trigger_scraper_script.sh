@@ -87,28 +87,30 @@ while true; do
     fi
   fi
 
- # ── EC2 stream (CloudWatch) ────────────────────────────────────────────
-CW_ARGS=(--log-group-name "scraper-logs" --log-stream-names "$INSTANCE_ID" --start-time "$START_TIME")
-[[ -n "$EC2_NEXT_TOKEN" ]] && CW_ARGS+=(--next-token "$EC2_NEXT_TOKEN")
-
-EC2_JSON=$(aws logs filter-log-events "${CW_ARGS[@]}" 2>/dev/null || echo '{}')
-EC2_NEXT_TOKEN=$(echo "$EC2_JSON" | jq -r '.nextToken // empty')
-
-# 1) print every new message
-echo "$EC2_JSON" | jq -r '.events[].message // empty' | while read -r line; do
-  [[ -z "$line" ]] && continue
-  if [[ "$line" == "{"* ]]; then
-    msg=$(echo "$line" | jq -r '.message // empty' 2>/dev/null) || msg="$line"
-    echo -e "${ORANGE}🔶 ${msg:-$line}${NC}"
-  else
-    echo -e "${ORANGE}🔶 $line${NC}"
+  # ── EC2 stream (CloudWatch) ────────────────────────────────────────────
+  if [[ -n "$INSTANCE_ID" && "$INSTANCE_ID" != "None" ]]; then
+    CW_ARGS=(--log-group-name "scraper-logs" --log-stream-names "$INSTANCE_ID" --start-time "$START_TIME")
+    [[ -n "$EC2_NEXT_TOKEN" ]] && CW_ARGS+=(--next-token "$EC2_NEXT_TOKEN")
+    
+    EC2_JSON=$(aws logs filter-log-events "${CW_ARGS[@]}" 2>/dev/null || echo '{}')
+    EC2_NEXT_TOKEN=$(echo "$EC2_JSON" | jq -r '.nextToken // empty' 2>/dev/null || true)
+    
+    # 1) print every new message
+    echo "$EC2_JSON" | jq -r '.events[].message // empty' 2>/dev/null | while read -r line; do
+      [[ -z "$line" ]] && continue
+      if [[ "$line" == "{"* ]]; then
+        msg=$(echo "$line" | jq -r '.message // empty' 2>/dev/null) || msg="$line"
+        echo -e "${ORANGE}🔶 ${msg:-$line}${NC}"
+      else
+        echo -e "${ORANGE}🔶 $line${NC}"
+      fi
+    done
+    
+    # 2) separate completion check (runs in *parent* shell)
+    if echo "$EC2_JSON" | grep -q -E 'Job summary written|summary\.json uploaded|scraping completed successfully'; then
+      SCRAPING_COMPLETE=true
+    fi
   fi
-done
-
-# 2) separate completion check (runs in *parent* shell)
-if echo "$EC2_JSON" | grep -q -E 'Job summary written|summary\.json uploaded|scraping completed successfully'; then
-  SCRAPING_COMPLETE=true
-fi
 
   # ── Exit conditions ─────────────────────────────────────────────────────────
   if [[ "$SCRAPING_COMPLETE" == true ]]; then

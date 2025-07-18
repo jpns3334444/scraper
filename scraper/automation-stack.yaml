@@ -90,7 +90,7 @@ Resources:
                   response = ec2.describe_instances(
                       Filters=[
                           {'Name': 'tag:Name', 'Values': ['MarketScraper']},
-                          {'Name': 'instance-state-name', 'Values': ['stopped', 'stopping', 'running', 'pending']}
+                          {'Name': 'instance-state-name', 'Values': ['stopped', 'running', 'pending']}
                       ]
                   )
                   
@@ -98,7 +98,12 @@ Resources:
                   for reservation in response['Reservations']:
                       instances.extend(reservation['Instances'])
                   
-                  if not instances:
+                  # Filter out terminated instances
+                  active_instances = [inst for inst in instances if inst['State']['Name'] != 'terminated']
+                  
+                  print(f"Found {len(instances)} total instances, {len(active_instances)} active instances")
+                  
+                  if not active_instances:
                       error_msg = "No MarketScraper instance found"
                       print(error_msg)
                       
@@ -114,7 +119,7 @@ Resources:
                           "body": json.dumps({"error": error_msg, "session_id": session_id, "mode": mode})
                       }
                   
-                  instance = instances[0]
+                  instance = active_instances[0]
                   instance_id = instance['InstanceId']
                   current_state = instance['State']['Name']
                   
@@ -130,9 +135,27 @@ Resources:
                       waiter.wait(InstanceIds=[instance_id])
                       print(f"Instance {instance_id} is now running")
                       
-                      # Give it extra time to fully initialize
-                      print("Waiting 90 seconds for instance to fully boot...")
-                      time.sleep(90)
+                      # Wait for instance status checks to pass
+                      print("Waiting for instance status checks...")
+                      waiter = ec2.get_waiter('instance_status_ok')
+                      waiter.wait(InstanceIds=[instance_id])
+                      print(f"Instance {instance_id} status checks passed")
+                      
+                      # Wait for SSM agent to be online
+                      print("Waiting for SSM agent to come online...")
+                      for i in range(30):  # Max 30 seconds
+                          try:
+                              response = ssm.describe_instance_information(
+                                  Filters=[{'Key': 'InstanceIds', 'Values': [instance_id]}]
+                              )
+                              if response['InstanceInformationList']:
+                                  print(f"SSM agent is online on {instance_id}")
+                                  break
+                          except:
+                              pass
+                          time.sleep(1)
+                      else:
+                          print("Warning: SSM agent status unclear, proceeding anyway")
                       
                   elif current_state == 'stopping':
                       print("Instance is stopping, waiting for it to stop before starting...")
@@ -143,13 +166,17 @@ Resources:
                       ec2.start_instances(InstanceIds=[instance_id])
                       waiter = ec2.get_waiter('instance_running')
                       waiter.wait(InstanceIds=[instance_id])
-                      time.sleep(90)
+                      waiter = ec2.get_waiter('instance_status_ok')
+                      waiter.wait(InstanceIds=[instance_id])
+                      print(f"Instance {instance_id} restarted and status checks passed")
                       
                   elif current_state == 'pending':
                       print("Instance is already starting, waiting for it to be ready...")
                       waiter = ec2.get_waiter('instance_running')
                       waiter.wait(InstanceIds=[instance_id])
-                      time.sleep(60)
+                      waiter = ec2.get_waiter('instance_status_ok')
+                      waiter.wait(InstanceIds=[instance_id])
+                      print(f"Instance {instance_id} finished starting and status checks passed")
                   
                   # Instance should now be running
                   print(f"Instance {instance_id} is ready for scraping")
@@ -178,7 +205,7 @@ Resources:
                   # Build command with session parameters
                   areas_env = ','.join(areas) if areas else ''
                   
-                  # Modified command to include instance shutdown after scraping
+                  # Modified command to wait for scraper completion
                   scraper_command = f"""
                   export OUTPUT_BUCKET=tokyo-real-estate-ai-data
                   export SESSION_ID="{session_id}"
@@ -188,14 +215,17 @@ Resources:
                   export MODE="{mode}"
                   export AREAS="{areas_env}"
                   
-                  # Run the scraper
-                  cd /home/ubuntu && python3 scrape.py >> /var/log/scraper/run.log 2>&1
+                  # Run the scraper and wait for it to complete
+                  cd /home/ubuntu
+                  echo "Starting scraper at $(date)" >> /var/log/scraper/run.log
+                  python3 scrape.py >> /var/log/scraper/run.log 2>&1
                   SCRAPER_EXIT_CODE=$?
                   
                   # Log completion
-                  echo "Scraper completed with exit code: $SCRAPER_EXIT_CODE" >> /var/log/scraper/run.log
+                  echo "Scraper completed with exit code: $SCRAPER_EXIT_CODE at $(date)" >> /var/log/scraper/run.log
                   
-                  # No shutdown command here, Lambda will handle it
+                  # Exit with the scraper's exit code so SSM knows if it succeeded
+                  exit $SCRAPER_EXIT_CODE
                   """
                   
                   response = ssm.send_command(
@@ -242,9 +272,16 @@ Resources:
                       status = final_invocation['Status']
                       output = final_invocation.get('StandardOutputContent', '')
                       error_output = final_invocation.get('StandardErrorContent', '')
-                  except:
+                      
+                      # Log the output for debugging
+                      if output:
+                          print(f"Command output: {output[:500]}")
+                      if error_output:
+                          print(f"Command error: {error_output[:500]}")
+                  except Exception as e:
                       output = ""
-                      error_output = "Could not retrieve command output"
+                      error_output = f"Could not retrieve command output: {str(e)}"
+                      print(f"Error getting command output: {str(e)}")
                   
                   # Extract properties scraped from output (if available)
                   properties_scraped = 0
@@ -260,18 +297,12 @@ Resources:
                   if status == "Success":
                       print(f"Scraper command completed successfully. Shutting down instance {instance_id}...")
                       try:
-                          ssm.send_command(
-                              InstanceIds=[instance_id],
-                              DocumentName="AWS-RunShellScript",
-                              Parameters={
-                                  "commands": ["sudo /sbin/poweroff"],
-                                  "executionTimeout": ["60"]
-                              }
-                          )
-                          print(f"Shutdown command sent to {instance_id}.")
+                          # Use ec2.stop_instances instead of poweroff for cleaner shutdown
+                          ec2.stop_instances(InstanceIds=[instance_id])
+                          print(f"EC2 stop command sent to {instance_id}.")
                           instance_shutdown = True
                       except Exception as shutdown_e:
-                          print(f"Failed to send shutdown command to {instance_id}: {shutdown_e}")
+                          print(f"Failed to stop instance {instance_id}: {shutdown_e}")
                           instance_shutdown = False
                   else:
                       print(f"Scraper command failed with status {status}. Keeping instance {instance_id} running for debugging.")

@@ -117,10 +117,14 @@ Resources:
                   - ssm:SendCommand
                   - ssm:GetCommandInvocation
                   - ssm:ListCommandInvocations
+                  - ssm:DescribeInstanceInformation
                 Resource: "*"
               - Effect: Allow
                 Action:
                   - ec2:DescribeInstances
+                  - ec2:DescribeInstanceStatus
+                  - ec2:StartInstances
+                  - ec2:StopInstances
                 Resource: "*"
         - PolicyName: LambdaBasicExecution
           PolicyDocument:
