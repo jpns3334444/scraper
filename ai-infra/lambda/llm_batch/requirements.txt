@@ -1,0 +1,7 @@
+# Dependencies are provided via Lambda layers:
+# - AWS SDK Pandas layer: includes boto3, pandas, numpy, etc.
+# - Custom OpenAI layer: includes openai package
+
+# If building locally without layers, you would need:
+# openai>=1.0.0
+# boto3>=1.26.0

@@ -237,7 +237,7 @@ Resources:
         S3Bucket: !Ref DeploymentBucket
         S3Key: functions/llm_batch.zip
         S3ObjectVersion: !Ref LLMBatchCodeVersion
-      Timeout: 900
+      Timeout: 900  # Maximum Lambda timeout (15 minutes)
       MemorySize: 1024
       Layers:
         - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
@@ -245,6 +245,7 @@ Resources:
       Environment:
         Variables:
           OUTPUT_BUCKET: !Ref OutputBucket
+          OPENAI_MODEL: o3  # Use 'o3' for best quality or 'o3-mini' for cost savings
 
   ReportSenderFunction:
     Type: AWS::Lambda::Function

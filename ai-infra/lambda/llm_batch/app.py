@@ -1,18 +1,16 @@
 """
-LLM Batch Lambda function for OpenAI Batch API processing.
-Creates batch jobs, polls for completion, and saves results.
+LLM Synchronous Lambda function for OpenAI API processing.
+Processes real estate listings directly using chat completions API with o3 model.
 """
-import io
 import json
 import logging
 import os
 import time
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 import boto3
-import openai                      # ← add this
+import openai
 from openai import OpenAI
-logging.getLogger().info("OpenAI SDK %s", openai.__version__)
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -23,53 +21,59 @@ secrets_client = boto3.client('secretsmanager')
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
-    Main Lambda handler for LLM batch processing.
+    Main Lambda handler for synchronous LLM processing.
     
     Args:
         event: Lambda event containing prompt data from previous step
         context: Lambda context
         
     Returns:
-        Dict containing batch results location and metadata
+        Dict containing results location and metadata
     """
     try:
         date_str = event.get('date')
         bucket = event.get('bucket', os.environ['OUTPUT_BUCKET'])
         prompt_key = event.get('prompt_key')
         
-        logger.info(f"Processing LLM batch for date: {date_str}")
+        logger.info(f"Processing LLM requests for date: {date_str}")
         
         # Initialize OpenAI client
         openai_client = get_openai_client()
         
+        # Determine which model to use (o3 or o3-mini)
+        model = os.environ.get('OPENAI_MODEL', 'o3')
+        logger.info(f"Using model: {model}")
+        
         # Load batch requests JSONL from S3
-        batch_requests_jsonl = load_batch_requests_from_s3(bucket, prompt_key)
+        batch_requests = load_batch_requests_from_s3(bucket, prompt_key)
+        logger.info(f"Loaded {len(batch_requests)} requests to process")
         
-        # Create batch job
-        batch_job = create_batch_job(openai_client, batch_requests_jsonl, date_str)
+        # Process each request synchronously
+        results = process_requests_sync(openai_client, batch_requests, model, context)
         
-        logger.info(f"Created batch job: {batch_job.id}")
-        
-        # Poll for completion
-        completed_batch = poll_batch_completion(openai_client, batch_job.id, context)
-        
-        # Download and save results
+        # Save results to S3 in the same format as batch API
         result_key = f"batch_output/{date_str}/response.json"
-        batch_result = download_batch_results(openai_client, completed_batch, bucket, result_key)
+        save_results_to_s3(results, bucket, result_key, batch_requests)
         
-        logger.info(f"Successfully completed batch processing")
+        logger.info(f"Successfully completed synchronous processing")
         
+        # Return the same structure as the batch version for compatibility
         return {
             'statusCode': 200,
             'date': date_str,
             'bucket': bucket,
             'result_key': result_key,
-            'batch_id': completed_batch.id,
-            'batch_result': batch_result
+            'batch_id': f"sync-{date_str}",  # Simulated batch ID for compatibility
+            'batch_result': {
+                'batch_id': f"sync-{date_str}",
+                'status': 'completed',
+                'total_results': len(results),
+                'individual_results': results
+            }
         }
         
     except Exception as e:
-        logger.error(f"LLM batch processing failed: {e}")
+        logger.error(f"LLM processing failed: {e}")
         raise
 
 
@@ -94,7 +98,7 @@ def get_openai_client() -> OpenAI:
         raise
 
 
-def load_batch_requests_from_s3(bucket: str, key: str) -> str:
+def load_batch_requests_from_s3(bucket: str, key: str) -> List[Dict[str, Any]]:
     """
     Load batch requests JSONL from S3.
     
@@ -103,174 +107,222 @@ def load_batch_requests_from_s3(bucket: str, key: str) -> str:
         key: S3 key for JSONL file
         
     Returns:
-        JSONL content as string
+        List of batch request dictionaries
     """
     try:
         response = s3_client.get_object(Bucket=bucket, Key=key)
         content = response['Body'].read().decode('utf-8')
         
-        # Validate that it's valid JSONL
-        lines = content.strip().split('\n')
-        for i, line in enumerate(lines):
+        requests = []
+        for line in content.strip().split('\n'):
             if line.strip():
-                try:
-                    json.loads(line)
-                except json.JSONDecodeError as e:
-                    logger.error(f"Invalid JSON on line {i+1}: {e}")
-                    raise
+                requests.append(json.loads(line))
         
-        logger.info(f"Loaded {len(lines)} batch requests from JSONL")
-        return content
+        logger.info(f"Loaded {len(requests)} batch requests from JSONL")
+        return requests
         
     except Exception as e:
         logger.error(f"Failed to load batch requests from s3://{bucket}/{key}: {e}")
         raise
 
 
-def create_batch_job(client: OpenAI, batch_requests_jsonl: str, date_str: str) -> Any:
+def process_requests_sync(
+    client: OpenAI, 
+    batch_requests: List[Dict[str, Any]], 
+    model: str,
+    context: Any
+) -> List[Dict[str, Any]]:
     """
-    Create OpenAI batch job from JSONL content.
+    Process all requests synchronously with retry logic.
     
     Args:
         client: OpenAI client instance
-        batch_requests_jsonl: JSONL content with batch requests
-        date_str: Processing date string
-        
-    Returns:
-        Batch job object
-    """
-    try:
-        # Upload batch input file (JSONL is already in correct format)
-        batch_input_file = client.files.create(
-            file=io.BytesIO(batch_requests_jsonl.encode('utf-8')),
-            purpose="batch"
-        )
-        
-        logger.info(f"Created batch input file: {batch_input_file.id}")
-        
-        # Count number of requests
-        request_count = len([line for line in batch_requests_jsonl.strip().split('\n') if line.strip()])
-        logger.info(f"Batch contains {request_count} individual listing analysis requests")
-        
-        # Create batch job
-        batch_job = client.batches.create(
-            input_file_id=batch_input_file.id,
-            endpoint="/v1/chat/completions",
-            completion_window="24h",
-            metadata={
-                "date": date_str,
-                "purpose": "real-estate-analysis",
-                "request_count": str(request_count)
-            }
-        )
-        
-        return batch_job
-        
-    except Exception as e:
-        logger.error(f"Failed to create batch job: {e}")
-        raise
-
-
-def poll_batch_completion(client: OpenAI, batch_id: str, context: Any) -> Any:
-    """
-    Poll batch job until completion.
-    
-    Args:
-        client: OpenAI client instance
-        batch_id: Batch job ID
+        batch_requests: List of batch request dictionaries
+        model: Model to use (o3 or o3-mini)
         context: Lambda context for timeout checking
         
     Returns:
-        Completed batch job object
+        List of result dictionaries
     """
-    max_wait_time = 3300  # 55 minutes (Lambda timeout is 60 minutes)
-    poll_interval = 30  # Poll every 30 seconds
-    start_time = time.time()
+    results = []
+    total_requests = len(batch_requests)
     
-    while time.time() - start_time < max_wait_time:
+    for i, request in enumerate(batch_requests):
+        # Check Lambda timeout (leave 2 minutes buffer)
+        if context:
+            remaining_time = context.get_remaining_time_in_millis()
+            if remaining_time < 120000:  # Less than 2 minutes
+                logger.warning(f"Lambda timeout approaching. Processed {i}/{total_requests} requests")
+                break
+        
+        custom_id = request.get('custom_id', f'request-{i}')
+        logger.info(f"Processing request {i+1}/{total_requests}: {custom_id}")
+        
         try:
-            batch = client.batches.retrieve(batch_id)
+            # Extract the actual request body
+            request_body = request.get('body', {})
             
-            logger.info(f"Batch status: {batch.status}")
+            # Call OpenAI API with retry logic
+            response = call_openai_with_retry(
+                client=client,
+                model=model,
+                messages=request_body.get('messages', []),
+                temperature=request_body.get('temperature', 0.2),
+                max_tokens=request_body.get('max_tokens', 4000)
+            )
             
-            if batch.status == "completed":
-                logger.info(f"Batch completed successfully")
-                return batch
-            elif batch.status in ["failed", "expired", "cancelled"]:
-                raise Exception(f"Batch job failed with status: {batch.status}")
+            # Format result to match batch API output structure
+            result = {
+                'custom_id': custom_id,
+                'analysis': response.choices[0].message.content if response.choices else '',
+                'full_response': {
+                    'custom_id': custom_id,
+                    'response': {
+                        'status_code': 200,
+                        'body': {
+                            'id': response.id,
+                            'object': 'chat.completion',
+                            'created': response.created,
+                            'model': response.model,
+                            'choices': [
+                                {
+                                    'index': 0,
+                                    'message': {
+                                        'role': 'assistant',
+                                        'content': response.choices[0].message.content
+                                    },
+                                    'finish_reason': response.choices[0].finish_reason
+                                }
+                            ],
+                            'usage': {
+                                'prompt_tokens': response.usage.prompt_tokens if response.usage else 0,
+                                'completion_tokens': response.usage.completion_tokens if response.usage else 0,
+                                'total_tokens': response.usage.total_tokens if response.usage else 0
+                            }
+                        }
+                    }
+                }
+            }
             
-            # Check Lambda remaining time
-            remaining_time = context.get_remaining_time_in_millis() if context else float('inf')
-            if remaining_time < 120000:  # Less than 2 minutes remaining
-                logger.warning("Lambda timeout approaching, batch may not complete")
-                # You might want to implement a continuation mechanism here
-                raise Exception("Lambda timeout approaching before batch completion")
+            results.append(result)
             
-            time.sleep(poll_interval)
-            
+            # Small delay between requests to avoid rate limits
+            if i < total_requests - 1:  # Don't delay after last request
+                time.sleep(0.5)  # 500ms delay
+                
         except Exception as e:
-            if "Batch job failed" in str(e) or "timeout" in str(e):
-                raise
-            logger.warning(f"Error polling batch status: {e}")
-            time.sleep(poll_interval)
+            logger.error(f"Failed to process request {custom_id}: {e}")
+            # Add error result to maintain consistency
+            results.append({
+                'custom_id': custom_id,
+                'analysis': '',
+                'full_response': {
+                    'custom_id': custom_id,
+                    'error': {
+                        'message': str(e),
+                        'type': type(e).__name__
+                    }
+                }
+            })
     
-    raise Exception(f"Batch job {batch_id} did not complete within timeout")
+    logger.info(f"Processed {len(results)} requests successfully")
+    return results
 
 
-def download_batch_results(client: OpenAI, batch: Any, bucket: str, result_key: str) -> Dict[str, Any]:
+def call_openai_with_retry(
+    client: OpenAI,
+    model: str,
+    messages: List[Dict[str, Any]],
+    temperature: float = 0.2,
+    max_tokens: int = 4000,
+    max_retries: int = 3
+) -> Any:
     """
-    Download batch results and save to S3.
+    Call OpenAI API with exponential backoff retry logic.
     
     Args:
-        client: OpenAI client instance
-        batch: Completed batch job object
-        bucket: S3 bucket name
-        result_key: S3 key for results file
+        client: OpenAI client
+        model: Model name (o3, o3-mini, or gpt-4o)
+        messages: Chat messages including images
+        temperature: Sampling temperature
+        max_tokens: Maximum tokens in response
+        max_retries: Maximum number of retry attempts
         
     Returns:
-        Parsed batch result dictionary
+        OpenAI API response
+    """
+    for attempt in range(max_retries):
+        try:
+            # Use correct parameter name based on model
+            if model.startswith('gpt-4o'):
+                # gpt-4o uses max_completion_tokens
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_completion_tokens=max_tokens
+                )
+            else:
+                # o3 and o3-mini use max_tokens
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+                )
+            return response
+            
+        except openai.RateLimitError as e:
+            # Handle rate limit with exponential backoff
+            if attempt < max_retries - 1:
+                wait_time = (2 ** attempt) * 2  # 2s, 4s, 8s
+                logger.warning(f"Rate limit hit, waiting {wait_time}s before retry {attempt + 1}")
+                time.sleep(wait_time)
+            else:
+                logger.error(f"Rate limit exceeded after {max_retries} attempts")
+                raise
+                
+        except (openai.APIError, openai.APIConnectionError) as e:
+            # Handle temporary API errors
+            if attempt < max_retries - 1:
+                wait_time = (2 ** attempt) * 1  # 1s, 2s, 4s
+                logger.warning(f"API error: {e}, waiting {wait_time}s before retry {attempt + 1}")
+                time.sleep(wait_time)
+            else:
+                logger.error(f"API error after {max_retries} attempts: {e}")
+                raise
+                
+        except Exception as e:
+            # Don't retry on other errors
+            logger.error(f"Unexpected error calling OpenAI API: {e}")
+            raise
+
+
+def save_results_to_s3(
+    results: List[Dict[str, Any]], 
+    bucket: str, 
+    result_key: str,
+    original_requests: List[Dict[str, Any]]
+) -> None:
+    """
+    Save results to S3 in the same format as batch API.
+    
+    Args:
+        results: List of result dictionaries
+        bucket: S3 bucket name
+        result_key: S3 key for results file
+        original_requests: Original batch requests for reference
     """
     try:
-        # Download output file
-        output_file_id = batch.output_file_id
-        if not output_file_id:
-            raise Exception("No output file available for completed batch")
-        
-        output_file_content = client.files.content(output_file_id)
-        output_content = output_file_content.read().decode('utf-8')
-        
-        # Parse multiple results (one per line for each listing)
-        result_lines = output_content.strip().split('\n')
-        individual_results = []
-        
-        for line in result_lines:
-            if line.strip():
-                try:
-                    result_data = json.loads(line)
-                    custom_id = result_data.get('custom_id', 'unknown')
-                    
-                    # Extract the JSON analysis from model response
-                    analysis_json = result_data.get('response', {}).get('body', {}).get('choices', [{}])[0].get('message', {}).get('content', '')
-                    
-                    individual_results.append({
-                        'custom_id': custom_id,
-                        'analysis': analysis_json,
-                        'full_response': result_data
-                    })
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Failed to parse result line: {e}")
-                    continue
-        
-        logger.info(f"Processed {len(individual_results)} individual listing results")
-        
-        # Save individual results to S3
+        # Create the full result structure matching batch API output
         full_result = {
-            'batch_id': batch.id,
-            'status': batch.status,
-            'total_results': len(individual_results),
-            'individual_results': individual_results
+            'batch_id': f"sync-{os.path.basename(result_key).split('.')[0]}",
+            'status': 'completed',
+            'total_results': len(results),
+            'individual_results': results
         }
         
+        # Save to S3
         s3_client.put_object(
             Bucket=bucket,
             Key=result_key,
@@ -278,12 +330,10 @@ def download_batch_results(client: OpenAI, batch: Any, bucket: str, result_key: 
             ContentType='application/json'
         )
         
-        logger.info(f"Saved batch results to s3://{bucket}/{result_key}")
-        
-        return full_result
+        logger.info(f"Saved results to s3://{bucket}/{result_key}")
         
     except Exception as e:
-        logger.error(f"Failed to download batch results: {e}")
+        logger.error(f"Failed to save results to S3: {e}")
         raise
 
 
@@ -292,7 +342,12 @@ if __name__ == "__main__":
     test_event = {
         'date': '2025-07-07',
         'bucket': 'tokyo-real-estate-ai-data',
-        'prompt_key': 'prompts/2025-07-07/payload.json'
+        'prompt_key': 'prompts/2025-07-07/batch_requests.jsonl'
     }
+    
+    # Set environment variables for local testing
+    os.environ['OUTPUT_BUCKET'] = 'tokyo-real-estate-ai-data'
+    os.environ['OPENAI_MODEL'] = 'o3'  # or 'o3-mini' for cost savings
+    
     result = lambda_handler(test_event, None)
     print(json.dumps(result, indent=2))
