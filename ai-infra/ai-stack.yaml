@@ -25,6 +25,9 @@ Parameters:
   ReportSenderCodeVersion:
     Type: String
     Default: latest
+  DynamoDBWriterCodeVersion:
+    Type: String
+    Default: latest
   OpenAILayerObjectVersion:
     Type: String
     Default: ""
@@ -89,6 +92,98 @@ Resources:
                   - ses:GetSendQuota
                   - ses:GetSendStatistics
                 Resource: '*'
+        - PolicyName: DynamoDBWriteAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:BatchWriteItem
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: 
+                  - !GetAtt RealEstateAnalysisDB.Arn
+                  - !Sub '${RealEstateAnalysisDB.Arn}/index/*'
+
+  # DynamoDB Table for Real Estate Analysis
+  RealEstateAnalysisDB:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-RealEstateAnalysis'
+      AttributeDefinitions:
+        - AttributeName: property_id
+          AttributeType: S
+        - AttributeName: sort_key
+          AttributeType: S
+        - AttributeName: district_key
+          AttributeType: S
+        - AttributeName: price_per_sqm
+          AttributeType: N
+        - AttributeName: invest_partition
+          AttributeType: S
+        - AttributeName: investment_score
+          AttributeType: N
+        - AttributeName: analysis_date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: property_id
+          KeyType: HASH
+        - AttributeName: sort_key
+          KeyType: RANGE
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      GlobalSecondaryIndexes:
+        - IndexName: GSI_DIST_PPSQM
+          KeySchema:
+            - AttributeName: district_key
+              KeyType: HASH
+            - AttributeName: price_per_sqm
+              KeyType: RANGE
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes:
+              - listing_url
+              - price
+              - total_sqm
+              - num_bedrooms
+              - building_age_years
+              - station_distance_minutes
+          ProvisionedThroughput:
+            ReadCapacityUnits: 5
+            WriteCapacityUnits: 5
+        - IndexName: GSI_INVEST
+          KeySchema:
+            - AttributeName: invest_partition
+              KeyType: HASH
+            - AttributeName: investment_score
+              KeyType: RANGE
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes:
+              - listing_url
+              - price
+              - price_per_sqm
+              - recommendation
+              - district
+              - total_sqm
+          ProvisionedThroughput:
+            ReadCapacityUnits: 5
+            WriteCapacityUnits: 5
+        - IndexName: GSI_ANALYSIS_DATE
+          KeySchema:
+            - AttributeName: invest_partition
+              KeyType: HASH
+            - AttributeName: analysis_date
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 5
+            WriteCapacityUnits: 5
 
   # Lambda Functions (using AWS prebuilt layers + our OpenAI layer)
   ETLFunction:
@@ -129,6 +224,7 @@ Resources:
       Environment:
         Variables:
           OUTPUT_BUCKET: !Ref OutputBucket
+          DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
 
   LLMBatchFunction:
     Type: AWS::Lambda::Function
@@ -172,6 +268,25 @@ Resources:
           EMAIL_FROM: !Ref EmailFrom
           EMAIL_TO: !Ref EmailTo
 
+  DynamoDBWriterFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-dynamodb-writer'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/dynamodb_writer.zip
+        S3ObjectVersion: !Ref DynamoDBWriterCodeVersion
+      Timeout: 300
+      MemorySize: 512
+      Layers:
+        - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
+
   # Step Functions
   StepFunctionsExecutionRole:
     Type: AWS::IAM::Role
@@ -196,6 +311,7 @@ Resources:
                   - !GetAtt PromptBuilderFunction.Arn
                   - !GetAtt LLMBatchFunction.Arn
                   - !GetAtt ReportSenderFunction.Arn
+                  - !GetAtt DynamoDBWriterFunction.Arn
 
   AIAnalysisStateMachine:
     Type: AWS::StepFunctions::StateMachine
@@ -241,6 +357,19 @@ Resources:
                   "ErrorEquals": ["States.TaskFailed"],
                   "IntervalSeconds": 60,
                   "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "Next": "DynamoDBWriter"
+            },
+            "DynamoDBWriter": {
+              "Type": "Task",
+              "Resource": "${DynamoDBWriterFunction.Arn}",
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 30,
+                  "MaxAttempts": 3,
                   "BackoffRate": 2.0
                 }
               ],
@@ -318,3 +447,15 @@ Outputs:
     Value: !Ref OpenAILayer
     Export:
       Name: !Sub '${AWS::StackName}-OpenAILayerArn'
+
+  DynamoDBTableArn:
+    Description: 'ARN of the RealEstateAnalysisDB DynamoDB table'
+    Value: !GetAtt RealEstateAnalysisDB.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-DynamoDBTableArn'
+
+  DynamoDBWriterFunctionArn:
+    Description: 'ARN of the DynamoDB Writer Lambda function'
+    Value: !GetAtt DynamoDBWriterFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-DynamoDBWriterFunctionArn'

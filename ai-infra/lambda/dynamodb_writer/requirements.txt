@@ -1,0 +1,13 @@
+# DynamoDB Writer Lambda Requirements
+# This Lambda uses AWS prebuilt layers for most dependencies (boto3, etc.)
+# Only custom dependencies should be listed here if needed
+
+# No additional requirements - using AWS prebuilt layers:
+# - boto3 (included in AWS Lambda runtime)
+# - botocore (included in AWS Lambda runtime)
+# - json (Python standard library)
+# - logging (Python standard library)
+# - os (Python standard library)
+# - datetime (Python standard library)
+# - time (Python standard library)
+# - decimal (Python standard library)

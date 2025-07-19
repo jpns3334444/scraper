@@ -8,6 +8,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
 from urllib.parse import urlparse
+from decimal import Decimal
 
 import boto3
 from boto3.dynamodb.conditions import Key
@@ -17,6 +18,12 @@ logger.setLevel(logging.INFO)
 
 s3_client = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
+
+def decimal_default(obj):
+    """JSON serializer for Decimal types from DynamoDB"""
+    if isinstance(obj, Decimal):
+        return float(obj)
+    raise TypeError
 
 # Initialize DynamoDB table - will be set via environment variable
 table = None
@@ -643,28 +650,23 @@ def load_jsonl_from_s3(bucket: str, key: str) -> List[Dict[str, Any]]:
 
 def sort_and_filter_listings(listings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Filter and sort listings for analysis. Since we're letting OpenAI handle parsing,
-    we just filter out completely invalid entries and take top candidates.
+    Filter listings for analysis. Let the LLM handle Japanese field names and parsing.
+    Just filter out completely empty entries.
     
     Args:
         listings: List of listing dictionaries
         
     Returns:
-        Filtered listings (raw data preserved)
+        Filtered listings (raw Japanese data preserved)
     """
-    # Filter out listings that are clearly invalid (no ID or essential data)
+    # Filter out listings that are clearly invalid (no ID or URL)
     valid_listings = [
         listing for listing in listings 
-        if listing.get('id') and (
-            listing.get('price_yen') or 
-            listing.get('price') or 
-            any('price' in str(key).lower() for key in listing.keys())
-        )
+        if listing.get('id') or listing.get('url')
     ]
     
-    # For now, just take first 5 for testing - OpenAI will do the real ranking
-    # In production, could sort by any available numeric field or keep all
-    return valid_listings[:5]
+    # Take up to 100 listings for analysis (or all if fewer)
+    return valid_listings[:100]
 
 
 def build_batch_requests(listings: List[Dict[str, Any]], date_str: str, bucket: str, market_context: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -683,7 +685,7 @@ def build_batch_requests(listings: List[Dict[str, Any]], date_str: str, bucket: 
     batch_requests = []
     
     # Update system prompt with market context
-    market_context_text = json.dumps(market_context, ensure_ascii=False, indent=2) if market_context else "No recent market data available."
+    market_context_text = json.dumps(market_context, ensure_ascii=False, indent=2, default=decimal_default) if market_context else "No recent market data available."
     updated_system_prompt = SYSTEM_PROMPT + f"""
 
 # Current Market Analysis Data

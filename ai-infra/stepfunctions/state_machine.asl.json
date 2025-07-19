@@ -1,5 +1,5 @@
 {
-    "Comment": "AI analysis workflow for real estate listings - ETL → PromptBuilder → LLMBatch → ReportSender",
+    "Comment": "AI analysis workflow for real estate listings - ETL → PromptBuilder → LLMBatch → DynamoDBWriter → ReportSender",
     "StartAt": "ETL",
     "States": {
         "ETL": {
@@ -133,6 +133,43 @@
                     "ResultPath": "$.error"
                 }
             ],
+            "Next": "DynamoDBWriter"
+        },
+        "DynamoDBWriter": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+                "FunctionName": "${DynamoDBWriterFunctionArn}",
+                "Payload": {
+                    "batch_result.$": "$.llm_result.batch_result"
+                }
+            },
+            "ResultPath": "$.dynamodb_writer_result",
+            "ResultSelector": {
+                "statusCode.$": "$.Payload.statusCode",
+                "processed_count.$": "$.Payload.body"
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.TaskFailed",
+                        "States.ExecutionLimitExceeded",
+                        "States.Runtime"
+                    ],
+                    "IntervalSeconds": 30,
+                    "MaxAttempts": 3,
+                    "BackoffRate": 2
+                }
+            ],
+            "Catch": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "Next": "DynamoDBWriterFailed",
+                    "ResultPath": "$.error"
+                }
+            ],
             "Next": "ReportSender"
         },
         "ReportSender": {
@@ -196,6 +233,11 @@
             "Type": "Fail",
             "Cause": "LLM batch processing step failed",
             "Error": "LLMBatchError"
+        },
+        "DynamoDBWriterFailed": {
+            "Type": "Fail",
+            "Cause": "DynamoDB writer step failed",
+            "Error": "DynamoDBWriterError"
         },
         "ReportSenderFailed": {
             "Type": "Fail",

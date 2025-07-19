@@ -122,8 +122,9 @@ ETL_VERSION="latest"
 PROMPT_BUILDER_VERSION="latest"
 LLM_BATCH_VERSION="latest"
 REPORT_SENDER_VERSION="latest"
+DYNAMODB_WRITER_VERSION="latest"
 
-for func in etl prompt_builder llm_batch report_sender; do
+for func in etl prompt_builder llm_batch report_sender dynamodb_writer; do
     [ -d "lambda/$func" ] || error "Function directory lambda/$func not found"
     
     info "Packaging $func..."
@@ -286,6 +287,7 @@ aws cloudformation deploy \
       PromptBuilderCodeVersion=$PROMPT_BUILDER_VERSION \
       LLMBatchCodeVersion=$LLM_BATCH_VERSION \
       ReportSenderCodeVersion=$REPORT_SENDER_VERSION \
+      DynamoDBWriterCodeVersion=$DYNAMODB_WRITER_VERSION \
       OpenAILayerObjectVersion=$LAYER_OBJECT_VERSION
 
 status "✅ CloudFormation stack deployed"
