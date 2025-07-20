@@ -1934,9 +1934,62 @@ def main():
         else:
             log_structured_message(logger, "WARNING", "OUTPUT_BUCKET environment variable not set")
         
-        # Step 5: Generate job summary
+        # Step 5.5: Trigger AI Analysis Workflow (if configured)
+        ai_workflow_arn = os.environ.get('AI_WORKFLOW_ARN')
+        if ai_workflow_arn and s3_upload_success and not is_local_testing:
+            try:
+                stepfunctions = boto3.client('stepfunctions', region_name='ap-northeast-1')
+                
+                # Extract date from the data
+                analysis_date = date_str  # Already have this from filename generation
+                
+                execution_name = f"scraper-triggered-{analysis_date}-{int(time.time())}"
+                
+                response = stepfunctions.start_execution(
+                    stateMachineArn=ai_workflow_arn,
+                    name=execution_name,
+                    input=json.dumps({"date": analysis_date})
+                )
+                
+                execution_arn = response['executionArn']
+                logger.info(f"✨ AI Analysis workflow triggered successfully!")
+                logger.info(f"📊 Execution: {execution_name}")
+                logger.info(f"🔗 ARN: {execution_arn}")
+                
+                log_structured_message(logger, "INFO", "AI workflow triggered", 
+                                     execution_name=execution_name,
+                                     execution_arn=execution_arn,
+                                     analysis_date=analysis_date)
+                
+            except Exception as e:
+                # Don't fail the scraper if AI trigger fails
+                logger.warning(f"⚠️ Failed to trigger AI workflow: {str(e)}")
+                log_structured_message(logger, "WARNING", "AI workflow trigger failed", 
+                                     error=str(e), ai_workflow_arn=ai_workflow_arn)
+        elif is_local_testing:
+            logger.info("🧪 LOCAL TESTING: Skipping AI workflow trigger")
+        else:
+            if not ai_workflow_arn:
+                logger.info("ℹ️ AI_WORKFLOW_ARN not configured - skipping AI analysis")
+        
+        # Step 6: Generate job summary
         job_end_time = datetime.now()
         duration = (job_end_time - job_start_time).total_seconds()
+        
+        # Initialize summary_data for AI workflow tracking
+        ai_workflow_triggered = False
+        ai_execution_name = None
+        ai_execution_arn = None
+        ai_workflow_error = None
+        
+        # Check if AI workflow was triggered
+        if ai_workflow_arn and s3_upload_success and not is_local_testing:
+            ai_workflow_triggered = 'execution_arn' in locals() and execution_arn
+            if ai_workflow_triggered:
+                ai_execution_name = execution_name
+                ai_execution_arn = execution_arn
+            else:
+                ai_workflow_error = locals().get('e', 'Unknown error')
         
         summary_data = {
             "start_time": job_start_time.isoformat(),
@@ -1955,6 +2008,10 @@ def main():
             "output_file": filename,
             "s3_upload_success": s3_upload_success,
             "s3_key": s3_key,
+            "ai_workflow_triggered": ai_workflow_triggered,
+            "ai_execution_name": ai_execution_name,
+            "ai_execution_arn": ai_execution_arn,
+            "ai_workflow_error": str(ai_workflow_error) if ai_workflow_error else None,
             "status": "SUCCESS" if success_count > 0 else "FAILED"
         }
         
