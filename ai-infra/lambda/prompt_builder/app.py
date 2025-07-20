@@ -4,18 +4,24 @@ Loads JSONL data, sorts by price_per_m2, and builds vision payload with interior
 """
 import base64
 import json
-import logging
 import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
 from urllib.parse import urlparse
 from decimal import Decimal
+from pathlib import Path
 
 import boto3
 from boto3.dynamodb.conditions import Key
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+# Import our structured logger
+try:
+    from common.logger import get_logger, lambda_log_context
+    logger = get_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
 
 s3_client = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
@@ -31,121 +37,49 @@ table = None
 if os.environ.get('DYNAMODB_TABLE'):
     table = dynamodb.Table(os.environ['DYNAMODB_TABLE'])
 
-SYSTEM_PROMPT = """You are a bilingual (JP/EN) Tokyo real estate investment analyst specializing in identifying undervalued properties for purchase and resale, NOT rental yield.
-
-# OUTPUT REQUIREMENTS
-You must provide your response as a single JSON object with two top-level keys: "database_fields" and "email_report".
-
-1.  **`database_fields`**: A structured JSON object for database storage. The schema for this object is defined below.
-2.  **`email_report`**: A complete, self-contained HTML email report for human review.
-
-# `database_fields` JSON SCHEMA:
-```json
-{
-  "property_type": "string (apartment/house/condo/land)",
-  "price": "integer or null",
-  "price_per_sqm": "integer or null",
-  "price_trend": "string (above_market/at_market/below_market) or null",
-  "estimated_market_value": "integer or null",
-  "price_negotiability_score": "integer 1-10 or null",
-  "monthly_management_fee": "integer or null",
-  "annual_property_tax": "integer or null",
-  "reserve_fund_balance": "integer or null",
-  "special_assessments": "integer or null",
-  "address": "string or empty string",
-  "district": "string or empty string",
-  "nearest_station": "string or empty string",
-  "station_distance_minutes": "integer or null",
-  "building_name": "string or empty string",
-  "building_age_years": "integer or null",
-  "total_units_in_building": "integer or null",
-  "floor_number": "integer or null",
-  "total_floors": "integer or null",
-  "direction_facing": "string (N/S/E/W/NE/SE/SW/NW) or empty string",
-  "corner_unit": "boolean or null",
-  "total_sqm": "number or null",
-  "num_bedrooms": "integer or null",
-  "num_bathrooms": "number or null",
-  "balcony_sqm": "number or null",
-  "storage_sqm": "number or null",
-  "parking_included": "boolean or null",
-  "parking_type": "string (covered/uncovered/tandem/none) or null",
-  "layout_efficiency_score": "integer 1-10 or null",
-  "overall_condition_score": "integer 1-10 or null",
-  "natural_light_score": "integer 1-10 or null",
-  "view_quality_score": "integer 1-10 or null",
-  "mold_detected": "boolean or null",
-  "water_damage_detected": "boolean or null",
-  "visible_cracks": "boolean or null",
-  "renovation_needed": "string (none/minor/major/complete) or null",
-  "flooring_condition": "string (excellent/good/fair/poor) or null",
-  "kitchen_condition": "string (modern/dated/needs_renovation) or null",
-  "bathroom_condition": "string (modern/dated/needs_renovation) or null",
-  "wallpaper_present": "boolean or null",
-  "tatami_present": "boolean or null",
-  "cleanliness_score": "integer 1-10 or null",
-  "staging_quality": "string (professional/basic/none) or null",
-  "earthquake_resistance_standard": "string (pre-1981/1981/2000) or null",
-  "elevator_access": "boolean or null",
-  "auto_lock_entrance": "boolean or null",
-  "delivery_box": "boolean or null",
-  "pet_allowed": "boolean or null",
-  "balcony_direction": "string or empty string",
-  "double_glazed_windows": "boolean or null",
-  "floor_heating": "boolean or null",
-  "security_features": "array of strings or []",
-  "investment_score": "integer 0-100",
-  "rental_yield_estimate": "number or null",
-  "appreciation_potential": "string (high/medium/low)",
-  "liquidity_score": "integer 1-10",
-  "target_tenant_profile": "string or empty string",
-  "renovation_roi_potential": "number or null",
-  "price_analysis": "string (detailed analysis)",
-  "location_assessment": "string (detailed analysis)",
-  "condition_assessment": "string (detailed analysis)",
-  "investment_thesis": "string (detailed analysis)",
-  "competitive_advantages": "array of strings or []",
-  "risks": "array of strings or []",
-  "recommended_offer_price": "integer or null",
-  "recommendation": "string (strong_buy/buy/hold/pass)",
-  "confidence_score": "number 0.0-1.0",
-  "comparable_properties": "array of property_ids or []",
-  "market_days_listed": "integer or null",
-  "price_reductions": "integer or null",
-  "similar_units_available": "integer or null",
-  "recent_sales_same_building": "[{\"property_id\": \"string\", \"price\": integer, \"date\": \"string\"}] or []",
-  "neighborhood_trend": "string (appreciating/stable/declining)",
-  "image_analysis_model_version": "string or empty string",
-  "processing_errors": "array of error messages or []",
-  "data_quality_score": "number 0.0-1.0"
-}
-```
-
-# `email_report` HTML SPECIFICATIONS
-Generate a single, complete HTML5 document.
-- **Layout**: Use table-based layouts and inline CSS for maximum email client compatibility.
-- **Content**: Include a market overview, ranked list of properties, detailed cards for top opportunities, price drop alerts, and actionable next steps.
-- **No Scripts**: Do not include any `<script>` tags.
-
-# PRIMARY OBJECTIVE
-Find properties priced significantly below market value with strong resale potential. Focus on two categories:
-- **Category A - Undervalued Mansions (マンション)**: Reinforced concrete condos (SRC/RC), priced ≥15% below 5-year ward average and same-building comps, preferably ≤20 years old.
-- **Category B - Flip-worthy Detached Houses (一戸建て)**: Freehold homes built before 2000, land ≥80m², price ≤¥30,000,000, with renovation ROI ≥30%.
-
-# CRITICAL REMINDERS:
-- Your entire output must be a single JSON object.
-- The JSON object must have exactly two keys: `database_fields` and `email_report`.
-- NEVER fabricate data. Use `null` or empty values for missing information.
-- This analysis focuses on resale arbitrage, not rental yield.
-"""
-
-def get_market_context() -> Dict[str, Any]:
+def load_system_prompt() -> str:
     """
-    Queries DynamoDB to get multiple types of market context:
-    1. Top 20 investment properties
-    2. Recent price drops
-    3. District-specific comparables
-    4. Market summary statistics
+    Load the system prompt from external file.
+    
+    Returns:
+        System prompt string
+    """
+    try:
+        # Try to load from file in same directory
+        prompt_file = Path(__file__).parent / 'system_prompt.txt'
+        if prompt_file.exists():
+            return prompt_file.read_text(encoding='utf-8')
+        
+        # Fallback to inline prompt for testing
+        logger.warning("system_prompt.txt not found, using fallback prompt")
+        return """You are a bilingual (JP/EN) Tokyo real estate investment analyst.
+        
+        Analyze the provided property data and return a JSON object with 'database_fields' and 'email_report' keys.
+        
+        For database_fields, provide structured analysis data.
+        For email_report, provide a complete HTML email report.
+        
+        Focus on identifying undervalued properties with strong resale potential.
+        NEVER fabricate data - use null for missing information."""
+        
+    except Exception as e:
+        logger.error(f"Failed to load system prompt: {e}")
+        return "You are a real estate analyst. Analyze the property and return JSON with database_fields and email_report."
+
+def get_market_context(target_districts: List[str] = None) -> Dict[str, Any]:
+    """
+    Queries DynamoDB to get comprehensive market context.
+    
+    Args:
+        target_districts: List of district names to focus analysis on
+        
+    Returns:
+        Dictionary containing market context data:
+        - top_investments: Best performing properties
+        - recent_price_drops: Properties with significant price reductions
+        - district_analysis: District-specific market data
+        - market_summary: Overall market statistics
+        - comparable_properties: Similar properties for comparison
     """
     if not table:
         logger.warning("DynamoDB table not configured, skipping market context")
@@ -154,52 +88,105 @@ def get_market_context() -> Dict[str, Any]:
     market_context = {}
     
     try:
-        # Get top investment properties
+        # Get top investment properties with enhanced filtering
         investment_response = table.query(
             IndexName='GSI_INVEST',
             KeyConditionExpression=Key('invest_partition').eq('INVEST'),
             ScanIndexForward=False,  # Sort by investment_score descending
-            Limit=20,
-            ProjectionExpression="property_id, investment_score, price, price_per_sqm, district, total_sqm, recommendation, listing_url"
+            Limit=30,
+            ProjectionExpression="property_id, investment_score, price, price_per_sqm, district, total_sqm, recommendation, listing_url, property_type, building_age_years"
         )
-        market_context['top_investments'] = investment_response.get('Items', [])
+        top_investments = investment_response.get('Items', [])
         
-        # Get recent analyses (last 7 days)
-        seven_days_ago = (datetime.utcnow() - timedelta(days=7)).isoformat()
+        # Filter and categorize top investments
+        market_context['top_investments'] = {
+            'all': top_investments[:20],
+            'mansions': [p for p in top_investments if p.get('property_type') == 'apartment'][:10],
+            'houses': [p for p in top_investments if p.get('property_type') == 'house'][:10]
+        }
+        
+        # Get recent analyses with extended time range
+        fourteen_days_ago = (datetime.utcnow() - timedelta(days=14)).isoformat()
         recent_response = table.query(
             IndexName='GSI_ANALYSIS_DATE',
-            KeyConditionExpression=Key('invest_partition').eq('INVEST') & Key('analysis_date').gte(seven_days_ago),
+            KeyConditionExpression=Key('invest_partition').eq('INVEST') & Key('analysis_date').gte(fourteen_days_ago),
             ScanIndexForward=False,
-            Limit=50
+            Limit=100
         )
         
-        # Filter for properties with significant price drops
         recent_items = recent_response.get('Items', [])
-        price_drops = [
-            {
-                'property_id': item['property_id'],
-                'price': item['price'],
-                'price_per_sqm': item['price_per_sqm'],
-                'district': item.get('district', ''),
-                'price_trend': item.get('price_trend', '')
-            }
-            for item in recent_items 
-            if item.get('price_trend') == 'below_market'
-        ][:10]  # Top 10 price drops
         
-        market_context['recent_price_drops'] = price_drops
+        # Enhanced price drop analysis
+        price_drops = []
+        for item in recent_items:
+            if item.get('price_trend') == 'below_market':
+                price_drops.append({
+                    'property_id': item['property_id'],
+                    'price': item.get('price'),
+                    'price_per_sqm': item.get('price_per_sqm'),
+                    'district': item.get('district', ''),
+                    'price_trend': item.get('price_trend', ''),
+                    'investment_score': item.get('investment_score', 0),
+                    'property_type': item.get('property_type', ''),
+                    'price_negotiability_score': item.get('price_negotiability_score')
+                })
         
-        # Summary statistics
+        # Sort by investment score and take top 15
+        price_drops.sort(key=lambda x: x.get('investment_score', 0), reverse=True)
+        market_context['recent_price_drops'] = price_drops[:15]
+        
+        # District-specific analysis
+        district_data = {}
+        for item in recent_items:
+            district = item.get('district', 'Unknown')
+            if district not in district_data:
+                district_data[district] = {
+                    'properties': [],
+                    'avg_price_per_sqm': 0,
+                    'avg_investment_score': 0,
+                    'price_trend_distribution': {'above_market': 0, 'at_market': 0, 'below_market': 0}
+                }
+            
+            district_data[district]['properties'].append(item)
+            trend = item.get('price_trend', 'at_market')
+            if trend in district_data[district]['price_trend_distribution']:
+                district_data[district]['price_trend_distribution'][trend] += 1
+        
+        # Calculate district averages
+        for district, data in district_data.items():
+            properties = data['properties']
+            if properties:
+                data['avg_price_per_sqm'] = int(sum(p.get('price_per_sqm', 0) for p in properties) / len(properties))
+                data['avg_investment_score'] = int(sum(p.get('investment_score', 0) for p in properties) / len(properties))
+                data['property_count'] = len(properties)
+        
+        market_context['district_analysis'] = district_data
+        
+        # Enhanced market summary
         if recent_items:
-            avg_price_per_sqm = sum(item.get('price_per_sqm', 0) for item in recent_items) / len(recent_items)
-            avg_investment_score = sum(item.get('investment_score', 0) for item in recent_items) / len(recent_items)
+            total_properties = len(recent_items)
+            avg_price_per_sqm = sum(item.get('price_per_sqm', 0) for item in recent_items) / total_properties
+            avg_investment_score = sum(item.get('investment_score', 0) for item in recent_items) / total_properties
+            
+            # Property type distribution
+            type_distribution = {}
+            for item in recent_items:
+                prop_type = item.get('property_type', 'unknown')
+                type_distribution[prop_type] = type_distribution.get(prop_type, 0) + 1
             
             market_context['market_summary'] = {
-                'properties_analyzed_last_7_days': len(recent_items),
+                'properties_analyzed_last_14_days': total_properties,
                 'average_price_per_sqm': int(avg_price_per_sqm),
                 'average_investment_score': int(avg_investment_score),
                 'strong_buy_count': sum(1 for item in recent_items if item.get('recommendation') == 'strong_buy'),
-                'buy_count': sum(1 for item in recent_items if item.get('recommendation') == 'buy')
+                'buy_count': sum(1 for item in recent_items if item.get('recommendation') == 'buy'),
+                'pass_count': sum(1 for item in recent_items if item.get('recommendation') == 'pass'),
+                'type_distribution': type_distribution,
+                'price_trend_summary': {
+                    'below_market': sum(1 for item in recent_items if item.get('price_trend') == 'below_market'),
+                    'at_market': sum(1 for item in recent_items if item.get('price_trend') == 'at_market'),
+                    'above_market': sum(1 for item in recent_items if item.get('price_trend') == 'above_market')
+                }
             }
         
     except Exception as e:
@@ -231,7 +218,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         logger.info(f"Retrieved market context with {len(market_context.get('top_investments', []))} top investments")
         
         # Load processed JSONL data
-        jsonl_key = event.get('jsonl_key', f"clean/{date_str}/listings.jsonl")
+        jsonl_key = event.get('jsonl_key', f"data/processed/{date_str}/listings.jsonl")
         listings = load_jsonl_from_s3(bucket, jsonl_key)
         
         logger.info(f"Loaded {len(listings)} listings")
@@ -245,7 +232,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         batch_requests = build_batch_requests(sorted_listings, date_str, bucket, market_context)
         
         # Save batch requests as JSONL to S3
-        prompt_key = f"prompts/{date_str}/batch_requests.jsonl"
+        prompt_key = f"ai/prompts/{date_str}/batch_requests.jsonl"
         save_batch_requests_to_s3(batch_requests, bucket, prompt_key)
         
         logger.info(f"Successfully built prompt with {len(sorted_listings)} listings")
@@ -328,25 +315,36 @@ def build_batch_requests(listings: List[Dict[str, Any]], date_str: str, bucket: 
     """
     batch_requests = []
     
+    # Load base system prompt from file
+    base_system_prompt = load_system_prompt()
+    
     # Update system prompt with market context
     market_context_text = json.dumps(market_context, ensure_ascii=False, indent=2, default=decimal_default) if market_context else "No recent market data available."
-    updated_system_prompt = SYSTEM_PROMPT + f"""
+    updated_system_prompt = base_system_prompt + f"""
 
 # Current Market Analysis Data
 
-Here is comprehensive market context from recently analyzed properties:
+Here is comprehensive market context from recently analyzed properties in Tokyo:
 
 ```json
 {market_context_text}
 ```
 
-Use this data to:
-- Compare new properties against top performers
-- Identify if pricing is competitive based on recent trends
-- Spot opportunities based on price drops and market movements
-- Provide data-driven investment recommendations
+## How to Use This Market Data:
 
-When analyzing a property, reference specific comparable properties from this dataset when relevant.
+1. **Benchmark Pricing**: Compare the property's price per sqm against district averages and top-performing properties
+2. **Investment Score Context**: Use the average investment scores to calibrate your analysis
+3. **Price Trend Analysis**: Reference recent price drops and market trends to assess opportunity timing
+4. **District Comparison**: Compare properties within the same district and against city-wide averages
+5. **Property Type Analysis**: Use type-specific data (mansions vs houses) for targeted comparisons
+
+## Key Analysis Guidelines:
+- Properties scoring above district average investment scores deserve closer examination
+- Below-market pricing with high investment potential indicates strong opportunities
+- Consider district-specific trends when evaluating appreciation potential
+- Factor in property type distributions when assessing market position
+
+When analyzing the target property, explicitly reference relevant comparable properties from this dataset and explain how the property compares to current market conditions.
 """
     
     for i, listing in enumerate(listings):
@@ -569,7 +567,7 @@ if __name__ == "__main__":
     test_event = {
         'date': '2025-07-07',
         'bucket': 'tokyo-real-estate-ai-data',
-        'jsonl_key': 'clean/2025-07-07/listings.jsonl'
+        'jsonl_key': 'data/processed/2025-07-07/listings.jsonl'
     }
     result = lambda_handler(test_event, None)
     print(json.dumps(result, indent=2))

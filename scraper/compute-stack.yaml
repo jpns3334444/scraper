@@ -1,18 +1,23 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: "Scraper Compute - EC2 Instance Only"
+Description: "Tokyo Real Estate Compute - EC2 Instance for Web Scraping"
 
 Parameters:
+  ProjectName:
+    Type: String
+    Default: "tokyo-real-estate"
+    Description: Project name for resource naming
+  Environment:
+    Type: String
+    Default: "prod"
+    AllowedValues: ["dev", "staging", "prod"]
+    Description: Deployment environment
   KeyName:
     Type: String
     Description: Name of an existing EC2 KeyPair
-  OutputBucket:
-    Type: String
-    Description: S3 bucket to upload scraper results to
-    Default: "tokyo-real-estate-ai-data"
   InfraStackName:
     Type: String
     Description: Name of the infrastructure stack to import from
-    Default: "scraper-infra-stack"
+    Default: "tokyo-real-estate-prod-infra"
   InstanceType:
     Type: String
     Description: EC2 instance type
@@ -49,105 +54,30 @@ Resources:
         - Fn::ImportValue: !Sub "${InfraStackName}-ScraperSecurityGroupId"
       Tags:
         - Key: Name
-          Value: MarketScraper
+          Value: !Sub "${ProjectName}-${Environment}-ec2-scraper"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
         - Key: Stack
           Value: !Ref "AWS::StackName"
       UserData:
         Fn::Base64:
-          Fn::Join:
-            - ""
-            - - "#!/bin/bash\n"
-              - "set -e\n"
-              - "exec > >(tee -a /var/log/user-data.log) 2>&1\n"
-              - "echo \"Starting EC2 initialization with GitHub at $(date)\" \n"
-              - "apt-get update -y\n"
-              - "apt-get install -y python3-pip unzip wget curl gnupg software-properties-common git awscli -y\n"
-              - "echo 'export OUTPUT_BUCKET=\""
-              - !Ref OutputBucket
-              - "\"' >> /etc/environment\n"
-              - "echo 'export OUTPUT_BUCKET=\""
-              - !Ref OutputBucket
-              - "\"' >> /home/ubuntu/.bashrc\n"
-              - "mkdir -p /var/log/scraper/\n"
-              - "touch /var/log/scraper/run.log\n"
-              - "chown ubuntu:ubuntu /var/log/scraper/run.log\n"
-              - "wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb\n"
-              - "dpkg -i amazon-cloudwatch-agent.deb\n"
-              - "mkdir -p /opt/aws/amazon-cloudwatch-agent/etc/\n"
-              - "cat << 'EOF' > /opt/aws/amazon-cloudwatch-agent/etc/config.json\n"
-              - "{\n"
-              - "  \"logs\": {\n"
-              - "    \"logs_collected\": {\n"
-              - "      \"files\": {\n"
-              - "        \"collect_list\": [\n"
-              - "          {\n"
-              - "            \"file_path\": \"/var/log/scraper/run.log\",\n"
-              - "            \"log_group_name\": \"scraper-logs\",\n"
-              - "            \"log_stream_name\": \"{instance_id}\",\n"
-              - "            \"timezone\": \"UTC\"\n"
-              - "          }\n"
-              - "        ]\n"
-              - "      }\n"
-              - "    }\n"
-              - "  }\n"
-              - "}\n"
-              - "EOF\n"
-              - "sleep 10\n"
-              - "OUTPUT_BUCKET_NAME=\""
-              - !Ref OutputBucket
-              - "\"\n"
-              - "echo \"Using S3 bucket: $OUTPUT_BUCKET_NAME\" >> /var/log/scraper/run.log\n"
-              - "echo \"Cloning scraper from GitHub...\" >> /var/log/scraper/run.log\n"
-              - "pip3 install --upgrade pip\n"
-              - "pip3 install --upgrade pandas requests beautifulsoup4 boto3 lxml Pillow\n"
-              - "echo \"Retrieving GitHub token from Secrets Manager...\" >> /var/log/scraper/run.log\n"
-              - "GITHUB_TOKEN=$(aws secretsmanager get-secret-value --secret-id github-token --region "
-              - !Ref AWS::Region
-              - " --query SecretString --output text 2>/dev/null || echo \"\")\n"
-              - "for i in {1..5}; do\n"
-              - "  echo \"Attempt $i: Cloning from GitHub...\" >> /var/log/scraper/run.log\n"
-              - "  if [ -n \"$GITHUB_TOKEN\" ]; then\n    GITHUB_URL=\"https://$GITHUB_TOKEN@github.com/jpns3334444/scraper.git\"\n  else\n    GITHUB_URL=\"https://github.com/jpns3334444/scraper.git\"\n  fi\n  if git clone -b master $GITHUB_URL /tmp/scraper-repo; then\n"
-              - "    echo \" Successfully cloned from GitHub on attempt $i\" >> /var/log/scraper/run.log\n"
-              - "    cp /tmp/scraper-repo/scraper/scrape.py /home/ubuntu/scrape.py\n"
-              - "    rm -rf /tmp/scraper-repo\n"
-              - "    break\n"
-              - "  else\n"
-              - "    echo \" Failed to clone from GitHub on attempt $i\" >> /var/log/scraper/run.log\n"
-              - "    if [ $i -eq 5 ]; then\n"
-              - "      echo \" All 5 GitHub clone attempts failed\" >> /var/log/scraper/run.log\n"
-              - "    fi\n"
-              - "    sleep 5\n"
-              - "  fi\n"
-              - "done\n"
-              - "if [ -f /home/ubuntu/scrape.py ]; then\n"
-              - "  chmod +x /home/ubuntu/scrape.py\n"
-              - "  chown ubuntu:ubuntu /home/ubuntu/scrape.py\n"
-              - "  echo \" scrape.py successfully cloned from GitHub and ready.\" >> /var/log/scraper/run.log\n"
-              - "  echo \"File size: $(ls -lh /home/ubuntu/scrape.py | awk '{print $5}')\" >> /var/log/scraper/run.log\n"
-              - "  # Test Python dependencies\n"
-              - "  echo \"Testing Python dependencies...\" >> /var/log/scraper/run.log\n"
-              - "  if python3 -c 'import pandas, requests, boto3, bs4; print(\"All dependencies OK\")' >> /var/log/scraper/run.log 2>&1; then\n"
-              - "    echo \" All Python dependencies verified\" >> /var/log/scraper/run.log\n"
-              - "  else\n"
-              - "    echo \" Python dependency check failed\" >> /var/log/scraper/run.log\n"
-              - "  fi\n"
-              - "else\n"
-              - "  echo \" Failed to clone scrape.py from GitHub after all attempts\" >> /var/log/scraper/run.log\n"
-              - "  echo \"Check GitHub repository: https://github.com/jpns3334444/scraper\" >> /var/log/scraper/run.log\n"
-              - "fi\n"
-              - "/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/config.json -s\n"
-              - "systemctl enable amazon-ssm-agent\n"
-              - "systemctl start amazon-ssm-agent\n"
-              - "echo \" Scraper EC2 fully initialized at $(date)\" >> /var/log/scraper/run.log\n"
-              - "echo \" Scraper EC2 fully initialized at $(date)\" \n"
-              - "# Final status check\n"
-              - "echo \"=== INITIALIZATION SUMMARY ===\" >> /var/log/scraper/run.log\n"
-              - "echo \"Instance ID: $(curl -s http://169.254.169.254/latest/meta-data/instance-id)\" >> /var/log/scraper/run.log\n"
-              - "echo \"Available disk space: $(df -h / | tail -1 | awk '{print $4}')\" >> /var/log/scraper/run.log\n"
-              - "echo \"Python version: $(python3 --version)\" >> /var/log/scraper/run.log\n"
-              - "echo \"AWS CLI version: $(aws --version)\" >> /var/log/scraper/run.log\n"
-              - "echo \"OUTPUT_BUCKET: $OUTPUT_BUCKET_NAME\" >> /var/log/scraper/run.log\n"
-              - "echo \"=== END SUMMARY ===\" >> /var/log/scraper/run.log\n"
+          Fn::Sub: 
+            - |
+              #!/bin/bash
+              # Download and execute the setup script
+              export OUTPUT_BUCKET="${DataBucket}"
+              export AWS_REGION="${AWS::Region}"
+              
+              # Download setup script from GitHub
+              curl -sSL https://raw.githubusercontent.com/jpns3334444/scraper/master/scraper/setup_ec2.sh -o /tmp/setup_ec2.sh
+              
+              # Make executable and run
+              chmod +x /tmp/setup_ec2.sh
+              /tmp/setup_ec2.sh
+            - DataBucket: 
+                Fn::ImportValue: !Sub "${InfraStackName}-DataBucketName"
 
 Outputs:
   ScraperInstanceId:
@@ -155,6 +85,12 @@ Outputs:
     Value: !Ref ScraperInstance
     Export:
       Name: !Sub "${AWS::StackName}-ScraperInstanceId"
+
+  ScraperInstanceName:
+    Description: "Name tag of the scraper EC2 instance"
+    Value: !Sub "${ProjectName}-${Environment}-ec2-scraper"
+    Export:
+      Name: !Sub "${AWS::StackName}-ScraperInstanceName"
 
   ScraperPublicIP:
     Description: "Public IP of EC2 instance"

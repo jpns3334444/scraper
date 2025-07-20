@@ -3,16 +3,23 @@ Report Sender Lambda function for generating and delivering HTML reports.
 Processes LLM results and sends via SES email.
 """
 import json
-import logging
 import os
 from datetime import datetime
 from typing import Any, Dict, List
 from urllib.parse import urlparse
+from pathlib import Path
 
 import boto3
+from jinja2 import Environment, FileSystemLoader, Template
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+# Import our structured logger
+try:
+    from common.logger import get_logger, lambda_log_context
+    logger = get_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
 
 s3_client = boto3.client('s3')
 ses_client = boto3.client('ses')
@@ -184,9 +191,67 @@ def extract_openai_report(batch_result: Dict[str, Any]) -> str:
 </html>"""
 
 
+def load_email_template() -> Template:
+    """
+    Load the Jinja2 email template.
+    
+    Returns:
+        Jinja2 Template object
+    """
+    try:
+        # Try to load from file in same directory
+        template_file = Path(__file__).parent / 'email_template.html'
+        if template_file.exists():
+            template_content = template_file.read_text(encoding='utf-8')
+            return Template(template_content)
+        
+        # Fallback template if file not found
+        logger.warning("email_template.html not found, using fallback template")
+        fallback_template = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Tokyo Real Estate Analysis Report</title>
+        </head>
+        <body>
+            <h1>Tokyo Real Estate Investment Analysis Report</h1>
+            <p>Generated: {{ report_date }} | Batch: {{ batch_id }}</p>
+            
+            <h2>Summary</h2>
+            <p>Properties Successfully Analyzed: {{ successful_count }}</p>
+            <p>Properties with Processing Issues: {{ failed_count }}</p>
+            
+            {% if failed_properties %}
+            <h3>Processing Issues</h3>
+            <ul>
+                {% for prop_id in failed_properties %}
+                <li>{{ prop_id }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+            
+            <h2>Property Reports</h2>
+            {% for report in property_reports %}
+            <div style="margin-bottom: 30px; border: 1px solid #ddd; padding: 20px;">
+                <h3>Property: {{ report.property_id }}</h3>
+                {{ report.html_content | safe }}
+            </div>
+            {% endfor %}
+        </body>
+        </html>
+        """
+        return Template(fallback_template)
+        
+    except Exception as e:
+        logger.error(f"Failed to load email template: {e}")
+        # Return minimal template as last resort
+        return Template('<html><body><h1>Report Error</h1><p>{{ error_message }}</p></body></html>')
+
+
 def generate_combined_report(successful_reports: List[Dict[str, Any]], failed_properties: List[str], batch_id: str) -> str:
     """
-    Generate a comprehensive HTML report combining all successful property analyses.
+    Generate a comprehensive HTML report using Jinja2 templating.
     
     Args:
         successful_reports: List of dicts with property_id and html_content
@@ -194,33 +259,163 @@ def generate_combined_report(successful_reports: List[Dict[str, Any]], failed_pr
         batch_id: Batch processing ID
         
     Returns:
-        Combined HTML report string
+        Combined HTML report string using Jinja2 template
     """
-    from datetime import datetime
+    try:
+        # Load the email template
+        template = load_email_template()
+        
+        # Prepare template data
+        current_date = datetime.now().strftime("%Y-%m-%d %H:%M JST")
+        
+        # Process property reports for template
+        processed_reports = []
+        strong_buy_count = 0
+        buy_count = 0
+        
+        for report in successful_reports:
+            property_id = report['property_id'].split('-')[-1]  # Extract just the property ID
+            html_content = report['html_content']
+            
+            # Extract the main content from individual report (remove outer html/head/body tags)
+            import re
+            body_match = re.search(r'<body[^>]*>(.*?)</body>', html_content, re.DOTALL | re.IGNORECASE)
+            if body_match:
+                content = body_match.group(1)
+            else:
+                content = html_content
+            
+            # Try to extract recommendation for counting
+            if 'strong_buy' in html_content.lower() or 'strong buy' in html_content.lower():
+                strong_buy_count += 1
+            elif 'buy' in html_content.lower() and 'strong' not in html_content.lower():
+                buy_count += 1
+            
+            processed_reports.append({
+                'property_id': property_id,
+                'html_content': content
+            })
+        
+        # Generate market insights summary
+        market_insights = generate_market_insights(successful_reports, failed_properties)
+        
+        # Template data
+        template_data = {
+            'report_date': current_date,
+            'batch_id': batch_id,
+            'successful_count': len(successful_reports),
+            'failed_count': len(failed_properties),
+            'strong_buy_count': strong_buy_count,
+            'buy_count': buy_count,
+            'failed_properties': failed_properties,
+            'property_reports': processed_reports,
+            'market_insights': market_insights
+        }
+        
+        # Render template
+        rendered_html = template.render(template_data)
+        
+        logger.info(f"Successfully rendered email template with {len(successful_reports)} properties")
+        return rendered_html
+        
+    except Exception as e:
+        logger.error(f"Failed to generate combined report with Jinja2: {e}")
+        # Fallback to simple HTML generation
+        return generate_fallback_report(successful_reports, failed_properties, batch_id)
+
+
+def generate_market_insights(successful_reports: List[Dict[str, Any]], failed_properties: List[str]) -> str:
+    """
+    Generate market insights summary from the analysis results.
     
+    Args:
+        successful_reports: List of successful property analyses
+        failed_properties: List of failed property IDs
+        
+    Returns:
+        HTML string with market insights
+    """
+    try:
+        total_analyzed = len(successful_reports)
+        if total_analyzed == 0:
+            return "<p>No properties were successfully analyzed to generate market insights.</p>"
+        
+        # Basic analysis of the reports
+        insights = []
+        
+        # Processing success rate
+        total_processed = total_analyzed + len(failed_properties)
+        success_rate = (total_analyzed / total_processed * 100) if total_processed > 0 else 0
+        
+        insights.append(f"<li><strong>Processing Success Rate:</strong> {success_rate:.1f}% ({total_analyzed} of {total_processed} properties successfully analyzed)</li>")
+        
+        # Count recommendations (basic text analysis)
+        recommendations = {'strong_buy': 0, 'buy': 0, 'hold': 0, 'pass': 0}
+        for report in successful_reports:
+            content = report.get('html_content', '').lower()
+            if 'strong_buy' in content or 'strong buy' in content:
+                recommendations['strong_buy'] += 1
+            elif 'buy' in content and 'strong' not in content:
+                recommendations['buy'] += 1
+            elif 'hold' in content:
+                recommendations['hold'] += 1
+            elif 'pass' in content:
+                recommendations['pass'] += 1
+        
+        if recommendations['strong_buy'] > 0:
+            insights.append(f"<li><strong>Strong Buy Opportunities:</strong> {recommendations['strong_buy']} properties identified as exceptional investment opportunities</li>")
+        
+        if recommendations['buy'] > 0:
+            insights.append(f"<li><strong>Buy Recommendations:</strong> {recommendations['buy']} properties showing good investment potential</li>")
+        
+        # Analysis quality
+        if len(failed_properties) > 0:
+            insights.append(f"<li><strong>Data Quality:</strong> {len(failed_properties)} properties had processing issues, possibly due to incomplete data or formatting challenges</li>")
+        
+        if not insights:
+            insights.append("<li>Market analysis completed successfully with standard processing results.</li>")
+        
+        return f"""
+        <ul>
+            {''.join(insights)}
+        </ul>
+        <p style="margin-top: 15px; font-style: italic; color: #666;">
+            This analysis is based on AI processing of property data and images. 
+            Individual property reports contain detailed investment assessments and recommendations.
+        </p>
+        """
+        
+    except Exception as e:
+        logger.error(f"Failed to generate market insights: {e}")
+        return "<p>Market insights could not be generated due to processing error.</p>"
+
+
+def generate_fallback_report(successful_reports: List[Dict[str, Any]], failed_properties: List[str], batch_id: str) -> str:
+    """
+    Generate a simple fallback report when Jinja2 templating fails.
+    
+    Args:
+        successful_reports: List of successful property analyses
+        failed_properties: List of failed property IDs
+        batch_id: Batch processing ID
+        
+    Returns:
+        Simple HTML report string
+    """
     current_date = datetime.now().strftime("%Y-%m-%d %H:%M JST")
     
-    # Extract individual property content from HTML reports
+    # Extract individual property content
     property_sections = []
     for report in successful_reports:
-        property_id = report['property_id'].split('-')[-1]  # Extract just the property ID
+        property_id = report['property_id'].split('-')[-1]
         html_content = report['html_content']
         
-        # Extract the main content from the individual report (remove html/head/body tags)
-        # Find content between <body> tags or use entire content if no body tags
-        import re
-        body_match = re.search(r'<body[^>]*>(.*?)</body>', html_content, re.DOTALL | re.IGNORECASE)
-        if body_match:
-            content = body_match.group(1)
-        else:
-            content = html_content
-        
         property_sections.append(f"""
-        <div class="property-analysis" style="margin-bottom: 40px; border: 1px solid #ddd; padding: 20px; border-radius: 8px;">
-            <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">
+        <div style="margin-bottom: 30px; border: 1px solid #ddd; padding: 20px; border-radius: 8px; background: white;">
+            <h3 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">
                 Property Analysis: {property_id}
-            </h2>
-            {content}
+            </h3>
+            {html_content}
         </div>
         """)
     
@@ -229,17 +424,14 @@ def generate_combined_report(successful_reports: List[Dict[str, Any]], failed_pr
     if failed_properties:
         failed_ids = [prop_id.split('-')[-1] for prop_id in failed_properties]
         failure_section = f"""
-        <div class="failed-properties" style="margin-bottom: 30px; padding: 15px; background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px;">
-            <h3 style="color: #856404;">Processing Issues</h3>
+        <div style="margin-bottom: 30px; padding: 15px; background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px;">
+            <h3 style="color: #856404;">⚠️ Processing Issues</h3>
             <p>The following properties could not be fully analyzed:</p>
-            <ul>
-                {''.join(f'<li>{prop_id}</li>' for prop_id in failed_ids)}
-            </ul>
+            <ul>{''.join(f'<li>{prop_id}</li>' for prop_id in failed_ids)}</ul>
         </div>
         """
     
-    # Combine everything
-    combined_html = f"""
+    return f"""
     <!DOCTYPE html>
     <html>
     <head>
@@ -247,13 +439,8 @@ def generate_combined_report(successful_reports: List[Dict[str, Any]], failed_pr
         <title>Tokyo Real Estate Investment Analysis Report</title>
         <style>
             body {{ font-family: Arial, sans-serif; line-height: 1.6; margin: 0; padding: 20px; background-color: #f8f9fa; }}
-            .header {{ background-color: #2c3e50; color: white; padding: 20px; text-align: center; border-radius: 8px; margin-bottom: 30px; }}
+            .header {{ background: linear-gradient(135deg, #1a365d 0%, #2c5282 100%); color: white; padding: 30px; text-align: center; border-radius: 8px; margin-bottom: 30px; }}
             .summary {{ background-color: white; padding: 20px; border-radius: 8px; margin-bottom: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-            .property-analysis {{ background-color: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-            table {{ width: 100%; border-collapse: collapse; margin: 15px 0; }}
-            th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
-            th {{ background-color: #f2f2f2; font-weight: bold; }}
-            .footer {{ text-align: center; margin-top: 40px; padding: 20px; color: #666; }}
         </style>
     </head>
     <body>
@@ -263,7 +450,7 @@ def generate_combined_report(successful_reports: List[Dict[str, Any]], failed_pr
         </div>
         
         <div class="summary">
-            <h2 style="color: #2c3e50;">Analysis Summary</h2>
+            <h2>Analysis Summary</h2>
             <p><strong>Properties Successfully Analyzed:</strong> {len(successful_reports)}</p>
             <p><strong>Properties with Processing Issues:</strong> {len(failed_properties)}</p>
             <p><strong>Total Properties Processed:</strong> {len(successful_reports) + len(failed_properties)}</p>
@@ -271,19 +458,17 @@ def generate_combined_report(successful_reports: List[Dict[str, Any]], failed_pr
         
         {failure_section}
         
-        <div class="property-reports">
+        <div>
             {''.join(property_sections)}
         </div>
         
-        <div class="footer">
+        <div style="text-align: center; margin-top: 40px; padding: 20px; color: #666;">
             <p>Tokyo Real Estate AI Analysis System</p>
             <p>For investment guidance only. Conduct independent due diligence before making investment decisions.</p>
         </div>
     </body>
     </html>
     """
-    
-    return combined_html
 
 
 def generate_html_from_data(data: Dict[str, Any]) -> str:
@@ -605,7 +790,7 @@ if __name__ == "__main__":
     test_event = {
         'date': '2025-07-16',
         'bucket': 'tokyo-real-estate-ai-data',
-        'result_key': 'batch_output/2025-07-16/response.json',
+        'result_key': 'ai/results/2025-07-16/response.json',
         'batch_result': {
             'listings': [
                 {
