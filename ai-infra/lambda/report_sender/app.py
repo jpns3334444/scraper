@@ -101,112 +101,189 @@ def load_batch_results(bucket: str, key: str) -> Dict[str, Any]:
 
 def extract_openai_report(batch_result: Dict[str, Any]) -> str:
     """
-    Extract the HTML report from OpenAI response or generate from data.
+    Extract and combine HTML email reports from all successful OpenAI responses.
     
-    Args:
-        batch_result: Parsed batch result dictionary from OpenAI
-        
-    Returns:
-        HTML report string
+    The response for each item is expected to be a JSON string
+    containing 'database_fields' and 'email_report'.
+    This function extracts all 'email_report' entries and combines them.
     """
     try:
-        logger.info(f"Processing batch_result type: {type(batch_result)}")
-        logger.info(f"Processing batch_result keys: {list(batch_result.keys()) if isinstance(batch_result, dict) else 'Not a dict'}")
-        
-        # If batch_result is a string that looks like JSON, parse it
-        if isinstance(batch_result, str):
+        individual_results = batch_result.get('individual_results', [])
+        logger.info(f"Found {len(individual_results)} individual results to process.")
+
+        successful_reports = []
+        failed_properties = []
+
+        for result in individual_results:
+            custom_id = result.get('custom_id', 'unknown')
+            # The 'analysis' field should contain the JSON string from the LLM
+            analysis_str = result.get('analysis', '{}')
+            if not analysis_str or not analysis_str.strip():
+                logger.warning(f"Skipping result with empty analysis content: {custom_id}")
+                failed_properties.append(custom_id)
+                continue
+
             try:
-                batch_result = json.loads(batch_result)
-                logger.info(f"Parsed string to dict with keys: {list(batch_result.keys())}")
-            except json.JSONDecodeError:
-                # If it's not JSON but contains HTML, return it
-                if '<html' in batch_result.lower():
-                    logger.info("Found HTML content as string")
-                    return batch_result
-        
-        # Check if OpenAI returned HTML report directly
-        if isinstance(batch_result, dict) and 'html_report' in batch_result:
-            logger.info("Found html_report field")
-            return batch_result['html_report']
-            
-        # Check for content field with HTML
-        if isinstance(batch_result, dict) and 'content' in batch_result:
-            content = batch_result['content']
-            if isinstance(content, str):
-                # Check if content is HTML
-                if '<html' in content.lower():
-                    logger.info("Found HTML in content field")
-                    return content
-                # Check if content is JSON string containing listings
-                try:
-                    content_parsed = json.loads(content)
-                    if 'listings' in content_parsed:
-                        logger.info("Found listings in parsed content field")
-                        return generate_html_from_data(content_parsed)
-                except json.JSONDecodeError:
-                    pass
-        
-        # If OpenAI returned structured data with listings
-        if isinstance(batch_result, dict) and 'listings' in batch_result:
-            logger.info("Found listings data, generating HTML report")
-            # Validate that listings is actually a list
-            listings = batch_result.get('listings', [])
-            if not isinstance(listings, list):
-                logger.warning(f"Listings is not a list: {type(listings)}")
-                # Try to convert to list if it's a single item
-                if isinstance(listings, dict):
-                    listings = [listings]
-                else:
-                    listings = []
-                batch_result['listings'] = listings
-            return generate_html_from_data(batch_result)
-        
-        # Check for nested structures
-        if isinstance(batch_result, dict):
-            # Check if there's a 'response' field containing the actual data
-            if 'response' in batch_result:
-                return extract_openai_report(batch_result['response'])
-            
-            # Check if there's a 'body' field containing the actual data
-            if 'body' in batch_result:
-                return extract_openai_report(batch_result['body'])
+                # Clean the analysis string - remove markdown code blocks if present
+                cleaned_analysis = analysis_str.strip()
+                if cleaned_analysis.startswith('```json'):
+                    # Remove ```json from start and ``` from end
+                    cleaned_analysis = cleaned_analysis[7:]  # Remove ```json
+                    if cleaned_analysis.endswith('```'):
+                        cleaned_analysis = cleaned_analysis[:-3]  # Remove ```
+                    cleaned_analysis = cleaned_analysis.strip()
+                elif cleaned_analysis.startswith('```'):
+                    # Remove ``` from start and end
+                    cleaned_analysis = cleaned_analysis[3:]
+                    if cleaned_analysis.endswith('```'):
+                        cleaned_analysis = cleaned_analysis[:-3]
+                    cleaned_analysis = cleaned_analysis.strip()
                 
-            # Check if there's a 'result' field containing the actual data
-            if 'result' in batch_result:
-                return extract_openai_report(batch_result['result'])
-        
-        # If we can't find any usable data, return error message
-        logger.error(f"Could not extract or generate HTML report from OpenAI response")
-        logger.error(f"Full response: {json.dumps(batch_result, indent=2) if isinstance(batch_result, (dict, list)) else str(batch_result)}")
-        return f"""<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Report Generation Error</title>
-</head>
-<body>
-    <h1>Report Generation Error</h1>
-    <p>Could not extract HTML report from OpenAI response.</p>
-    <h2>Debug Information:</h2>
-    <pre>{json.dumps(batch_result, indent=2, ensure_ascii=False) if isinstance(batch_result, (dict, list)) else str(batch_result)}</pre>
-</body>
-</html>"""
-        
+                # Parse the JSON string to get to the email report
+                analysis_json = json.loads(cleaned_analysis)
+                
+                # The email report is a top-level key in the parsed JSON
+                if 'email_report' in analysis_json and analysis_json['email_report']:
+                    logger.info(f"Successfully extracted email_report from {custom_id}")
+                    successful_reports.append({
+                        'property_id': custom_id,
+                        'html_content': analysis_json['email_report']
+                    })
+                else:
+                    logger.warning(f"No 'email_report' key found in analysis for {custom_id}")
+                    failed_properties.append(custom_id)
+
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to decode analysis JSON for {custom_id}: {e}")
+                logger.error(f"Problematic JSON string: {analysis_str[:500]}") # Log first 500 chars
+                failed_properties.append(custom_id)
+                continue
+
+        # Combine all successful reports into one comprehensive email
+        if successful_reports:
+            combined_html = generate_combined_report(successful_reports, failed_properties, batch_result.get('batch_id', 'unknown'))
+            logger.info(f"Successfully combined {len(successful_reports)} property reports into comprehensive email")
+            return combined_html
+    
     except Exception as e:
-        logger.error(f"Error extracting OpenAI report: {e}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return f"""<html>
+        logger.error(f"An unexpected error occurred while extracting the report: {e}")
+
+    # Fallback if no email report is found in any of the results
+    logger.error("Could not extract or generate HTML report from any OpenAI response.")
+    return f"""<html>
 <head>
     <meta charset="UTF-8">
     <title>Report Generation Error</title>
 </head>
 <body>
     <h1>Report Generation Error</h1>
-    <p>Error extracting report: {str(e)}</p>
+    <p>Could not find a valid 'email_report' in any of the LLM responses.</p>
     <h2>Debug Information:</h2>
-    <pre>{json.dumps(batch_result, indent=2, ensure_ascii=False) if isinstance(batch_result, (dict, list)) else str(batch_result)}</pre>
+    <pre>{json.dumps(batch_result, indent=2, ensure_ascii=False)}</pre>
 </body>
 </html>"""
+
+
+def generate_combined_report(successful_reports: List[Dict[str, Any]], failed_properties: List[str], batch_id: str) -> str:
+    """
+    Generate a comprehensive HTML report combining all successful property analyses.
+    
+    Args:
+        successful_reports: List of dicts with property_id and html_content
+        failed_properties: List of property IDs that failed processing
+        batch_id: Batch processing ID
+        
+    Returns:
+        Combined HTML report string
+    """
+    from datetime import datetime
+    
+    current_date = datetime.now().strftime("%Y-%m-%d %H:%M JST")
+    
+    # Extract individual property content from HTML reports
+    property_sections = []
+    for report in successful_reports:
+        property_id = report['property_id'].split('-')[-1]  # Extract just the property ID
+        html_content = report['html_content']
+        
+        # Extract the main content from the individual report (remove html/head/body tags)
+        # Find content between <body> tags or use entire content if no body tags
+        import re
+        body_match = re.search(r'<body[^>]*>(.*?)</body>', html_content, re.DOTALL | re.IGNORECASE)
+        if body_match:
+            content = body_match.group(1)
+        else:
+            content = html_content
+        
+        property_sections.append(f"""
+        <div class="property-analysis" style="margin-bottom: 40px; border: 1px solid #ddd; padding: 20px; border-radius: 8px;">
+            <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">
+                Property Analysis: {property_id}
+            </h2>
+            {content}
+        </div>
+        """)
+    
+    # Build failure summary
+    failure_section = ""
+    if failed_properties:
+        failed_ids = [prop_id.split('-')[-1] for prop_id in failed_properties]
+        failure_section = f"""
+        <div class="failed-properties" style="margin-bottom: 30px; padding: 15px; background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px;">
+            <h3 style="color: #856404;">Processing Issues</h3>
+            <p>The following properties could not be fully analyzed:</p>
+            <ul>
+                {''.join(f'<li>{prop_id}</li>' for prop_id in failed_ids)}
+            </ul>
+        </div>
+        """
+    
+    # Combine everything
+    combined_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>Tokyo Real Estate Investment Analysis Report</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; line-height: 1.6; margin: 0; padding: 20px; background-color: #f8f9fa; }}
+            .header {{ background-color: #2c3e50; color: white; padding: 20px; text-align: center; border-radius: 8px; margin-bottom: 30px; }}
+            .summary {{ background-color: white; padding: 20px; border-radius: 8px; margin-bottom: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+            .property-analysis {{ background-color: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+            table {{ width: 100%; border-collapse: collapse; margin: 15px 0; }}
+            th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
+            th {{ background-color: #f2f2f2; font-weight: bold; }}
+            .footer {{ text-align: center; margin-top: 40px; padding: 20px; color: #666; }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>Tokyo Real Estate Investment Analysis Report</h1>
+            <p>Generated: {current_date} | Batch: {batch_id}</p>
+        </div>
+        
+        <div class="summary">
+            <h2 style="color: #2c3e50;">Analysis Summary</h2>
+            <p><strong>Properties Successfully Analyzed:</strong> {len(successful_reports)}</p>
+            <p><strong>Properties with Processing Issues:</strong> {len(failed_properties)}</p>
+            <p><strong>Total Properties Processed:</strong> {len(successful_reports) + len(failed_properties)}</p>
+        </div>
+        
+        {failure_section}
+        
+        <div class="property-reports">
+            {''.join(property_sections)}
+        </div>
+        
+        <div class="footer">
+            <p>Tokyo Real Estate AI Analysis System</p>
+            <p>For investment guidance only. Conduct independent due diligence before making investment decisions.</p>
+        </div>
+    </body>
+    </html>
+    """
+    
+    return combined_html
 
 
 def generate_html_from_data(data: Dict[str, Any]) -> str:

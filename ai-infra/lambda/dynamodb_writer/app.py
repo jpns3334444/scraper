@@ -31,11 +31,24 @@ def lambda_handler(event, context):
     
     for result in individual_results:
         try:
-            analysis_json = json.loads(result.get('analysis', '{}'))
-            raw_property_id = result.get('custom_id', '').split('-')[-1]
+            # The 'analysis' field contains the full JSON response from the LLM
+            analysis_str = result.get('analysis', '{}')
+            if not analysis_str.strip().startswith('{'):
+                logger.warning(f"Skipping result with invalid analysis JSON: {result.get('custom_id')}")
+                continue
+
+            # Parse the analysis string to get the structured data
+            analysis_json = json.loads(analysis_str)
             
-            if not raw_property_id or not analysis_json:
-                logger.warning(f"Skipping result with missing ID or analysis: {result.get('custom_id')}")
+            # The actual property data is in the 'database_fields' key
+            property_data = analysis_json.get('database_fields', {})
+            if not property_data:
+                logger.warning(f"Skipping result with missing 'database_fields': {result.get('custom_id')}")
+                continue
+
+            raw_property_id = result.get('custom_id', '').split('-')[-1]
+            if not raw_property_id:
+                logger.warning(f"Skipping result with missing property ID in custom_id: {result.get('custom_id')}")
                 continue
 
             # Construct the property_id for the table
@@ -45,8 +58,8 @@ def lambda_handler(event, context):
             # Check for existing META item to see if price has changed
             existing_item = table.get_item(Key={'property_id': property_id, 'sort_key': 'META'}).get('Item')
 
-            # Create the META item
-            meta_item = create_meta_item(property_id, analysis_json, result)
+            # Create the META item using the extracted property_data
+            meta_item = create_meta_item(property_id, property_data, result)
             
             with table.batch_writer() as batch:
                 batch.put_item(Item=meta_item)
@@ -61,8 +74,7 @@ def lambda_handler(event, context):
         except (ClientError, json.JSONDecodeError, TypeError) as e:
             logger.error(f"Failed to process or write result for {result.get('custom_id')}: {e}")
             continue
-            
-    return {'statusCode': 200, 'body': f'Processed {len(individual_results)} results.'}
+    return event
 
 def safe_int(value, default=0):
     """Safely convert to int, returning default if conversion fails"""

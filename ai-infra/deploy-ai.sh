@@ -2,11 +2,15 @@
 # Windows-compatible deployment script that only builds layer when needed
 set -e
 
+# Get the directory of this script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Configuration
 REGION="${AWS_REGION:-ap-northeast-1}"
 STACK_NAME="${STACK_NAME:-ai-scraper-dev}"
 BUCKET_NAME="ai-scraper-artifacts-$REGION"
-LAYER_VERSION_FILE=".layer-version"
+LAYER_VERSION_FILE="$SCRIPT_DIR/.layer-version"
+TEMPLATE_FILE="$SCRIPT_DIR/ai-stack.yaml"
 CURRENT_OPENAI_VERSION="1.95.0"  # Update this when you want to rebuild layer
 
 # Colors
@@ -19,11 +23,14 @@ info() { echo -e "${B}INFO:${NC} $1"; }
 echo "🚀 AI Stack Smart Deployment (Windows Compatible)"
 echo "================================================="
 
+# Change to the script's directory to resolve relative paths
+cd "$SCRIPT_DIR"
+
 # Check prerequisites
 command -v docker >/dev/null || error "Docker not found"
 command -v aws >/dev/null || error "AWS CLI not found"
 aws sts get-caller-identity >/dev/null || error "AWS credentials not configured"
-[ -f "ai-stack.yaml" ] || error "CloudFormation template ai-stack.yaml not found"
+[ -f "$TEMPLATE_FILE" ] || error "CloudFormation template $TEMPLATE_FILE not found"
 
 # Debug Python availability
 info "Checking Python availability..."
@@ -225,6 +232,9 @@ print('Created $func.zip')
             ;;
         report_sender)
             REPORT_SENDER_VERSION="$OBJECT_VERSION"
+            ;;
+        dynamodb_writer)
+            DYNAMODB_WRITER_VERSION="$OBJECT_VERSION"
             ;;
     esac
     

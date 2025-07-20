@@ -1,0 +1,19 @@
+{
+  "date": "2025-07-18",
+  "bucket": "tokyo-real-estate-ai-data",
+  "result_key": "batch_output/2025-07-18/response.json",
+  "batch_result": {
+    "batch_id": "test-batch-123",
+    "status": "completed",
+    "total_results": 1,
+    "individual_results": [
+      {
+        "custom_id": "listing-analysis-2025-07-18-1484930001290",
+        "analysis": "{\"database_fields\": {\"property_type\": \"condo\", \"price\": 52900000, \"price_per_sqm\": 665000, \"address\": \"東京都調布市多摩川3丁目\", \"district\": \"調布市\", \"nearest_station\": \"京王多摩川駅\", \"station_distance_minutes\": 11, \"building_name\": \"フォルスコート調布\", \"building_age_years\": 22, \"total_units_in_building\": 100, \"floor_number\": 5, \"total_floors\": 11, \"total_sqm\": 79.53, \"num_bedrooms\": 3, \"num_bathrooms\": 1, \"balcony_sqm\": 10.98, \"parking_included\": true, \"monthly_management_fee\": 10000, \"reserve_fund_balance\": 15310, \"recommendation\": \"hold\", \"confidence_score\": 0.7, \"investment_score\": 75}}",
+        "listing_url": "https://www.homes.co.jp/mansion/b-1484930001290",
+        "scraped_date": "2025-07-18T10:00:00Z",
+        "model": "gpt-4o"
+      }
+    ]
+  }
+}

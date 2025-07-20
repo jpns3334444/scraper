@@ -30,8 +30,7 @@ Parameters:
     Default: latest
   OpenAILayerObjectVersion:
     Type: String
-    Default: ""
-    Description: S3 object‑version ID for openai-layer.zip
+    Description: S3 object version ID for openai-layer.zip
 
 Resources:
   OpenAILayer:

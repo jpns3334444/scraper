@@ -2,6 +2,7 @@
 LLM Synchronous Lambda function for OpenAI API processing.
 Processes real estate listings directly using chat completions API with o3 model.
 """
+import asyncio
 import json
 import logging
 import os
@@ -10,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 import boto3
 import openai
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -40,16 +41,16 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # Initialize OpenAI client
         openai_client = get_openai_client()
         
-        # Determine which model to use (o3 or o3-mini)
-        model = os.environ.get('OPENAI_MODEL', 'o3')
-        logger.info(f"Using model: {model}")
+        # Default model from environment (can be overridden by request)
+        default_model = os.environ.get('OPENAI_MODEL', 'o3')
+        logger.info(f"Default model from environment: {default_model}")
         
         # Load batch requests JSONL from S3
         batch_requests = load_batch_requests_from_s3(bucket, prompt_key)
         logger.info(f"Loaded {len(batch_requests)} requests to process")
         
-        # Process each request synchronously
-        results = process_requests_sync(openai_client, batch_requests, model, context)
+        # Process requests in parallel
+        results = asyncio.run(process_requests_parallel(openai_client, batch_requests, default_model, context))
         
         # Save results to S3 in the same format as batch API
         result_key = f"batch_output/{date_str}/response.json"
@@ -126,6 +127,186 @@ def load_batch_requests_from_s3(bucket: str, key: str) -> List[Dict[str, Any]]:
         raise
 
 
+async def process_requests_parallel(
+    client: OpenAI, 
+    batch_requests: List[Dict[str, Any]], 
+    model: str,
+    context: Any
+) -> List[Dict[str, Any]]:
+    """
+    Process all requests in parallel using asyncio.
+    
+    Args:
+        client: OpenAI client instance
+        batch_requests: List of batch request dictionaries
+        model: Model to use (o3 or o3-mini)
+        context: Lambda context for timeout checking
+        
+    Returns:
+        List of result dictionaries
+    """
+    # Create async client
+    async_client = AsyncOpenAI(api_key=client.api_key)
+    
+    # Create tasks for parallel processing
+    tasks = []
+    for i, request in enumerate(batch_requests):
+        task = process_single_request_async(async_client, request, model, i, len(batch_requests))
+        tasks.append(task)
+    
+    # Run all tasks in parallel
+    logger.info(f"Starting parallel processing of {len(tasks)} requests")
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Convert exceptions to error results
+    final_results = []
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            logger.error(f"Request {i+1} failed with exception: {result}")
+            final_results.append({
+                'custom_id': batch_requests[i].get('custom_id', f'request-{i}'),
+                'analysis': '',
+                'full_response': {
+                    'custom_id': batch_requests[i].get('custom_id', f'request-{i}'),
+                    'error': {
+                        'message': str(result),
+                        'type': type(result).__name__
+                    }
+                }
+            })
+        else:
+            final_results.append(result)
+    
+    return final_results
+
+
+async def process_single_request_async(
+    client: AsyncOpenAI,
+    request: Dict[str, Any],
+    model: str,
+    index: int,
+    total_requests: int
+) -> Dict[str, Any]:
+    """
+    Process a single request asynchronously.
+    """
+    custom_id = request.get('custom_id', f'request-{index}')
+    logger.info(f"Processing request {index+1}/{total_requests}: {custom_id}")
+    
+    try:
+        # Extract the actual request body
+        request_body = request.get('body', {})
+        
+        # Use model from request body, fall back to env model if not specified
+        request_model = request_body.get('model', model)
+        logger.info(f"Using model '{request_model}' for request {custom_id}")
+        
+        # Call OpenAI API with async client
+        response = await call_openai_async(
+            client=client,
+            model=request_model,
+            messages=request_body.get('messages', []),
+            max_tokens=request_body.get('max_completion_tokens', 8000)
+        )
+        
+        # Format result to match batch API output structure
+        result = {
+            'custom_id': custom_id,
+            'analysis': response.choices[0].message.content if response.choices else '',
+            'full_response': {
+                'custom_id': custom_id,
+                'response': {
+                    'status_code': 200,
+                    'body': {
+                        'id': response.id,
+                        'object': response.object,
+                        'created': response.created,
+                        'model': response.model,
+                        'choices': [
+                            {
+                                'index': choice.index,
+                                'message': {
+                                    'role': choice.message.role,
+                                    'content': choice.message.content
+                                },
+                                'finish_reason': choice.finish_reason
+                            } for choice in response.choices
+                        ],
+                        'usage': {
+                            'prompt_tokens': response.usage.prompt_tokens,
+                            'completion_tokens': response.usage.completion_tokens,
+                            'total_tokens': response.usage.total_tokens
+                        } if response.usage else {}
+                    }
+                }
+            }
+        }
+        
+        logger.info(f"Successfully processed request {custom_id}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Failed to process request {custom_id}: {e}")
+        return {
+            'custom_id': custom_id,
+            'analysis': '',
+            'full_response': {
+                'custom_id': custom_id,
+                'error': {
+                    'message': str(e),
+                    'type': type(e).__name__
+                }
+            }
+        }
+
+
+async def call_openai_async(
+    client: AsyncOpenAI,
+    model: str,
+    messages: List[Dict[str, Any]],
+    max_tokens: int = 8000,
+    max_retries: int = 3
+):
+    """
+    Call OpenAI API asynchronously with exponential backoff retry logic.
+    """
+    for attempt in range(max_retries):
+        try:
+            # o3 models don't support temperature parameter
+            if model.startswith('o3'):
+                response = await client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_completion_tokens=max_tokens
+                )
+            else:
+                response = await client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=0.2,
+                    max_completion_tokens=max_tokens
+                )
+            return response
+            
+        except openai.RateLimitError as e:
+            # Handle rate limit with exponential backoff
+            if attempt < max_retries - 1:
+                wait_time = (2 ** attempt) * 2  # 2s, 4s, 8s
+                logger.warning(f"Rate limit hit, waiting {wait_time}s before retry {attempt + 1}")
+                await asyncio.sleep(wait_time)
+            else:
+                logger.error(f"Rate limit exceeded after {max_retries} attempts")
+                raise
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait_time = (2 ** attempt)  # 1s, 2s, 4s
+                logger.warning(f"API error: {e}, waiting {wait_time}s before retry {attempt + 1}")
+                await asyncio.sleep(wait_time)
+            else:
+                logger.error(f"API error after {max_retries} attempts: {e}")
+                raise
+
+
 def process_requests_sync(
     client: OpenAI, 
     batch_requests: List[Dict[str, Any]], 
@@ -162,10 +343,14 @@ def process_requests_sync(
             # Extract the actual request body
             request_body = request.get('body', {})
             
+            # Use model from request body, fall back to env model if not specified
+            request_model = request_body.get('model', model)
+            logger.info(f"Using model '{request_model}' for request {custom_id}")
+            
             # Call OpenAI API with retry logic
             response = call_openai_with_retry(
                 client=client,
-                model=model,
+                model=request_model,
                 messages=request_body.get('messages', []),
                 temperature=request_body.get('temperature', 0.2),
                 max_tokens=request_body.get('max_tokens', 4000)
@@ -253,22 +438,20 @@ def call_openai_with_retry(
     """
     for attempt in range(max_retries):
         try:
-            # Use correct parameter name based on model
-            if model.startswith('gpt-4o'):
-                # gpt-4o uses max_completion_tokens
+            # All newer models (o3, o3-mini, gpt-4o) use max_completion_tokens
+            # o3 models don't support temperature parameter
+            if model.startswith('o3'):
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_completion_tokens=max_tokens
+                )
+            else:
                 response = client.chat.completions.create(
                     model=model,
                     messages=messages,
                     temperature=temperature,
                     max_completion_tokens=max_tokens
-                )
-            else:
-                # o3 and o3-mini use max_tokens
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens
                 )
             return response
             

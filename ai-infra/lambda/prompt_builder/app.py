@@ -2,6 +2,7 @@
 Prompt Builder Lambda function for creating GPT-4.1 vision prompts.
 Loads JSONL data, sorts by price_per_m2, and builds vision payload with interior photos.
 """
+import base64
 import json
 import logging
 import os
@@ -33,466 +34,109 @@ if os.environ.get('DYNAMODB_TABLE'):
 SYSTEM_PROMPT = """You are a bilingual (JP/EN) Tokyo real estate investment analyst specializing in identifying undervalued properties for purchase and resale, NOT rental yield.
 
 # OUTPUT REQUIREMENTS
-You must provide TWO outputs:
-1. A structured JSON object for database storage (see JSON SCHEMA section)
-2. A complete HTML email report for human review (see HTML OUTPUT section)
+You must provide your response as a single JSON object with two top-level keys: "database_fields" and "email_report".
 
-# STRUCTURED JSON SCHEMA (FOR DATABASE):
+1.  **`database_fields`**: A structured JSON object for database storage. The schema for this object is defined below.
+2.  **`email_report`**: A complete, self-contained HTML email report for human review.
+
+# `database_fields` JSON SCHEMA:
 ```json
 {
   "property_type": "string (apartment/house/condo/land)",
-  "price": integer or null,
-  "price_per_sqm": integer or null,
+  "price": "integer or null",
+  "price_per_sqm": "integer or null",
   "price_trend": "string (above_market/at_market/below_market) or null",
-  "estimated_market_value": integer or null,
-  "price_negotiability_score": integer 1-10 or null,
-  "monthly_management_fee": integer or null,
-  "annual_property_tax": integer or null,
-  "reserve_fund_balance": integer or null,
-  "special_assessments": integer or null,
-  
+  "estimated_market_value": "integer or null",
+  "price_negotiability_score": "integer 1-10 or null",
+  "monthly_management_fee": "integer or null",
+  "annual_property_tax": "integer or null",
+  "reserve_fund_balance": "integer or null",
+  "special_assessments": "integer or null",
   "address": "string or empty string",
   "district": "string or empty string",
   "nearest_station": "string or empty string",
-  "station_distance_minutes": integer or null,
+  "station_distance_minutes": "integer or null",
   "building_name": "string or empty string",
-  "building_age_years": integer or null,
-  "total_units_in_building": integer or null,
-  "floor_number": integer or null,
-  "total_floors": integer or null,
+  "building_age_years": "integer or null",
+  "total_units_in_building": "integer or null",
+  "floor_number": "integer or null",
+  "total_floors": "integer or null",
   "direction_facing": "string (N/S/E/W/NE/SE/SW/NW) or empty string",
-  "corner_unit": boolean or null,
-  
-  "total_sqm": number or null,
-  "num_bedrooms": integer or null,
-  "num_bathrooms": number or null,
-  "balcony_sqm": number or null,
-  "storage_sqm": number or null,
-  "parking_included": boolean or null,
+  "corner_unit": "boolean or null",
+  "total_sqm": "number or null",
+  "num_bedrooms": "integer or null",
+  "num_bathrooms": "number or null",
+  "balcony_sqm": "number or null",
+  "storage_sqm": "number or null",
+  "parking_included": "boolean or null",
   "parking_type": "string (covered/uncovered/tandem/none) or null",
-  "layout_efficiency_score": integer 1-10 or null,
-  
-  "overall_condition_score": integer 1-10 or null,
-  "natural_light_score": integer 1-10 or null,
-  "view_quality_score": integer 1-10 or null,
-  "mold_detected": boolean or null,
-  "water_damage_detected": boolean or null,
-  "visible_cracks": boolean or null,
+  "layout_efficiency_score": "integer 1-10 or null",
+  "overall_condition_score": "integer 1-10 or null",
+  "natural_light_score": "integer 1-10 or null",
+  "view_quality_score": "integer 1-10 or null",
+  "mold_detected": "boolean or null",
+  "water_damage_detected": "boolean or null",
+  "visible_cracks": "boolean or null",
   "renovation_needed": "string (none/minor/major/complete) or null",
   "flooring_condition": "string (excellent/good/fair/poor) or null",
   "kitchen_condition": "string (modern/dated/needs_renovation) or null",
   "bathroom_condition": "string (modern/dated/needs_renovation) or null",
-  "wallpaper_present": boolean or null,
-  "tatami_present": boolean or null,
-  "cleanliness_score": integer 1-10 or null,
+  "wallpaper_present": "boolean or null",
+  "tatami_present": "boolean or null",
+  "cleanliness_score": "integer 1-10 or null",
   "staging_quality": "string (professional/basic/none) or null",
-  
   "earthquake_resistance_standard": "string (pre-1981/1981/2000) or null",
-  "elevator_access": boolean or null,
-  "auto_lock_entrance": boolean or null,
-  "delivery_box": boolean or null,
-  "pet_allowed": boolean or null,
+  "elevator_access": "boolean or null",
+  "auto_lock_entrance": "boolean or null",
+  "delivery_box": "boolean or null",
+  "pet_allowed": "boolean or null",
   "balcony_direction": "string or empty string",
-  "double_glazed_windows": boolean or null,
-  "floor_heating": boolean or null,
-  "security_features": ["array of strings"] or [],
-  
-  "investment_score": integer 0-100,
-  "rental_yield_estimate": number or null,
+  "double_glazed_windows": "boolean or null",
+  "floor_heating": "boolean or null",
+  "security_features": "array of strings or []",
+  "investment_score": "integer 0-100",
+  "rental_yield_estimate": "number or null",
   "appreciation_potential": "string (high/medium/low)",
-  "liquidity_score": integer 1-10,
+  "liquidity_score": "integer 1-10",
   "target_tenant_profile": "string or empty string",
-  "renovation_roi_potential": number or null,
-  
+  "renovation_roi_potential": "number or null",
   "price_analysis": "string (detailed analysis)",
   "location_assessment": "string (detailed analysis)",
   "condition_assessment": "string (detailed analysis)",
   "investment_thesis": "string (detailed analysis)",
-  "competitive_advantages": ["array of strings"] or [],
-  "risks": ["array of strings"] or [],
-  "recommended_offer_price": integer or null,
+  "competitive_advantages": "array of strings or []",
+  "risks": "array of strings or []",
+  "recommended_offer_price": "integer or null",
   "recommendation": "string (strong_buy/buy/hold/pass)",
-  "confidence_score": number 0.0-1.0,
-  "comparable_properties": ["array of property_ids"] or [],
-  
-  "market_days_listed": integer or null,
-  "price_reductions": integer or null,
-  "similar_units_available": integer or null,
-  "recent_sales_same_building": [{"property_id": "string", "price": integer, "date": "string"}] or [],
+  "confidence_score": "number 0.0-1.0",
+  "comparable_properties": "array of property_ids or []",
+  "market_days_listed": "integer or null",
+  "price_reductions": "integer or null",
+  "similar_units_available": "integer or null",
+  "recent_sales_same_building": "[{\"property_id\": \"string\", \"price\": integer, \"date\": \"string\"}] or []",
   "neighborhood_trend": "string (appreciating/stable/declining)",
-  
   "image_analysis_model_version": "string or empty string",
-  "processing_errors": ["array of error messages"] or [],
-  "data_quality_score": number 0.0-1.0
+  "processing_errors": "array of error messages or []",
+  "data_quality_score": "number 0.0-1.0"
 }
-PRIMARY OBJECTIVE
+```
+
+# `email_report` HTML SPECIFICATIONS
+Generate a single, complete HTML5 document.
+- **Layout**: Use table-based layouts and inline CSS for maximum email client compatibility.
+- **Content**: Include a market overview, ranked list of properties, detailed cards for top opportunities, price drop alerts, and actionable next steps.
+- **No Scripts**: Do not include any `<script>` tags.
+
+# PRIMARY OBJECTIVE
 Find properties priced significantly below market value with strong resale potential. Focus on two categories:
-Category A - Undervalued Mansions (マンション)
+- **Category A - Undervalued Mansions (マンション)**: Reinforced concrete condos (SRC/RC), priced ≥15% below 5-year ward average and same-building comps, preferably ≤20 years old.
+- **Category B - Flip-worthy Detached Houses (一戸建て)**: Freehold homes built before 2000, land ≥80m², price ≤¥30,000,000, with renovation ROI ≥30%.
 
-Reinforced concrete condos in SRC/RC buildings
-Priced ≥15% below BOTH:
-a) Rolling 5-year ward average price/m²
-b) Lowest listing in same building (past 24 months) if data available
-Prefer properties 築20年以内 (≤20 years old)
-
-Category B - Flip-worthy Detached Houses (一戸建て)
-
-Freehold detached homes built before 2000
-Land ≥80m² (adjust [MIN_LAND] as needed)
-Total price ≤¥30,000,000
-Renovation ROI ≥30% when resold at neighborhood median
-
-HARD FILTERS (MANDATORY)
-FilterRequirementMax Price¥30,000,000Land TenureFreehold only (所有権) - NO leasehold (借地権)Road AccessRoad width ≥4m (建築基準法 compliance)Frontage≥2m minimumZoningResidential onlyBCR/FARMust not exceed zone limits (建ぺい率/容積率)ExcludedAuction properties, share houses, mixed-use buildings
-DATA EXTRACTION & SCORING
-Parse listings and apply the following scoring model (100 points maximum):
-WeightCriterionCalculation MethodFallback if Missing25ptsDiscount vs 5-yr area avg(AreaAvg - SubjectPrice)/AreaAvg × 25Required - no fallback20ptsDiscount vs building low(BldgLow - SubjectPrice)/BldgLow × 20Add to area discount weight20ptsRenovation ROI potential(PostRenovValue - (Price + RenoCost))/(Price + RenoCost) × 200pts if no cost data10ptsMarket liquidityDOM ≤90: 10pts; 91-150: 5pts; >150: 0ptsDefault 120 days = 5pts10ptsPremium featuresSouth: 5pts; Corner/High floor: 5pts0pts if not specified5ptsOutdoor space(Subject balcony/garden ÷ Area avg) × 50pts if not specified10ptsRisk deductions-5pts each for critical issuesSee risk matrix below
-Score Floor: Minimum 0 points (cannot go negative)
-RISK ASSESSMENT FRAMEWORK
-Critical Risk Flags (-5 points each, max -10 total)
-
-Legal/Compliance:
-
-Road width <4m (再建築不可)
-Private road (私道) without clear rights
-BCR/FAR exceeds zone limits
-建築基準法 non-conformities
-Setback violations (セットバック要)
-円滑化法 redevelopment zone
-
-
-Structural (only if data available):
-
-Seismic Is-value <0.6 (when specified)
-Visible termite damage (シロアリ被害)
-Asbestos disclosed (アスベスト使用)
-Foundation issues noted (基礎問題)
-
-
-Market/Location:
-
-Flood zone high risk (洪水浸水想定区域)
-Liquefaction zone (液状化危険度高)
-Planned redevelopment (再開発予定地)
-
-
-
-RENOVATION ANALYSIS
-Cost Estimation by Condition
-ConditionCost Range/m²Typical ScopeSource FlagLight Cosmetic¥50,000-80,000Paint, flooring, fixturesmarket_avgStandard Update¥100,000-150,000Kitchen, bath, systemsmarket_avgFull Renovation¥200,000-300,000Structural, premium finishmarket_avgCompliance+¥50,000-100,000Seismic, fireproofingregulatory
-ROI Calculation:
-IF renovation_cost_known:
-ROI = (PostRenovValue - (Purchase + RenoCost)) / (Purchase + RenoCost)
-PostRenovValue = AreaMedian × PropertyM2 × 0.95
-ELSE:
-ROI = "TBD - Professional assessment required"
-cost_source = "not_available"
-HTML EMAIL REPORT SPECIFICATIONS
-Generate a single, complete HTML5 document that includes:
-
-Market overview and key insights
-Ranked list of ALL analyzed properties
-Detailed cards for top 5-10 opportunities
-Price drop alerts (if any detected)
-Actionable next steps
-
-Email Client Compatibility Rules
-
-NO: flexbox, grid, box-shadow, :hover pseudo-classes
-USE: table-based layout, inline styles, explicit widths
-NO: <script> tags (will be stripped/flagged)
-USE: HTML comments for metadata: <!--PROPERTY_DATA_START{json}PROPERTY_DATA_END-->
-
-HTML Structure Template:
-html<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tokyo RE Analysis - [REPORT_DATE]</title>
-</head>
-<body style="margin:0;padding:0;font-family:Arial,sans-serif;line-height:1.6;color:#1f2937;background-color:#f9fafb;">
-    <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f9fafb;">
-        <tr>
-            <td align="center">
-                <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;margin:20px auto;">
-                    <!-- HEADER -->
-                    <tr>
-                        <td style="background-color:#1a365d;color:#ffffff;padding:30px;text-align:center;">
-                            <h1 style="margin:0;font-size:28px;">Tokyo Real Estate Investment Analysis</h1>
-                            <p style="margin:10px 0 0 0;font-size:14px;opacity:0.9;">[REPORT_DATE] | Properties to Visit This Week</p>
-                        </td>
-                    </tr>
-                    
-                    <!-- ALERT BAR (if price drops detected) -->
-                    [IF PRICE_DROPS_EXIST]
-                    <tr>
-                        <td style="background-color:#fef3c7;border-left:4px solid #f59e0b;padding:15px;">
-                            <strong style="color:#92400e;">⚡ PRICE DROP ALERT:</strong> [NUM_DROPS] properties reduced prices this week!
-                        </td>
-                    </tr>
-                    [END_IF]
-                    
-                    <!-- STATS BAR -->
-                    <tr>
-                        <td style="padding:20px;">
-                            <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7fafc;border-radius:8px;">
-                                <tr>
-                                    <td width="25%" style="padding:20px;text-align:center;border-right:1px solid #e2e8f0;">
-                                        <div style="font-size:24px;font-weight:bold;color:#1a365d;">[TOTAL_PROPS]</div>
-                                        <div style="font-size:12px;color:#4a5568;">Properties Analyzed</div>
-                                    </td>
-                                    <td width="25%" style="padding:20px;text-align:center;border-right:1px solid #e2e8f0;">
-                                        <div style="font-size:24px;font-weight:bold;color:#059669;">[STRONG_BUY_COUNT]</div>
-                                        <div style="font-size:12px;color:#4a5568;">Must-See Properties</div>
-                                    </td>
-                                    <td width="25%" style="padding:20px;text-align:center;border-right:1px solid #e2e8f0;">
-                                        <div style="font-size:24px;font-weight:bold;color:#2563eb;">[AVG_DISCOUNT]%</div>
-                                        <div style="font-size:12px;color:#4a5568;">Avg Discount Found</div>
-                                    </td>
-                                    <td width="25%" style="padding:20px;text-align:center;">
-                                        <div style="font-size:24px;font-weight:bold;color:#dc2626;">[HIGH_RISK_COUNT]</div>
-                                        <div style="font-size:12px;color:#4a5568;">High Risk Properties</div>
-                                    </td>
-                                </tr>
-                            </table>
-                        </td>
-                    </tr>
-                    
-                    <!-- EXECUTIVE SUMMARY -->
-                    <tr>
-                        <td style="padding:20px;">
-                            <table width="100%" cellpadding="15" cellspacing="0" style="background-color:#ffffff;border:1px solid #e2e8f0;">
-                                <tr>
-                                    <td>
-                                        <h2 style="margin:0 0 15px 0;color:#2d3748;font-size:20px;">This Week's Market Analysis</h2>
-                                        <p style="margin:0 0 10px 0;color:#4a5568;">[MARKET_OVERVIEW]</p>
-                                        <p style="margin:0 0 10px 0;color:#4a5568;"><strong>Key Finding:</strong> [KEY_FINDING]</p>
-                                        <p style="margin:0;color:#4a5568;"><strong>Recommended Action:</strong> [ACTION_ITEMS]</p>
-                                    </td>
-                                </tr>
-                            </table>
-                        </td>
-                    </tr>
-                    
-                    <!-- MUST-SEE PROPERTIES THIS WEEK -->
-                    <tr>
-                        <td style="padding:20px;">
-                            <h2 style="margin:0 0 15px 0;color:#2d3748;font-size:20px;">🎯 Must-See Properties (Schedule Viewings ASAP)</h2>
-                            <table width="100%" cellpadding="10" cellspacing="0" style="border:1px solid #e2e8f0;">
-                                <tr style="background-color:#f7fafc;">
-                                    <th style="text-align:left;color:#2d3748;font-weight:600;">Priority</th>
-                                    <th style="text-align:left;color:#2d3748;font-weight:600;">Property</th>
-                                    <th style="text-align:left;color:#2d3748;font-weight:600;">Location</th>
-                                    <th style="text-align:right;color:#2d3748;font-weight:600;">Score</th>
-                                    <th style="text-align:right;color:#2d3748;font-weight:600;">Price</th>
-                                    <th style="text-align:center;color:#2d3748;font-weight:600;">Why Visit</th>
-                                </tr>
-                                <!-- Top 5 strong_buy properties -->
-                            </table>
-                        </td>
-                    </tr>
-                    
-                    <!-- PRICE DROP OPPORTUNITIES -->
-                    [IF PRICE_DROPS_EXIST]
-                    <tr>
-                        <td style="padding:20px;">
-                            <h2 style="margin:0 0 15px 0;color:#2d3748;font-size:20px;">📉 Recent Price Drops</h2>
-                            <table width="100%" cellpadding="10" cellspacing="0" style="border:1px solid #e2e8f0;">
-                                <!-- List properties with price_reductions > 0 -->
-                            </table>
-                        </td>
-                    </tr>
-                    [END_IF]
-                    
-                    <!-- ALL PROPERTIES RANKED -->
-                    <tr>
-                        <td style="padding:20px;">
-                            <h2 style="margin:0 0 15px 0;color:#2d3748;font-size:20px;">All Properties Analyzed (Ranked by Score)</h2>
-                            <table width="100%" cellpadding="8" cellspacing="0" style="border:1px solid #e2e8f0;font-size:14px;">
-                                <tr style="background-color:#f7fafc;">
-                                    <th style="text-align:left;">Rank</th>
-                                    <th style="text-align:left;">Property ID</th>
-                                    <th style="text-align:left;">Type</th>
-                                    <th style="text-align:left;">Location</th>
-                                    <th style="text-align:right;">Score</th>
-                                    <th style="text-align:right;">Price</th>
-                                    <th style="text-align:right;">¥/m²</th>
-                                    <th style="text-align:center;">Action</th>
-                                </tr>
-                                <!-- List ALL properties -->
-                            </table>
-                        </td>
-                    </tr>
-                    
-                    <!-- DETAILED PROPERTY CARDS (Top 5-10) -->
-                    <!-- Each property gets its own detailed analysis card -->
-                    
-                    <!-- NEXT STEPS -->
-                    <tr>
-                        <td style="padding:20px;">
-                            <table width="100%" cellpadding="15" cellspacing="0" style="background-color:#ecfdf5;border:1px solid #10b981;">
-                                <tr>
-                                    <td>
-                                        <h3 style="margin:0 0 10px 0;color:#065f46;">📋 Your Action Plan</h3>
-                                        <ol style="margin:0;padding-left:20px;color:#047857;">
-                                            <li>Schedule viewings for all "Must-See" properties within 48 hours</li>
-                                            <li>Prepare offer strategies for properties with scores >85</li>
-                                            <li>Research comparable sales in target districts</li>
-                                            <li>Set alerts for new listings matching these criteria</li>
-                                        </ol>
-                                    </td>
-                                </tr>
-                            </table>
-                        </td>
-                    </tr>
-                    
-                    <!-- FOOTER -->
-                    <tr>
-                        <td style="padding:20px;background-color:#f7fafc;">
-                            <p style="margin:0;font-size:12px;color:#718096;text-align:center;">
-                                <strong>Data Sources:</strong> REINS, 不動産取引価格情報, Portal aggregation<br>
-                                <strong>Analysis Date:</strong> [REPORT_DATE] | <strong>Next Update:</strong> [NEXT_UPDATE_DATE]<br>
-                                <strong>Disclaimer:</strong> Professional inspection recommended before any purchase decision.
-                            </p>
-                        </td>
-                    </tr>
-                </table>
-            </td>
-        </tr>
-    </table>
-</body>
-</html>
-Property Detail Card Template (for top opportunities):
-html<tr>
-    <td style="padding:20px;">
-        <table width="100%" cellpadding="0" cellspacing="0" style="border:2px solid #e2e8f0;background-color:#ffffff;">
-            <!-- Property Header with Score Badge -->
-            <tr>
-                <td style="padding:20px;background-color:#f7fafc;border-bottom:2px solid #e2e8f0;">
-                    <table width="100%" cellpadding="0" cellspacing="0">
-                        <tr>
-                            <td>
-                                <h3 style="margin:0;color:#2d3748;font-size:18px;">
-                                    #[RANK] - [PROPERTY_ID] 
-                                    <a href="[PROPERTY_URL]" style="color:#2563eb;text-decoration:none;font-size:14px;">[View Listing →]</a>
-                                </h3>
-                                <p style="margin:5px 0 0 0;color:#4a5568;font-size:14px;">[ADDRESS] | [WARD] | [STATION] [WALK_TIME]分</p>
-                            </td>
-                            <td style="text-align:right;">
-                                <div style="background-color:[SCORE_COLOR];color:#ffffff;padding:10px 20px;border-radius:25px;font-weight:bold;font-size:20px;">
-                                    Score: [SCORE]/100
-                                </div>
-                                <div style="margin-top:5px;font-size:12px;color:[REC_COLOR];font-weight:bold;">
-                                    [RECOMMENDATION]
-                                </div>
-                            </td>
-                        </tr>
-                    </table>
-                </td>
-            </tr>
-            
-            <!-- Key Metrics in Grid -->
-            <tr>
-                <td style="padding:20px;">
-                    <table width="100%" cellpadding="0" cellspacing="0">
-                        <tr>
-                            <!-- Column 1: Pricing -->
-                            <td width="33%" valign="top" style="padding-right:15px;border-right:1px solid #e2e8f0;">
-                                <h4 style="margin:0 0 10px 0;color:#1a365d;font-size:14px;">💰 Pricing Analysis</h4>
-                                <div style="font-size:20px;font-weight:bold;color:#2d3748;">¥[PRICE]</div>
-                                <div style="font-size:14px;color:#4a5568;margin:5px 0;">¥[PRICE_M2]/m²</div>
-                                <div style="font-size:14px;color:#059669;font-weight:bold;">[DISCOUNT]% below market</div>
-                                [IF PRICE_DROP]
-                                <div style="margin-top:10px;padding:5px;background-color:#fef3c7;color:#92400e;font-size:12px;">
-                                    📉 Price dropped [DROP_AMOUNT]% on [DROP_DATE]
-                                </div>
-                                [END_IF]
-                            </td>
-                            
-                            <!-- Column 2: Property Details -->
-                            <td width="33%" valign="top" style="padding:0 15px;border-right:1px solid #e2e8f0;">
-                                <h4 style="margin:0 0 10px 0;color:#1a365d;font-size:14px;">🏠 Property Details</h4>
-                                <table style="font-size:13px;line-height:1.8;">
-                                    <tr><td style="color:#718096;">Size:</td><td style="font-weight:bold;">[SIZE]m²</td></tr>
-                                    <tr><td style="color:#718096;">Type:</td><td>[PROPERTY_TYPE]</td></tr>
-                                    <tr><td style="color:#718096;">Built:</td><td>[YEAR] ([AGE]年)</td></tr>
-                                    <tr><td style="color:#718096;">Floor:</td><td>[FLOOR]/[TOTAL_FLOORS]F</td></tr>
-                                    <tr><td style="color:#718096;">Layout:</td><td>[BEDROOMS]LDK</td></tr>
-                                </table>
-                            </td>
-                            
-                            <!-- Column 3: Investment Potential -->
-                            <td width="33%" valign="top" style="padding-left:15px;">
-                                <h4 style="margin:0 0 10px 0;color:#1a365d;font-size:14px;">📈 Investment Potential</h4>
-                                <div style="font-size:13px;line-height:1.6;">
-                                    <div><strong>Exit Strategy:</strong> [EXIT_STRATEGY]</div>
-                                    <div style="margin-top:5px;"><strong>Est. ROI:</strong> <span style="color:#059669;font-weight:bold;">[ROI]%</span></div>
-                                    <div style="margin-top:5px;"><strong>Target Resale:</strong> ¥[TARGET_PRICE]</div>
-                                    <div style="margin-top:5px;"><strong>Liquidity:</strong> [LIQUIDITY_SCORE]/10</div>
-                                </div>
-                            </td>
-                        </tr>
-                    </table>
-                </td>
-            </tr>
-            
-            <!-- Investment Thesis -->
-            <tr>
-                <td style="padding:0 20px 10px 20px;">
-                    <div style="background-color:#f0fdf4;padding:15px;border-left:4px solid #10b981;">
-                        <h4 style="margin:0 0 10px 0;color:#065f46;font-size:14px;">💡 Why This Property?</h4>
-                        <p style="margin:0;font-size:13px;color:#047857;line-height:1.5;">[INVESTMENT_THESIS]</p>
-                    </div>
-                </td>
-            </tr>
-            
-            <!-- Risk Assessment -->
-            <tr>
-                <td style="padding:0 20px 20px 20px;">
-                    <table width="100%" cellpadding="10" cellspacing="0" style="background-color:#fef2f2;border:1px solid #fecaca;">
-                        <tr>
-                            <td>
-                                <h4 style="margin:0 0 10px 0;color:#991b1b;font-size:14px;">⚠️ Risk Assessment</h4>
-                                <table style="font-size:13px;width:100%;">
-                                    <tr>
-                                        <td width="33%">[STRUCTURAL_RISK] Structural: [STRUCTURAL_DESC]</td>
-                                        <td width="33%">[LEGAL_RISK] Legal: [LEGAL_DESC]</td>
-                                        <td width="33%">[MARKET_RISK] Market: [MARKET_DESC]</td>
-                                    </tr>
-                                </table>
-                                [IF HIGH_RISK]
-                                <div style="margin-top:10px;color:#dc2626;font-weight:bold;font-size:12px;">
-                                    ⚠️ [RISK_WARNING]
-                                </div>
-                                [END_IF]
-                            </td>
-                        </tr>
-                    </table>
-                </td>
-            </tr>
-        </table>
-    </td>
-</tr>
-OUTPUT FORMAT
-Return your analysis as a JSON object with two keys:
-json{
-  "database_fields": {
-    // All fields from the JSON SCHEMA section
-  },
-  "email_report": "<!-- Complete HTML email report as a single string -->"
-}
-CRITICAL REMINDERS:
-
-NEVER fabricate data - use null/empty values for missing information
-Always calculate investment_score and provide recommendation
-Include ALL properties in the ranked list, not just top performers
-Highlight time-sensitive opportunities (price drops, high DOM)
-Make the email actionable - clear next steps for property visits
-Use color coding: Green for opportunities, Red for risks, Blue for links
-Ensure mobile-friendly table layouts (600px max width)
-
-Remember: This analysis focuses on resale arbitrage opportunities, NOT rental yield. Every recommendation should clearly articulate the value capture strategy through market inefficiency or value-add potential.
+# CRITICAL REMINDERS:
+- Your entire output must be a single JSON object.
+- The JSON object must have exactly two keys: `database_fields` and `email_report`.
+- NEVER fabricate data. Use `null` or empty values for missing information.
+- This analysis focuses on resale arbitrage, not rental yield.
 """
 
 def get_market_context() -> Dict[str, Any]:
@@ -724,10 +368,9 @@ When analyzing a property, reference specific comparable properties from this da
             "method": "POST",
             "url": "/v1/chat/completions",
             "body": {
-                "model": "gpt-4o",  # Use gpt-4o for vision capabilities
+                "model": "o3",  # Use o3 model (supports vision)
                 "messages": messages,
-                "temperature": 0.2,
-                "max_tokens": 4000
+                "max_completion_tokens": 8000
             }
         }
         
@@ -777,14 +420,14 @@ def build_individual_listing_content(listing: Dict[str, Any], date_str: str, buc
     })
     
     for photo_url in prioritized_photos:
-        # Generate presigned URL for the photo
-        presigned_url = generate_presigned_url(photo_url, bucket)
+        # Convert S3 image to base64 data URL for OpenAI
+        data_url = get_image_as_base64_data_url(photo_url, bucket)
         
-        if presigned_url:
+        if data_url:
             content.append({
                 "type": "image_url",
                 "image_url": {
-                    "url": presigned_url,
+                    "url": data_url,
                     "detail": "low"
                 }
             })
@@ -792,7 +435,7 @@ def build_individual_listing_content(listing: Dict[str, Any], date_str: str, buc
     # Add instruction for individual listing analysis
     content.append({
         "type": "text",
-        "text": "IMPORTANT: Analyze this single property for investment potential. Return your analysis in JSON format with the following structure: {\"investment_score\": 0-100, \"price_analysis\": \"text\", \"location_assessment\": \"text\", \"condition_assessment\": \"text\", \"investment_thesis\": \"text\", \"risks\": [\"risk1\", \"risk2\"], \"recommendation\": \"buy/pass/investigate\"}"
+        "text": "IMPORTANT: Analyze this single property and return the full JSON object with `database_fields` and `email_report` as top-level keys, following all instructions in the system prompt."
     })
     
     return content
@@ -842,17 +485,16 @@ def prioritize_images(image_urls: List[str]) -> List[str]:
     return prioritized[:20]
 
 
-def generate_presigned_url(s3_url: str, bucket: str, expiration: int = 28800) -> str:
+def get_image_as_base64_data_url(s3_url: str, bucket: str) -> str:
     """
-    Generate presigned URL for S3 object.
+    Download S3 image and convert to base64 data URL for OpenAI.
     
     Args:
         s3_url: S3 URL (s3://bucket/key format)
         bucket: S3 bucket name
-        expiration: URL expiration time in seconds (default 8 hours)
         
     Returns:
-        Presigned URL string or empty string if failed
+        Base64 data URL string or empty string if failed
     """
     try:
         # Extract key from S3 URL
@@ -863,17 +505,31 @@ def generate_presigned_url(s3_url: str, bucket: str, expiration: int = 28800) ->
         
         key = parsed.path.lstrip('/')
         
-        # Generate presigned URL
-        presigned_url = s3_client.generate_presigned_url(
-            'get_object',
-            Params={'Bucket': bucket, 'Key': key},
-            ExpiresIn=expiration
-        )
+        # Download image from S3
+        response = s3_client.get_object(Bucket=bucket, Key=key)
+        image_data = response['Body'].read()
         
-        return presigned_url
+        # Determine MIME type from file extension
+        file_ext = key.lower().split('.')[-1]
+        mime_type_map = {
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'png': 'image/png',
+            'gif': 'image/gif',
+            'webp': 'image/webp'
+        }
+        mime_type = mime_type_map.get(file_ext, 'image/jpeg')
+        
+        # Convert to base64
+        base64_data = base64.b64encode(image_data).decode('utf-8')
+        
+        # Create data URL
+        data_url = f"data:{mime_type};base64,{base64_data}"
+        
+        return data_url
         
     except Exception as e:
-        logger.warning(f"Failed to generate presigned URL for {s3_url}: {e}")
+        logger.warning(f"Failed to convert S3 image to base64 data URL for {s3_url}: {e}")
         return ""
 
 
