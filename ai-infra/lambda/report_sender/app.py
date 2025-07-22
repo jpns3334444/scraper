@@ -21,6 +21,13 @@ except ImportError:
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
 
+# Import centralized config helper
+try:
+    from util.config import get_config
+except ImportError:
+    logger.warning("Centralized config not available, falling back to direct os.environ access")
+    get_config = None
+
 s3_client = boto3.client('s3')
 ses_client = boto3.client('ses')
 ssm_client = boto3.client('ssm')
@@ -39,7 +46,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     try:
         date_str = event.get('date')
-        bucket = event.get('bucket', os.environ['OUTPUT_BUCKET'])
+        if get_config:
+            bucket = event.get('bucket', get_config().get_str('OUTPUT_BUCKET'))
+        else:
+            bucket = event.get('bucket', os.environ['OUTPUT_BUCKET'])
         result_key = event.get('result_key')
         batch_result = event.get('batch_result', {})
         
@@ -703,8 +713,13 @@ def send_via_email(html_report: str, date_str: str) -> bool:
         True if successful, False otherwise
     """
     try:
-        email_from = os.environ.get('EMAIL_FROM')
-        email_to = os.environ.get('EMAIL_TO')
+        if get_config:
+            config = get_config()
+            email_from = config.get_str('EMAIL_FROM', '')
+            email_to = config.get_str('EMAIL_TO', '')
+        else:
+            email_from = os.environ.get('EMAIL_FROM')
+            email_to = os.environ.get('EMAIL_TO')
         
         logger.info(f"Email configuration - FROM: {email_from}, TO: {email_to}")
         

@@ -1,0 +1,72 @@
+[
+  {
+    "id": "COMP_001",
+    "price_per_sqm": 850000,
+    "size_sqm": 58.0,
+    "building_age_years": 10,
+    "floor": 5
+  },
+  {
+    "id": "COMP_002",
+    "price_per_sqm": 900000,
+    "size_sqm": 62.5,
+    "building_age_years": 6,
+    "floor": 3
+  },
+  {
+    "id": "COMP_003",
+    "price_per_sqm": 780000,
+    "size_sqm": 55.5,
+    "building_age_years": 12,
+    "floor": 7
+  },
+  {
+    "id": "COMP_004",
+    "price_per_sqm": 920000,
+    "size_sqm": 64.0,
+    "building_age_years": 8,
+    "floor": 4
+  },
+  {
+    "id": "COMP_005",
+    "price_per_sqm": 1050000,
+    "size_sqm": 60.0,
+    "building_age_years": 5,
+    "floor": 8
+  },
+  {
+    "id": "COMP_006",
+    "price_per_sqm": 750000,
+    "size_sqm": 50.0,
+    "building_age_years": 15,
+    "floor": 2
+  },
+  {
+    "id": "COMP_007",
+    "price_per_sqm": 1100000,
+    "size_sqm": 70.0,
+    "building_age_years": 4,
+    "floor": 6
+  },
+  {
+    "id": "COMP_008",
+    "price_per_sqm": 680000,
+    "size_sqm": 45.0,
+    "building_age_years": 18,
+    "floor": 3
+  },
+  {
+    "id": "COMP_009",
+    "price_per_sqm": 1200000,
+    "size_sqm": 65.0,
+    "building_age_years": 2,
+    "floor": 9
+  },
+  {
+    "id": "COMP_010",
+    "price_per_sqm": 800000,
+    "size_sqm": 52.0,
+    "building_age_years": 14,
+    "floor": 4
+  }
+]

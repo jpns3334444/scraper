@@ -1,20 +1,85 @@
 """
-LLM Synchronous Lambda function for OpenAI API processing.
-Processes real estate listings directly using chat completions API with o3 model.
+Lean v1.3 LLM Batch Lambda function with schema validation and fallback.
+Processes candidate properties only with strict JSON schema validation and 1 retry.
 """
 import asyncio
 import json
 import logging
 import os
 import time
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import boto3
 import openai
 from openai import OpenAI, AsyncOpenAI
 
+# Import schema validation and metrics with better error handling
+import sys
+from pathlib import Path
+
+# Add parent directories to path for local imports during Lambda execution
+if '/opt/python' not in sys.path:
+    current_dir = Path(__file__).parent
+    repo_root = current_dir.parent.parent.parent  # Navigate to repo root
+    sys.path.insert(0, str(repo_root))
+
+# Try importing schema validation
+validate_llm_output = None
+create_fallback_evaluation = None
+truncate_response_for_logging = None
+
+try:
+    from schemas.validate import validate_llm_output, create_fallback_evaluation, truncate_response_for_logging
+    logger.info("Successfully imported schema validation utilities")
+except ImportError as e:
+    logger.warning(f"Schema validation not available: {e}")
+    # Provide fallback implementations
+    def validate_llm_output(response: str):
+        """Fallback validation - always returns invalid."""
+        return False, None, "Schema validation module not available"
+    
+    def create_fallback_evaluation(property_id: str, base_score: int, final_score: int, verdict: str = "REJECT"):
+        """Fallback evaluation creation."""
+        return {
+            "upsides": ["Fallback evaluation - schema validation unavailable"],
+            "risks": ["Schema validation module not loaded", "Manual review required"],
+            "justification": "Fallback response due to missing schema validation utilities"
+        }
+    
+    def truncate_response_for_logging(response: str, max_length: int = 1500) -> str:
+        """Fallback truncation function."""
+        return response[:max_length] + "..." if len(response) > max_length else response
+
+# Try importing metrics
+emit_llm_calls = None
+emit_llm_schema_failures = None
+emit_pipeline_metrics = None
+
+try:
+    from util.metrics import emit_llm_calls, emit_llm_schema_failures, emit_pipeline_metrics
+    logger.info("Successfully imported metrics utilities")
+except ImportError as e:
+    logger.warning(f"Metrics utilities not available: {e}")
+    # Provide fallback implementations
+    def emit_llm_calls(count: int):
+        logger.info(f"LLM.Calls metric: {count}")
+    
+    def emit_llm_schema_failures(count: int):
+        logger.info(f"Evaluator.SchemaFail metric: {count}")
+    
+    def emit_pipeline_metrics(stage: str, metrics: dict):
+        logger.info(f"Pipeline metrics for {stage}: {metrics}")
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+# Import centralized config helper
+try:
+    from util.config import get_config
+except ImportError:
+    logger.warning("Centralized config not available, falling back to direct os.environ access")
+    get_config = None
 
 s3_client = boto3.client('s3')
 secrets_client = boto3.client('secretsmanager')
@@ -22,59 +87,95 @@ secrets_client = boto3.client('secretsmanager')
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
-    Main Lambda handler for synchronous LLM processing.
+    Lean v1.3 Lambda handler - process candidates only with schema validation.
     
     Args:
         event: Lambda event containing prompt data from previous step
         context: Lambda context
         
     Returns:
-        Dict containing results location and metadata
+        Dict containing results location and metadata with lean metrics
     """
     try:
         date_str = event.get('date')
-        bucket = event.get('bucket', os.environ['OUTPUT_BUCKET'])
+        if get_config:
+            bucket = event.get('bucket', get_config().get_str('OUTPUT_BUCKET'))
+        else:
+            bucket = event.get('bucket', os.environ['OUTPUT_BUCKET'])
         prompt_key = event.get('prompt_key')
         
-        logger.info(f"Processing LLM requests for date: {date_str}")
+        if not prompt_key:
+            logger.warning("No prompt_key provided - no candidates to process")
+            return {
+                'statusCode': 200,
+                'date': date_str,
+                'bucket': bucket,
+                'candidates_processed': 0,
+                'schema_failures': 0,
+                'llm_calls': 0
+            }
+        
+        logger.info(f"Processing lean LLM requests for candidates on {date_str}")
         
         # Initialize OpenAI client
         openai_client = get_openai_client()
         
-        # Default model from environment (can be overridden by request)
-        default_model = os.environ.get('OPENAI_MODEL', 'o3')
-        logger.info(f"Default model from environment: {default_model}")
+        # Default model from environment
+        if get_config:
+            default_model = get_config().get_str('LLM_MODEL', 'gpt-4o-mini')
+        else:
+            default_model = os.environ.get('OPENAI_MODEL', 'o3')
+        logger.info(f"Using model: {default_model}")
         
         # Load batch requests JSONL from S3
         batch_requests = load_batch_requests_from_s3(bucket, prompt_key)
-        logger.info(f"Loaded {len(batch_requests)} requests to process")
+        candidates_count = len(batch_requests)
+        logger.info(f"Loaded {candidates_count} candidate requests to process")
         
-        # Process requests in parallel
-        results = asyncio.run(process_requests_parallel(openai_client, batch_requests, default_model, context))
+        if candidates_count == 0:
+            return {
+                'statusCode': 200,
+                'date': date_str,
+                'bucket': bucket,
+                'candidates_processed': 0,
+                'schema_failures': 0,
+                'llm_calls': 0
+            }
         
-        # Save results to S3 in the same format as batch API
-        result_key = f"batch_output/{date_str}/response.json"
+        # Process requests with schema validation
+        results, metrics = asyncio.run(process_lean_requests(openai_client, batch_requests, default_model))
+        
+        # Save individual candidate results to candidates/ directory
+        save_candidate_results(results, bucket, date_str)
+        
+        # Save batch summary for compatibility
+        result_key = f"batch_output/{date_str}/lean_response.json"
         save_results_to_s3(results, bucket, result_key, batch_requests)
         
-        logger.info(f"Successfully completed synchronous processing")
+        logger.info(f"Processed {candidates_count} candidates: {metrics['llm_calls']} LLM calls, {metrics['schema_failures']} schema failures")
         
-        # Return the same structure as the batch version for compatibility
+        # Emit metrics to CloudWatch
+        try:
+            emit_llm_calls(metrics['llm_calls'])
+            emit_llm_schema_failures(metrics['schema_failures'])
+            emit_pipeline_metrics('LLM', metrics)
+            logger.info(f"Emitted LLM metrics: {metrics}")
+        except Exception as e:
+            logger.warning(f"Failed to emit metrics: {e}")
+        
         return {
             'statusCode': 200,
             'date': date_str,
             'bucket': bucket,
             'result_key': result_key,
-            'batch_id': f"sync-{date_str}",  # Simulated batch ID for compatibility
-            'batch_result': {
-                'batch_id': f"sync-{date_str}",
-                'status': 'completed',
-                'total_results': len(results),
-                'individual_results': results
-            }
+            'candidates_processed': candidates_count,
+            'llm_calls': metrics['llm_calls'],
+            'schema_failures': metrics['schema_failures'],
+            'retry_attempts': metrics['retry_attempts']
         }
         
     except Exception as e:
-        logger.error(f"LLM processing failed: {e}")
+        logger.error(f"Lean LLM processing failed: {e}")
         raise
 
 
@@ -87,7 +188,10 @@ def get_openai_client() -> OpenAI:
     """
     try:
         # Get API key from Secrets Manager
-        secret_name = os.environ.get('OPENAI_SECRET_NAME', 'ai-scraper/openai-api-key')
+        if get_config:
+            secret_name = get_config().get_str('OPENAI_SECRET_NAME', 'ai-scraper/openai-api-key')
+        else:
+            secret_name = os.environ.get('OPENAI_SECRET_NAME', 'ai-scraper/openai-api-key')
         
         response = secrets_client.get_secret_value(SecretId=secret_name)
         api_key = response['SecretString']
@@ -119,7 +223,7 @@ def load_batch_requests_from_s3(bucket: str, key: str) -> List[Dict[str, Any]]:
             if line.strip():
                 requests.append(json.loads(line))
         
-        logger.info(f"Loaded {len(requests)} batch requests from JSONL")
+        logger.info(f"Loaded {len(requests)} candidate batch requests from JSONL")
         return requests
         
     except Exception as e:
@@ -127,144 +231,295 @@ def load_batch_requests_from_s3(bucket: str, key: str) -> List[Dict[str, Any]]:
         raise
 
 
-async def process_requests_parallel(
+async def process_lean_requests(
     client: OpenAI, 
     batch_requests: List[Dict[str, Any]], 
-    model: str,
-    context: Any
-) -> List[Dict[str, Any]]:
+    model: str
+) -> tuple[List[Dict[str, Any]], Dict[str, int]]:
     """
-    Process all requests in parallel using asyncio.
+    Process requests with schema validation and retry logic.
     
     Args:
         client: OpenAI client instance
-        batch_requests: List of batch request dictionaries
+        batch_requests: List of candidate batch request dictionaries
         model: Model to use (o3 or o3-mini)
-        context: Lambda context for timeout checking
         
     Returns:
-        List of result dictionaries
+        Tuple of (results, metrics)
     """
     # Create async client
     async_client = AsyncOpenAI(api_key=client.api_key)
     
+    # Metrics tracking
+    metrics = {
+        'llm_calls': 0,
+        'schema_failures': 0,
+        'retry_attempts': 0
+    }
+    
     # Create tasks for parallel processing
     tasks = []
     for i, request in enumerate(batch_requests):
-        task = process_single_request_async(async_client, request, model, i, len(batch_requests))
+        task = process_candidate_with_validation(async_client, request, model, i, metrics)
         tasks.append(task)
     
     # Run all tasks in parallel
-    logger.info(f"Starting parallel processing of {len(tasks)} requests")
+    logger.info(f"Starting processing of {len(tasks)} candidate requests with schema validation")
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
-    # Convert exceptions to error results
+    # Handle exceptions
     final_results = []
     for i, result in enumerate(results):
         if isinstance(result, Exception):
             logger.error(f"Request {i+1} failed with exception: {result}")
-            final_results.append({
-                'custom_id': batch_requests[i].get('custom_id', f'request-{i}'),
-                'analysis': '',
-                'full_response': {
-                    'custom_id': batch_requests[i].get('custom_id', f'request-{i}'),
-                    'error': {
-                        'message': str(result),
-                        'type': type(result).__name__
-                    }
+            # Create fallback result
+            custom_id = batch_requests[i].get('custom_id', f'request-{i}')
+            property_id = extract_property_id_from_request(batch_requests[i])
+            fallback_data = create_fallback_evaluation(property_id, 0, 0, "REJECT") if create_fallback_evaluation else {}
+            
+            # Add metadata for fallback
+            if fallback_data and '_metadata' not in fallback_data:
+                fallback_data['_metadata'] = {
+                    'property_id': property_id,
+                    'base_score': 0,
+                    'evaluation_date': f"{datetime.utcnow().isoformat()}Z"
                 }
+            
+            final_results.append({
+                'custom_id': custom_id,
+                'property_id': property_id,
+                'evaluation_data': fallback_data,
+                'schema_valid': False,
+                'error': str(result)
             })
+            metrics['schema_failures'] += 1
         else:
             final_results.append(result)
     
-    return final_results
+    logger.info(f"Completed processing: {metrics['llm_calls']} calls, {metrics['schema_failures']} failures, {metrics['retry_attempts']} retries")
+    return final_results, metrics
 
 
-async def process_single_request_async(
+async def process_candidate_with_validation(
     client: AsyncOpenAI,
     request: Dict[str, Any],
     model: str,
     index: int,
-    total_requests: int
+    metrics: Dict[str, int]
 ) -> Dict[str, Any]:
     """
-    Process a single request asynchronously.
+    Process a single candidate with schema validation and retry.
+    
+    Args:
+        client: Async OpenAI client
+        request: Batch request dictionary
+        model: Model to use
+        index: Request index for logging
+        metrics: Metrics tracking dictionary
+        
+    Returns:
+        Result dictionary with validation status
     """
     custom_id = request.get('custom_id', f'request-{index}')
-    logger.info(f"Processing request {index+1}/{total_requests}: {custom_id}")
+    property_id = extract_property_id_from_request(request)
     
-    try:
-        # Extract the actual request body
-        request_body = request.get('body', {})
-        
-        # Use model from request body, fall back to env model if not specified
-        request_model = request_body.get('model', model)
-        logger.info(f"Using model '{request_model}' for request {custom_id}")
-        
-        # Call OpenAI API with async client
-        response = await call_openai_async(
-            client=client,
-            model=request_model,
-            messages=request_body.get('messages', []),
-            max_tokens=request_body.get('max_completion_tokens', 8000)
-        )
-        
-        # Format result to match batch API output structure
-        result = {
-            'custom_id': custom_id,
-            'analysis': response.choices[0].message.content if response.choices else '',
-            'full_response': {
-                'custom_id': custom_id,
-                'response': {
-                    'status_code': 200,
-                    'body': {
-                        'id': response.id,
-                        'object': response.object,
-                        'created': response.created,
-                        'model': response.model,
-                        'choices': [
-                            {
-                                'index': choice.index,
-                                'message': {
-                                    'role': choice.message.role,
-                                    'content': choice.message.content
-                                },
-                                'finish_reason': choice.finish_reason
-                            } for choice in response.choices
-                        ],
-                        'usage': {
-                            'prompt_tokens': response.usage.prompt_tokens,
-                            'completion_tokens': response.usage.completion_tokens,
-                            'total_tokens': response.usage.total_tokens
-                        } if response.usage else {}
+    logger.info(f"Processing candidate {index+1}: {property_id}")
+    
+    # Extract request body details
+    request_body = request.get('body', {})
+    messages = request_body.get('messages', [])
+    base_score = extract_base_score_from_messages(messages)
+    
+    max_attempts = 2  # Original + 1 retry
+    
+    for attempt in range(max_attempts):
+        try:
+            # Call OpenAI API
+            metrics['llm_calls'] += 1
+            if attempt > 0:
+                metrics['retry_attempts'] += 1
+                logger.info(f"Retry attempt {attempt} for {property_id}")
+            
+            response = await call_openai_async(
+                client=client,
+                model=model,
+                messages=messages,
+                max_tokens=request_body.get('max_completion_tokens', 1000)
+            )
+            
+            # Extract and validate response
+            raw_response = response.choices[0].message.content if response.choices else ""
+            logger.debug(f"Raw LLM response for {property_id}: {truncate_response_for_logging(raw_response, 1500)}")
+            
+            # Validate against schema
+            if validate_llm_output:
+                is_valid, parsed_data, error_msg = validate_llm_output(raw_response)
+                
+                if is_valid and parsed_data:
+                    # Add deterministic metadata that's not part of the LLM schema
+                    parsed_data['_metadata'] = {
+                        'property_id': property_id,
+                        'base_score': base_score,
+                        'evaluation_date': f"{datetime.utcnow().isoformat()}Z"
                     }
+                    
+                    logger.info(f"Successfully validated response for {property_id}")
+                    return {
+                        'custom_id': custom_id,
+                        'property_id': property_id,
+                        'evaluation_data': parsed_data,
+                        'schema_valid': True,
+                        'raw_response': raw_response,
+                        'attempts': attempt + 1
+                    }
+                else:
+                    # Schema validation failed
+                    logger.warning(f"Schema validation failed for {property_id} (attempt {attempt+1}): {error_msg}")
+                    if attempt == max_attempts - 1:  # Last attempt
+                        break
+                    continue
+            else:
+                # No validation available - assume valid
+                logger.warning(f"Schema validation not available for {property_id}")
+                return {
+                    'custom_id': custom_id,
+                    'property_id': property_id,
+                    'evaluation_data': {},
+                    'schema_valid': False,
+                    'raw_response': raw_response,
+                    'attempts': attempt + 1,
+                    'error': "Schema validation not available"
                 }
-            }
+                
+        except Exception as e:
+            logger.error(f"API error for {property_id} (attempt {attempt+1}): {e}")
+            if attempt == max_attempts - 1:  # Last attempt
+                metrics['schema_failures'] += 1
+                # Return fallback evaluation
+                fallback_data = create_fallback_evaluation(property_id, base_score, base_score, "REJECT") if create_fallback_evaluation else {}
+                
+                # Add metadata for fallback
+                if fallback_data and '_metadata' not in fallback_data:
+                    fallback_data['_metadata'] = {
+                        'property_id': property_id,
+                        'base_score': base_score,
+                        'evaluation_date': f"{datetime.utcnow().isoformat()}Z"
+                    }
+                
+                return {
+                    'custom_id': custom_id,
+                    'property_id': property_id,
+                    'evaluation_data': fallback_data,
+                    'schema_valid': False,
+                    'error': str(e),
+                    'attempts': attempt + 1
+                }
+            continue
+    
+    # All attempts failed - create fallback
+    metrics['schema_failures'] += 1
+    fallback_data = create_fallback_evaluation(property_id, base_score, base_score, "REJECT") if create_fallback_evaluation else {}
+    
+    # Add metadata for fallback
+    if fallback_data and '_metadata' not in fallback_data:
+        fallback_data['_metadata'] = {
+            'property_id': property_id,
+            'base_score': base_score,
+            'evaluation_date': f"{datetime.utcnow().isoformat()}Z"
         }
+    
+    return {
+        'custom_id': custom_id,
+        'property_id': property_id,
+        'evaluation_data': fallback_data,
+        'schema_valid': False,
+        'error': "All validation attempts failed",
+        'attempts': max_attempts
+    }
+
+
+def extract_property_id_from_request(request: Dict[str, Any]) -> str:
+    """Extract property ID from batch request."""
+    custom_id = request.get('custom_id', '')
+    # Format: lean-analysis-YYYY-MM-DD-property_id
+    parts = custom_id.split('-')
+    if len(parts) >= 4:
+        return '-'.join(parts[3:])  # Everything after date
+    return 'unknown'
+
+
+def extract_base_score_from_messages(messages: List[Dict[str, Any]]) -> int:
+    """Extract base_score from prompt messages for validation."""
+    for message in messages:
+        if message.get('role') == 'user':
+            content = message.get('content', [])
+            for item in content:
+                if isinstance(item, dict) and item.get('type') == 'text':
+                    text = item.get('text', '')
+                    if 'base_score' in text and 'PROPERTY:' in text:
+                        try:
+                            # Find JSON in property section
+                            start = text.find('{')
+                            end = text.rfind('}')
+                            if start != -1 and end != -1:
+                                property_data = json.loads(text[start:end+1])
+                                return property_data.get('base_score', 0)
+                        except:
+                            continue
+    return 0
+
+
+def save_candidate_results(results: List[Dict[str, Any]], bucket: str, date_str: str) -> None:
+    """
+    Save individual candidate evaluation results to candidates/ directory.
+    
+    Args:
+        results: List of result dictionaries
+        bucket: S3 bucket name  
+        date_str: Processing date string
+    """
+    try:
+        for result in results:
+            property_id = result.get('property_id', 'unknown')
+            evaluation_data = result.get('evaluation_data', {})
+            
+            if evaluation_data and property_id != 'unknown':
+                # Save to candidates/YYYY-MM-DD/{property_id}.json
+                key = f"candidates/{date_str}/{property_id}.json"
+                
+                # Extract metadata and create clean result
+                metadata = evaluation_data.pop('_metadata', {})
+                base_score = metadata.get('base_score', 0)
+                
+                candidate_result = {
+                    'property_id': property_id,
+                    'evaluation_date': date_str,
+                    'schema_valid': result.get('schema_valid', False),
+                    'llm_attempts': result.get('attempts', 1),
+                    'base_score': base_score,
+                    **evaluation_data
+                }
+                
+                s3_client.put_object(
+                    Bucket=bucket,
+                    Key=key,
+                    Body=json.dumps(candidate_result, ensure_ascii=False, indent=2).encode('utf-8'),
+                    ContentType='application/json'
+                )
         
-        logger.info(f"Successfully processed request {custom_id}")
-        return result
+        valid_results = sum(1 for r in results if r.get('schema_valid', False))
+        logger.info(f"Saved {len(results)} candidate results ({valid_results} valid) to candidates/{date_str}/")
         
     except Exception as e:
-        logger.error(f"Failed to process request {custom_id}: {e}")
-        return {
-            'custom_id': custom_id,
-            'analysis': '',
-            'full_response': {
-                'custom_id': custom_id,
-                'error': {
-                    'message': str(e),
-                    'type': type(e).__name__
-                }
-            }
-        }
+        logger.error(f"Failed to save candidate results: {e}")
+        raise
 
 
 async def call_openai_async(
     client: AsyncOpenAI,
     model: str,
     messages: List[Dict[str, Any]],
-    max_tokens: int = 8000,
+    max_tokens: int = 1000,
     max_retries: int = 3
 ):
     """
@@ -307,180 +562,6 @@ async def call_openai_async(
                 raise
 
 
-def process_requests_sync(
-    client: OpenAI, 
-    batch_requests: List[Dict[str, Any]], 
-    model: str,
-    context: Any
-) -> List[Dict[str, Any]]:
-    """
-    Process all requests synchronously with retry logic.
-    
-    Args:
-        client: OpenAI client instance
-        batch_requests: List of batch request dictionaries
-        model: Model to use (o3 or o3-mini)
-        context: Lambda context for timeout checking
-        
-    Returns:
-        List of result dictionaries
-    """
-    results = []
-    total_requests = len(batch_requests)
-    
-    for i, request in enumerate(batch_requests):
-        # Check Lambda timeout (leave 2 minutes buffer)
-        if context:
-            remaining_time = context.get_remaining_time_in_millis()
-            if remaining_time < 120000:  # Less than 2 minutes
-                logger.warning(f"Lambda timeout approaching. Processed {i}/{total_requests} requests")
-                break
-        
-        custom_id = request.get('custom_id', f'request-{i}')
-        logger.info(f"Processing request {i+1}/{total_requests}: {custom_id}")
-        
-        try:
-            # Extract the actual request body
-            request_body = request.get('body', {})
-            
-            # Use model from request body, fall back to env model if not specified
-            request_model = request_body.get('model', model)
-            logger.info(f"Using model '{request_model}' for request {custom_id}")
-            
-            # Call OpenAI API with retry logic
-            response = call_openai_with_retry(
-                client=client,
-                model=request_model,
-                messages=request_body.get('messages', []),
-                temperature=request_body.get('temperature', 0.2),
-                max_tokens=request_body.get('max_tokens', 4000)
-            )
-            
-            # Format result to match batch API output structure
-            result = {
-                'custom_id': custom_id,
-                'analysis': response.choices[0].message.content if response.choices else '',
-                'full_response': {
-                    'custom_id': custom_id,
-                    'response': {
-                        'status_code': 200,
-                        'body': {
-                            'id': response.id,
-                            'object': 'chat.completion',
-                            'created': response.created,
-                            'model': response.model,
-                            'choices': [
-                                {
-                                    'index': 0,
-                                    'message': {
-                                        'role': 'assistant',
-                                        'content': response.choices[0].message.content
-                                    },
-                                    'finish_reason': response.choices[0].finish_reason
-                                }
-                            ],
-                            'usage': {
-                                'prompt_tokens': response.usage.prompt_tokens if response.usage else 0,
-                                'completion_tokens': response.usage.completion_tokens if response.usage else 0,
-                                'total_tokens': response.usage.total_tokens if response.usage else 0
-                            }
-                        }
-                    }
-                }
-            }
-            
-            results.append(result)
-            
-            # Small delay between requests to avoid rate limits
-            if i < total_requests - 1:  # Don't delay after last request
-                time.sleep(0.5)  # 500ms delay
-                
-        except Exception as e:
-            logger.error(f"Failed to process request {custom_id}: {e}")
-            # Add error result to maintain consistency
-            results.append({
-                'custom_id': custom_id,
-                'analysis': '',
-                'full_response': {
-                    'custom_id': custom_id,
-                    'error': {
-                        'message': str(e),
-                        'type': type(e).__name__
-                    }
-                }
-            })
-    
-    logger.info(f"Processed {len(results)} requests successfully")
-    return results
-
-
-def call_openai_with_retry(
-    client: OpenAI,
-    model: str,
-    messages: List[Dict[str, Any]],
-    temperature: float = 0.2,
-    max_tokens: int = 4000,
-    max_retries: int = 3
-) -> Any:
-    """
-    Call OpenAI API with exponential backoff retry logic.
-    
-    Args:
-        client: OpenAI client
-        model: Model name (o3, o3-mini, or gpt-4o)
-        messages: Chat messages including images
-        temperature: Sampling temperature
-        max_tokens: Maximum tokens in response
-        max_retries: Maximum number of retry attempts
-        
-    Returns:
-        OpenAI API response
-    """
-    for attempt in range(max_retries):
-        try:
-            # All newer models (o3, o3-mini, gpt-4o) use max_completion_tokens
-            # o3 models don't support temperature parameter
-            if model.startswith('o3'):
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    max_completion_tokens=max_tokens
-                )
-            else:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_completion_tokens=max_tokens
-                )
-            return response
-            
-        except openai.RateLimitError as e:
-            # Handle rate limit with exponential backoff
-            if attempt < max_retries - 1:
-                wait_time = (2 ** attempt) * 2  # 2s, 4s, 8s
-                logger.warning(f"Rate limit hit, waiting {wait_time}s before retry {attempt + 1}")
-                time.sleep(wait_time)
-            else:
-                logger.error(f"Rate limit exceeded after {max_retries} attempts")
-                raise
-                
-        except (openai.APIError, openai.APIConnectionError) as e:
-            # Handle temporary API errors
-            if attempt < max_retries - 1:
-                wait_time = (2 ** attempt) * 1  # 1s, 2s, 4s
-                logger.warning(f"API error: {e}, waiting {wait_time}s before retry {attempt + 1}")
-                time.sleep(wait_time)
-            else:
-                logger.error(f"API error after {max_retries} attempts: {e}")
-                raise
-                
-        except Exception as e:
-            # Don't retry on other errors
-            logger.error(f"Unexpected error calling OpenAI API: {e}")
-            raise
-
-
 def save_results_to_s3(
     results: List[Dict[str, Any]], 
     bucket: str, 
@@ -488,7 +569,7 @@ def save_results_to_s3(
     original_requests: List[Dict[str, Any]]
 ) -> None:
     """
-    Save results to S3 in the same format as batch API.
+    Save batch summary results to S3 in lean format.
     
     Args:
         results: List of result dictionaries
@@ -497,23 +578,35 @@ def save_results_to_s3(
         original_requests: Original batch requests for reference
     """
     try:
-        # Create the full result structure matching batch API output
-        full_result = {
-            'batch_id': f"sync-{os.path.basename(result_key).split('.')[0]}",
+        # Create lean result structure
+        lean_result = {
+            'batch_id': f"lean-{os.path.basename(result_key).split('.')[0]}",
             'status': 'completed',
-            'total_results': len(results),
-            'individual_results': results
+            'processing_date': result_key.split('/')[1],  # Extract date from path
+            'candidates_processed': len(results),
+            'schema_valid_count': sum(1 for r in results if r.get('schema_valid', False)),
+            'total_llm_calls': sum(r.get('attempts', 1) for r in results),
+            'individual_results': [
+                {
+                    'property_id': r.get('property_id', 'unknown'),
+                    'schema_valid': r.get('schema_valid', False),
+                    'attempts': r.get('attempts', 1),
+                    'has_evaluation': bool(r.get('evaluation_data')),
+                    'base_score': r.get('evaluation_data', {}).get('_metadata', {}).get('base_score', 0)
+                }
+                for r in results
+            ]
         }
         
         # Save to S3
         s3_client.put_object(
             Bucket=bucket,
             Key=result_key,
-            Body=json.dumps(full_result, ensure_ascii=False, indent=2).encode('utf-8'),
+            Body=json.dumps(lean_result, ensure_ascii=False, indent=2).encode('utf-8'),
             ContentType='application/json'
         )
         
-        logger.info(f"Saved results to s3://{bucket}/{result_key}")
+        logger.info(f"Saved lean batch results to s3://{bucket}/{result_key}")
         
     except Exception as e:
         logger.error(f"Failed to save results to S3: {e}")
@@ -523,14 +616,16 @@ def save_results_to_s3(
 if __name__ == "__main__":
     # For local testing
     test_event = {
-        'date': '2025-07-07',
+        'date': '2025-07-22',
         'bucket': 'tokyo-real-estate-ai-data',
-        'prompt_key': 'prompts/2025-07-07/batch_requests.jsonl'
+        'prompt_key': 'ai/prompts/2025-07-22/batch_requests.jsonl'
     }
     
-    # Set environment variables for local testing
-    os.environ['OUTPUT_BUCKET'] = 'tokyo-real-estate-ai-data'
-    os.environ['OPENAI_MODEL'] = 'o3'  # or 'o3-mini' for cost savings
+    # Set environment variables for local testing (if not already set)
+    if 'OUTPUT_BUCKET' not in os.environ:
+        os.environ['OUTPUT_BUCKET'] = 'tokyo-real-estate-ai-data'
+    if 'OPENAI_MODEL' not in os.environ:
+        os.environ['OPENAI_MODEL'] = 'o3'
     
     result = lambda_handler(test_event, None)
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result, indent=2, default=str))

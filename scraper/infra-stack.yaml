@@ -31,7 +31,7 @@ Resources:
     Type: AWS::SNS::Topic
     Condition: ShouldEnableNotifications
     Properties:
-      TopicName: scraper-notifications
+      TopicName: tokyo-real-estate-notifications
       DisplayName: Scraper Job Notifications
 
   ScraperNotificationSubscription:
@@ -90,6 +90,14 @@ Resources:
               - Effect: Allow
                 Action:
                   - cloudwatch:PutMetricData
+                Resource: "*"
+        - PolicyName: AllowStepFunctions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
                 Resource: "*"
 
   ScraperInstanceProfile:

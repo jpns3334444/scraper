@@ -9,11 +9,22 @@ from decimal import Decimal
 import boto3
 from botocore.exceptions import ClientError
 
+# Import centralized config helper
+try:
+    from util.config import get_config
+except ImportError:
+    logging.warning("Centralized config not available, falling back to direct os.environ access")
+    get_config = None
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 dynamodb = boto3.resource('dynamodb')
-table = dynamodb.Table(os.environ['DYNAMODB_TABLE'])
+if get_config:
+    table_name = get_config().get_str('DYNAMODB_TABLE')
+    table = dynamodb.Table(table_name) if table_name else None
+else:
+    table = dynamodb.Table(os.environ['DYNAMODB_TABLE'])
 
 def decimal_default(obj):
     """JSON serializer for Decimal types"""

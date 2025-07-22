@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Configuration
 REGION="${AWS_REGION:-ap-northeast-1}"
-STACK_NAME="${STACK_NAME:-ai-scraper-dev}"
+STACK_NAME="${STACK_NAME:-tokyo-real-estate-ai}"
 BUCKET_NAME="ai-scraper-artifacts-$REGION"
 LAYER_VERSION_FILE="$SCRIPT_DIR/.layer-version"
 TEMPLATE_FILE="$SCRIPT_DIR/ai-stack.yaml"

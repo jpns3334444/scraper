@@ -28,9 +28,23 @@ Parameters:
   DynamoDBWriterCodeVersion:
     Type: String
     Default: latest
+  SnapshotGeneratorCodeVersion:
+    Type: String
+    Default: latest
+  DailyDigestCodeVersion:
+    Type: String
+    Default: latest
   OpenAILayerObjectVersion:
     Type: String
     Description: S3 object version ID for openai-layer.zip
+  LeanMode:
+    Type: String
+    Default: '1'
+    AllowedValues: ['0', '1']
+    Description: Enable LEAN_MODE for deterministic pipeline (1=enabled, 0=disabled)
+
+Conditions:
+  IsLeanModeEnabled: !Equals [!Ref LeanMode, '1']
 
 Resources:
   OpenAILayer:
@@ -203,6 +217,7 @@ Resources:
       Environment:
         Variables:
           OUTPUT_BUCKET: !Ref OutputBucket
+          LEAN_MODE: !Ref LeanMode
 
   PromptBuilderFunction:
     Type: AWS::Lambda::Function
@@ -224,6 +239,7 @@ Resources:
         Variables:
           OUTPUT_BUCKET: !Ref OutputBucket
           DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
+          LEAN_MODE: !Ref LeanMode
 
   LLMBatchFunction:
     Type: AWS::Lambda::Function
@@ -245,6 +261,7 @@ Resources:
         Variables:
           OUTPUT_BUCKET: !Ref OutputBucket
           OPENAI_MODEL: o3  # Use 'o3' for best quality or 'o3-mini' for cost savings
+          LEAN_MODE: !Ref LeanMode
 
   ReportSenderFunction:
     Type: AWS::Lambda::Function
@@ -267,6 +284,7 @@ Resources:
           OUTPUT_BUCKET: !Ref OutputBucket
           EMAIL_FROM: !Ref EmailFrom
           EMAIL_TO: !Ref EmailTo
+          LEAN_MODE: !Ref LeanMode
 
   DynamoDBWriterFunction:
     Type: AWS::Lambda::Function
@@ -286,6 +304,51 @@ Resources:
       Environment:
         Variables:
           DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
+          LEAN_MODE: !Ref LeanMode
+
+  SnapshotGeneratorFunction:
+    Type: AWS::Lambda::Function
+    Condition: IsLeanModeEnabled
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-snapshot-generator'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/snapshot_generator.zip
+        S3ObjectVersion: !Ref SnapshotGeneratorCodeVersion
+      Timeout: 900
+      MemorySize: 1024
+      Layers:
+        - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref OutputBucket
+          LEAN_MODE: !Ref LeanMode
+
+  DailyDigestFunction:
+    Type: AWS::Lambda::Function
+    Condition: IsLeanModeEnabled
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-daily-digest'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/daily_digest.zip
+        S3ObjectVersion: !Ref DailyDigestCodeVersion
+      Timeout: 900
+      MemorySize: 1024
+      Layers:
+        - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref OutputBucket
+          EMAIL_FROM: !Ref EmailFrom
+          EMAIL_TO: !Ref EmailTo
+          LEAN_MODE: !Ref LeanMode
 
   # Step Functions
   StepFunctionsExecutionRole:
@@ -312,6 +375,14 @@ Resources:
                   - !GetAtt LLMBatchFunction.Arn
                   - !GetAtt ReportSenderFunction.Arn
                   - !GetAtt DynamoDBWriterFunction.Arn
+                  - !If 
+                    - IsLeanModeEnabled
+                    - !GetAtt SnapshotGeneratorFunction.Arn
+                    - !Ref AWS::NoValue
+                  - !If 
+                    - IsLeanModeEnabled
+                    - !GetAtt DailyDigestFunction.Arn
+                    - !Ref AWS::NoValue
 
   AIAnalysisStateMachine:
     Type: AWS::StepFunctions::StateMachine
@@ -408,6 +479,61 @@ Resources:
               "date": "$$.State.EnteredTime"
             }
 
+  # Daily snapshot generation rule (08:55 JST = 23:55 UTC)
+  DailySnapshotRule:
+    Type: AWS::Events::Rule
+    Condition: IsLeanModeEnabled
+    Properties:
+      Name: !Sub '${AWS::StackName}-daily-snapshot'
+      Description: 'Generate market snapshots daily at 08:55 JST (23:55 UTC)'
+      ScheduleExpression: 'cron(55 23 * * ? *)'
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt SnapshotGeneratorFunction.Arn
+          Id: 'SnapshotGeneratorTarget'
+          Input: !Sub |
+            {
+              "date": "$$.State.EnteredTime",
+              "lean_mode": true
+            }
+
+  # Daily digest generation rule (09:00 JST = 00:00 UTC next day)
+  DailyDigestRule:
+    Type: AWS::Events::Rule
+    Condition: IsLeanModeEnabled
+    Properties:
+      Name: !Sub '${AWS::StackName}-daily-digest'
+      Description: 'Send daily digest at 09:00 JST (00:00 UTC next day)'
+      ScheduleExpression: 'cron(0 0 * * ? *)'
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt DailyDigestFunction.Arn
+          Id: 'DailyDigestTarget'
+          Input: !Sub |
+            {
+              "date": "$$.State.EnteredTime", 
+              "lean_mode": true
+            }
+
+  # Lambda permissions for EventBridge
+  SnapshotGeneratorEventPermission:
+    Type: AWS::Lambda::Permission
+    Condition: IsLeanModeEnabled
+    Properties:
+      FunctionName: !Ref SnapshotGeneratorFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailySnapshotRule.Arn
+
+  DailyDigestEventPermission:
+    Type: AWS::Lambda::Permission
+    Condition: IsLeanModeEnabled
+    Properties:
+      FunctionName: !Ref DailyDigestFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailyDigestRule.Arn
+
   # EventBridge execution role
   EventBridgeExecutionRole:
     Type: AWS::IAM::Role
@@ -459,3 +585,17 @@ Outputs:
     Value: !GetAtt DynamoDBWriterFunction.Arn
     Export:
       Name: !Sub '${AWS::StackName}-DynamoDBWriterFunctionArn'
+
+  SnapshotGeneratorFunctionArn:
+    Condition: IsLeanModeEnabled
+    Description: 'ARN of the Snapshot Generator Lambda function'
+    Value: !GetAtt SnapshotGeneratorFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-SnapshotGeneratorFunctionArn'
+
+  DailyDigestFunctionArn:
+    Condition: IsLeanModeEnabled
+    Description: 'ARN of the Daily Digest Lambda function'
+    Value: !GetAtt DailyDigestFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-DailyDigestFunctionArn'

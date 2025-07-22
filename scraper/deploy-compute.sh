@@ -5,8 +5,8 @@ set -e
 REGION="ap-northeast-1"
 KEY_NAME="lifull-key"
 OUTPUT_BUCKET="tokyo-real-estate-ai-data"
-INFRA_STACK_NAME="scraper-infra-stack"
-COMPUTE_STACK_NAME="scraper-compute-stack"
+INFRA_STACK_NAME="tokyo-real-estate-infra"
+COMPUTE_STACK_NAME="tokyo-real-estate-compute"
 
 echo "💻 Deploying compute stack for testing..."
 
@@ -54,4 +54,4 @@ echo "🔍 To check instance logs:"
 echo "  aws ssm send-command --instance-ids $INSTANCE_ID --document-name 'AWS-RunShellScript' --parameters 'commands=[\"tail -20 /var/log/scraper/run.log\"]' --region $REGION"
 echo
 echo "🧪 To test the scraper:"
-echo "  aws lambda invoke --function-name trigger-scraper --payload '{}' /tmp/response.json --region $REGION"
+echo "  aws lambda invoke --function-name tokyo-real-estate-trigger --payload '{}' /tmp/response.json --region $REGION"

@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Lean v1.3 LLM Output Schema",
+  "description": "Minimal JSON schema for Lean v1.3 LLM output validation",
+  "type": "object",
+  "required": ["upsides", "risks", "justification"],
+  "additionalProperties": false,
+  "properties": {
+    "upsides": {
+      "type": "array",
+      "description": "Up to 3 positive factors about the property",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "type": "string",
+        "minLength": 10,
+        "maxLength": 200
+      }
+    },
+    "risks": {
+      "type": "array", 
+      "description": "Up to 3 risk factors about the property",
+      "minItems": 0,
+      "maxItems": 3,
+      "items": {
+        "type": "string",
+        "minLength": 10,
+        "maxLength": 200
+      }
+    },
+    "justification": {
+      "type": "string",
+      "description": "Short justification for the investment verdict (50-300 characters)",
+      "minLength": 50,
+      "maxLength": 300
+    }
+  }
+}

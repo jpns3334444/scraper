@@ -9,9 +9,9 @@ NOTIFICATION_EMAIL="${NOTIFICATION_EMAIL:-}"
 NOTIFICATION_ENABLED="${NOTIFICATION_ENABLED:-true}"
 
 # Stack names  
-INFRA_STACK_NAME="scraper-infra-stack"
-COMPUTE_STACK_NAME="scraper-compute-stack"
-AUTOMATION_STACK_NAME="scraper-automation-stack"
+INFRA_STACK_NAME="tokyo-real-estate-infra"
+COMPUTE_STACK_NAME="tokyo-real-estate-compute"
+AUTOMATION_STACK_NAME="tokyo-real-estate-automation"
 
 # === Get GitHub token from AWS Secrets Manager ===
 SECRET_NAME="github-token"
@@ -93,4 +93,4 @@ echo "  Compute: $COMPUTE_STACK_NAME"
 echo "  Automation: $AUTOMATION_STACK_NAME"
 echo
 echo "🚀 To test the scraper, run:"
-echo "  aws lambda invoke --function-name trigger-scraper --payload '{}' /tmp/response.json --region $REGION"
+echo "  aws lambda invoke --function-name tokyo-real-estate-trigger --payload '{}' /tmp/response.json --region $REGION"

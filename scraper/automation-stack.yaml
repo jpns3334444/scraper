@@ -5,7 +5,7 @@ Parameters:
   InfraStackName:
     Type: String
     Description: Name of the infrastructure stack to import from
-    Default: "scraper-infra-stack"
+    Default: "tokyo-real-estate-infra"
   NotificationEnabled:
     Type: String
     Default: "true"
@@ -16,7 +16,7 @@ Resources:
   ScraperTriggerLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: trigger-scraper
+      FunctionName: tokyo-real-estate-trigger
       Handler: index.lambda_handler
       Role: 
         Fn::ImportValue: !Sub "${InfraStackName}-LambdaExecutionRoleArn"
@@ -31,6 +31,8 @@ Resources:
             Fn::ImportValue: !Sub "${InfraStackName}-SessionStateTableName"
           STEP_FUNCTIONS_ARN:
             Fn::ImportValue: !Sub "${InfraStackName}-StepFunctionsArn"
+          AI_WORKFLOW_ARN:
+            Fn::ImportValue: tokyo-real-estate-ai-StateMachineArn
       Code:
         ZipFile: |
           import boto3
@@ -214,6 +216,9 @@ Resources:
                   export ENTRY_POINT="{entry_point}"
                   export MODE="{mode}"
                   export AREAS="{areas_env}"
+                  
+                  # AI Workflow ARN - will be imported from ai-scraper-dev stack
+                  export AI_WORKFLOW_ARN="{os.environ.get('AI_WORKFLOW_ARN', '')}"
                   
                   # Run the scraper and wait for it to complete
                   cd /home/ubuntu

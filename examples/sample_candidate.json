@@ -1,0 +1,102 @@
+{
+  "id": "EXAMPLE_PROP_2025_001",
+  "price": 48000000,
+  "size_sqm": 58.5,
+  "price_per_sqm": 820513,
+  "ward": "Shibuya",
+  "ward_avg_price_per_sqm": 1100000,
+  "building_avg_price_per_sqm": 950000,
+  "building_age_years": 8,
+  "years_since_renovation": 2,
+  "maintenance_grade": "A",
+  "property_type": "2LDK",
+  "nearest_station_meters": 350,
+  "stations_within_1km": 3,
+  "amenity_score": 8,
+  "total_monthly_costs": 75000,
+  "expected_monthly_rent": 180000,
+  "num_comparables": 8,
+  "comparable_price_variance": 0.12,
+  "listing_quality_score": 9,
+  "photos_count": 15,
+  "price_history": [
+    {
+      "change_pct": -8,
+      "date": "2025-01-15",
+      "previous_price": 52000000
+    },
+    {
+      "change_pct": -4,
+      "date": "2025-02-20",
+      "previous_price": 50000000
+    }
+  ],
+  "vision_analysis": {
+    "positive_factors": [
+      "excellent_natural_light",
+      "corner_unit",
+      "modern_finishes"
+    ],
+    "negative_factors": []
+  },
+  "comparables": [
+    {
+      "id": "COMP_001",
+      "price_per_sqm": 850000,
+      "size_sqm": 60.0,
+      "age_years": 6,
+      "floor": 5,
+      "price_delta_pct": 3.5,
+      "size_delta_sqm": 1.5
+    },
+    {
+      "id": "COMP_002", 
+      "price_per_sqm": 795000,
+      "size_sqm": 55.0,
+      "age_years": 10,
+      "floor": 3,
+      "price_delta_pct": 3.1,
+      "size_delta_sqm": 3.5
+    }
+  ],
+  "components": {
+    "ward_discount": 87.5,
+    "building_discount": 78.2,
+    "comps_consistency": 85.0,
+    "condition": 92.0,
+    "size_efficiency": 88.0,
+    "carry_cost": 95.0,
+    "price_cut": 5.0,
+    "renovation_potential": 2.0,
+    "access": 4.0,
+    "vision_positive": 3.0,
+    "vision_negative": 0.0,
+    "data_quality_penalty": 0.0,
+    "overstated_discount_penalty": 0.0,
+    "base_score": 52.8,
+    "addon_score": 11.0,
+    "adjustment_score": 3.0,
+    "final_score": 83.8,
+    "ward_discount_pct": -25.4,
+    "verdict": "BUY_CANDIDATE"
+  },
+  "llm_analysis": {
+    "upsides": [
+      "Exceptional value with 25% discount to ward average in prime Shibuya location",
+      "Recently renovated 2LDK with modern finishes and excellent natural light",
+      "Strong rental yield potential at 4.8% with low monthly carrying costs"
+    ],
+    "risks": [
+      "Competitive market may limit appreciation upside in short term",
+      "Building approaching 10 years may require maintenance planning"
+    ],
+    "justification": "Outstanding investment opportunity combining significant discount, prime location, and recent improvements. Risk-adjusted returns highly attractive."
+  },
+  "processed_date": "2025-07-22T10:30:00Z",
+  "processing_metadata": {
+    "lean_mode": true,
+    "scoring_version": "v1.3",
+    "gating_status": "PASSED",
+    "llm_tokens_used": 1150
+  }
+}

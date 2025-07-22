@@ -6,18 +6,17 @@ Parameters:
     Type: String
     Default: "tokyo-real-estate"
     Description: Project name for resource naming
-  Environment:
-    Type: String
-    Default: "prod"
-    AllowedValues: ["dev", "staging", "prod"]
-    Description: Deployment environment
   KeyName:
     Type: String
     Description: Name of an existing EC2 KeyPair
+  OutputBucket:
+    Type: String
+    Description: S3 bucket to upload scraper results to
+    Default: "tokyo-real-estate-ai-data"
   InfraStackName:
     Type: String
     Description: Name of the infrastructure stack to import from
-    Default: "tokyo-real-estate-prod-infra"
+    Default: "tokyo-real-estate-infra"
   InstanceType:
     Type: String
     Description: EC2 instance type
@@ -54,11 +53,9 @@ Resources:
         - Fn::ImportValue: !Sub "${InfraStackName}-ScraperSecurityGroupId"
       Tags:
         - Key: Name
-          Value: !Sub "${ProjectName}-${Environment}-ec2-scraper"
+          Value: !Sub "${ProjectName}-scraper"
         - Key: Project
           Value: !Ref ProjectName
-        - Key: Environment
-          Value: !Ref Environment
         - Key: Stack
           Value: !Ref "AWS::StackName"
       UserData:
@@ -76,8 +73,7 @@ Resources:
               # Make executable and run
               chmod +x /tmp/setup_ec2.sh
               /tmp/setup_ec2.sh
-            - DataBucket: 
-                Fn::ImportValue: !Sub "${InfraStackName}-DataBucketName"
+            - DataBucket: !Ref OutputBucket
 
 Outputs:
   ScraperInstanceId:
@@ -88,7 +84,7 @@ Outputs:
 
   ScraperInstanceName:
     Description: "Name tag of the scraper EC2 instance"
-    Value: !Sub "${ProjectName}-${Environment}-ec2-scraper"
+    Value: !Sub "${ProjectName}-scraper"
     Export:
       Name: !Sub "${AWS::StackName}-ScraperInstanceName"
 
