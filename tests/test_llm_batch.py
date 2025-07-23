@@ -9,15 +9,15 @@ import responses
 
 # Import the LLM batch function
 import sys
-from pathlib import Path
+import os
+import importlib
+os.environ.setdefault('AWS_DEFAULT_REGION', 'us-east-1')
+llm_module = importlib.import_module('ai_infra.lambda.llm_batch.app')
+lambda_handler = llm_module.lambda_handler
+create_batch_job = llm_module.create_batch_job
+poll_batch_completion = llm_module.poll_batch_completion
+download_batch_results = llm_module.download_batch_results
 
-# Add the LLM Batch lambda directory to path and refresh import
-ROOT_DIR = Path(__file__).resolve().parents[1]
-LLM_DIR = ROOT_DIR / 'ai_infra' / 'lambda' / 'llm_batch'
-sys.path.insert(0, str(LLM_DIR))
-sys.modules.pop('app', None)
-
-from app import lambda_handler, create_batch_job, poll_batch_completion, download_batch_results
 
 
 class TestLLMBatch:

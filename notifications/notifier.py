@@ -21,7 +21,9 @@ from typing import Any, Dict, List, Optional
 import boto3
 from botocore.exceptions import ClientError
 
-from ai_infra.lambda.util.config import get_config
+from importlib import import_module
+
+get_config = import_module('ai_infra.lambda.util.config').get_config
 from analysis.lean_scoring import Verdict
 
 logger = logging.getLogger(__name__)
@@ -643,7 +645,7 @@ def send_daily_digest(event: Dict[str, Any] = None) -> Dict[str, Any]:
     
     # Emit metrics
     try:
-        from ai_infra.lambda.util.metrics import emit_metric
+        emit_metric = import_module('ai_infra.lambda.util.metrics').emit_metric
         emit_metric('Digest.Generated', 1 if results['digest_generated'] else 0)
         emit_metric('Digest.Sent', 1 if results['email_sent'] else 0)
         emit_metric('Digest.BuyCandidates', results['metrics']['buy_candidates'])

@@ -37,15 +37,11 @@ def lambda_handler(event, context):
     Processes LLM batch results and writes structured data to DynamoDB.
     Handles both META (snapshot) and HIST (price change) items.
     """
-<<<<<<< HEAD:ai-infra/lambda/dynamodb_writer/app.py
-    individual_results = event.get('batch_result', [])
-=======
     batch_result = event.get('batch_result', {})
     if isinstance(batch_result, list):
         individual_results = batch_result
     else:
         individual_results = batch_result.get('individual_results', [])
->>>>>>> 43e364e4b8002c69e69467c41ce4b633e28745cb:ai_infra/lambda/dynamodb_writer/app.py
     
     for result in individual_results:
         try:
