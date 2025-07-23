@@ -77,3 +77,4 @@ The scraper can also be configured using the following environment variables:
 *   `AREAS`
 *   `SESSION_ID` (Used in stealth mode to identify the scraping session)
 *   `ENTRY_POINT` (Used in stealth mode to simulate different user entry points)
+
