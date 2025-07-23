@@ -98,40 +98,42 @@ def _validate_business_rules(data: Dict[str, Any]) -> Optional[str]:
     Returns:
         Error message if validation fails, None if passes
     """
-    # Check that upsides/risks arrays have expected items with content
-    upsides = data.get('upsides', [])
+    # Validate upside array (exactly 3 items required)
+    upside = data.get('upside', [])
+    if len(upside) != 3:
+        return f"upside must have exactly 3 items, got {len(upside)}"
+    
+    # Validate risks array (exactly 3 items required)
     risks = data.get('risks', [])
+    if len(risks) != 3:
+        return f"risks must have exactly 3 items, got {len(risks)}"
     
-    # Upsides must have 1-3 items (schema requirement)
-    if len(upsides) < 1 or len(upsides) > 3:
-        return f"upsides must have 1-3 items, got {len(upsides)}"
-    
-    # Risks can have 0-3 items (schema requirement)  
-    if len(risks) > 3:
-        return f"risks must have 0-3 items, got {len(risks)}"
-    
-    # Check that all upsides items have content
-    for i, item in enumerate(upsides):
+    # Check that all upside items have content and meet length requirements
+    for i, item in enumerate(upside):
         if not item or not item.strip():
-            return f"upsides[{i}] is empty or whitespace only"
-        if len(item.strip()) < 10:
-            return f"upsides[{i}] too short (minimum 10 characters)"
+            return f"upside[{i}] is empty or whitespace only"
+        if len(item.strip()) > 60:
+            return f"upside[{i}] exceeds 60 character limit ({len(item.strip())} chars)"
     
-    # Check that all risks items have content
+    # Check that all risks items have content and meet length requirements
     for i, item in enumerate(risks):
         if not item or not item.strip():
             return f"risks[{i}] is empty or whitespace only"
-        if len(item.strip()) < 10:
-            return f"risks[{i}] too short (minimum 10 characters)"
+        if len(item.strip()) > 60:
+            return f"risks[{i}] exceeds 60 character limit ({len(item.strip())} chars)"
     
-    # Check justification has content
+    # Check justification has content and meets length requirement
     justification = data.get('justification', '')
     if not justification or not justification.strip():
         return "justification is empty or whitespace only"
     
-    # Check justification length meets schema requirements
-    if len(justification.strip()) < 50:
-        return f"justification too short (minimum 50 characters, got {len(justification.strip())})"
+    if len(justification.strip()) > 600:
+        return f"justification exceeds 600 character limit ({len(justification.strip())} chars)"
+    
+    # Validate base_score matches what was provided (this check would need the original base_score)
+    # This validation would be done in the calling code where we have access to the deterministic score
+    
+    # Validate verdict is one of the allowed values (schema handles this)
     
     return None
 
@@ -151,17 +153,21 @@ def create_fallback_evaluation(property_id: str, base_score: int,
         Valid evaluation dictionary matching evaluation_min.json schema
     """
     return {
-        "upsides": [
-            "Property meets basic investment criteria",
-            "Location has acceptable market fundamentals", 
-            "Price analysis completed successfully"
+        "property_id": property_id,
+        "base_score": base_score,
+        "final_score": final_score,
+        "verdict": verdict,
+        "upside": [
+            "Automated analysis completed",
+            "Basic investment criteria evaluated",
+            "Location data processed successfully"
         ],
         "risks": [
-            "LLM analysis failed - limited qualitative insights",
-            "Market conditions require manual verification",
-            "Property details need additional validation"
+            "LLM validation failed - manual review needed",
+            "Qualitative insights unavailable",
+            "Market conditions require verification"
         ],
-        "justification": "Automated fallback evaluation due to LLM validation failure. Scores computed deterministically but qualitative analysis unavailable. Recommend manual review before investment decision."
+        "justification": f"Fallback evaluation for property {property_id}. Deterministic scores: base={base_score}, final={final_score}. LLM analysis unavailable - manual review recommended before investment decision."
     }
 
 
