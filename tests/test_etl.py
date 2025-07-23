@@ -10,7 +10,14 @@ import boto3
 
 # Import the ETL function
 import sys
-sys.path.append('/mnt/c/Users/azure/Desktop/scraper/lambda/etl')
+from pathlib import Path
+
+# Add the ETL lambda directory to sys.path and ensure fresh import
+ROOT_DIR = Path(__file__).resolve().parents[1]
+ETL_DIR = ROOT_DIR / 'ai_infra' / 'lambda' / 'etl'
+sys.path.insert(0, str(ETL_DIR))
+sys.modules.pop('app', None)
+
 from app import lambda_handler, process_listings, process_single_listing, process_photos
 
 

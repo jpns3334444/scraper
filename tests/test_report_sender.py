@@ -8,7 +8,14 @@ import pytest
 
 # Import the report sender function
 import sys
-sys.path.append('/mnt/c/Users/azure/Desktop/scraper/lambda/report_sender')
+from pathlib import Path
+
+# Add the Report Sender lambda directory to path and refresh import
+ROOT_DIR = Path(__file__).resolve().parents[1]
+RS_DIR = ROOT_DIR / 'ai_infra' / 'lambda' / 'report_sender'
+sys.path.insert(0, str(RS_DIR))
+sys.modules.pop('app', None)
+
 from app import lambda_handler, generate_markdown_report, send_via_email, markdown_to_plain_text
 
 
