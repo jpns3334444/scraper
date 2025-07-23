@@ -7,6 +7,8 @@ import unittest
 import os
 import tempfile
 import json
+import io
+import contextlib
 import time
 import threading
 from unittest.mock import Mock, patch, MagicMock
@@ -15,8 +17,9 @@ import importlib.util
 import argparse
 import logging
 
-# Import the scraper module
-spec = importlib.util.spec_from_file_location("scrape", "/mnt/c/Users/azure/Desktop/scraper/scraper/scrape.py")
+# Import the scraper module using a relative path
+module_path = os.path.join(os.path.dirname(__file__), "scrape.py")
+spec = importlib.util.spec_from_file_location("scrape", module_path)
 scraper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(scraper)
 
@@ -80,19 +83,21 @@ class TestScraperFunctions(unittest.TestCase):
         self.assertTrue(data["title"].endswith("..."))
         self.assertEqual(len(data["title"]), 203)  # 200 + "..."
     
-    @patch('logging.Logger.handle')
-    def test_log_structured_message(self, mock_handle):
+    def test_log_structured_message(self):
         """Test structured logging output"""
         logger = scraper.setup_logging()
+        stream = io.StringIO()
+        for handler in logging.root.handlers:
+            handler.stream = stream
+
         scraper.log_structured_message(logger, "INFO", "Test message", test_field="test_value")
-        
-        # Verify handle was called
-        mock_handle.assert_called_once()
-        
-        # Verify the logged message is valid JSON
-        log_record = mock_handle.call_args[0][0]
-        self.assertEqual(log_record.levelno, logging.INFO)
-        self.assertEqual(log_record.getMessage(), "Test message")
+
+        log_output = stream.getvalue().strip()
+        self.assertTrue(log_output)
+        first_line = log_output.splitlines()[0]
+        record_json = json.loads(first_line)
+        self.assertEqual(record_json["message"], "Test message")
+        self.assertEqual(record_json["level"], "INFO")
     
     def test_create_enhanced_session(self):
         """Test session creation with proper headers"""
@@ -421,9 +426,11 @@ class TestScrapingLogic(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures"""
         # Load mock HTML content from files
-        with open("/mnt/c/Users/azure/Desktop/scraper/scraper/mock_listing_page.html", "r") as f:
+        listing_path = os.path.join(os.path.dirname(__file__), "mock_listing_page.html")
+        property_path = os.path.join(os.path.dirname(__file__), "mock_property_page.html")
+        with open(listing_path, "r") as f:
             self.mock_listing_html = f.read()
-        with open("/mnt/c/Users/azure/Desktop/scraper/scraper/mock_property_page.html", "r") as f:
+        with open(property_path, "r") as f:
             self.mock_property_html = f.read()
 
     def test_extract_listing_urls_from_html(self):

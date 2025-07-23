@@ -8,8 +8,14 @@ import pytest
 
 # Import the report sender function
 import sys
-sys.path.append('/mnt/c/Users/azure/Desktop/scraper/lambda/report_sender')
-from app import lambda_handler, generate_markdown_report, send_via_email, markdown_to_plain_text
+import os
+import importlib
+os.environ.setdefault('AWS_DEFAULT_REGION', 'us-east-1')
+rs_module = importlib.import_module('ai_infra.lambda.report_sender.app')
+lambda_handler = rs_module.lambda_handler
+generate_markdown_report = rs_module.generate_markdown_report
+send_via_email = rs_module.send_via_email
+markdown_to_plain_text = rs_module.markdown_to_plain_text
 
 
 class TestReportSender:

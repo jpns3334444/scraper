@@ -9,8 +9,14 @@ import responses
 
 # Import the LLM batch function
 import sys
-sys.path.append('/mnt/c/Users/azure/Desktop/scraper/lambda/llm_batch')
-from app import lambda_handler, create_batch_job, poll_batch_completion, download_batch_results
+import os
+import importlib
+os.environ.setdefault('AWS_DEFAULT_REGION', 'us-east-1')
+llm_module = importlib.import_module('ai_infra.lambda.llm_batch.app')
+lambda_handler = llm_module.lambda_handler
+create_batch_job = llm_module.create_batch_job
+poll_batch_completion = llm_module.poll_batch_completion
+download_batch_results = llm_module.download_batch_results
 
 
 class TestLLMBatch:

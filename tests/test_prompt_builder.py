@@ -9,8 +9,15 @@ import boto3
 
 # Import the prompt builder function
 import sys
-sys.path.append('/mnt/c/Users/azure/Desktop/scraper/lambda/prompt_builder')
-from app import lambda_handler, sort_and_filter_listings, build_batch_requests, generate_presigned_url, prioritize_images
+import os
+import importlib
+os.environ.setdefault('AWS_DEFAULT_REGION', 'us-east-1')
+pb_module = importlib.import_module('ai_infra.lambda.prompt_builder.app')
+lambda_handler = pb_module.lambda_handler
+sort_and_filter_listings = pb_module.sort_and_filter_listings
+build_batch_requests = pb_module.build_batch_requests
+generate_presigned_url = pb_module.generate_presigned_url
+prioritize_images = pb_module.prioritize_images
 
 
 class TestPromptBuilder:

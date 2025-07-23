@@ -12,6 +12,9 @@ Tests cover:
 import json
 import pytest
 from pathlib import Path
+from unittest.mock import Mock, patch
+import os
+os.environ.setdefault('AWS_DEFAULT_REGION', 'us-east-1')
 
 
 @pytest.fixture
@@ -180,7 +183,10 @@ class TestImageHandling:
     @patch('ai_infra.lambda.prompt_builder.app.s3_client')
     def test_image_base64_conversion(self, mock_s3_client):
         """Test image to base64 conversion."""
-        from ai_infra.lambda.prompt_builder.app import get_image_as_base64_data_url
+        import importlib
+        get_image_as_base64_data_url = importlib.import_module(
+            'ai_infra.lambda.prompt_builder.app'
+        ).get_image_as_base64_data_url
         
         # Mock successful S3 response
         mock_s3_client.get_object.return_value = {
@@ -198,7 +204,10 @@ class TestImageHandling:
     @patch('ai_infra.lambda.prompt_builder.app.s3_client')
     def test_image_conversion_error_handling(self, mock_s3_client):
         """Test image conversion error handling."""
-        from ai_infra.lambda.prompt_builder.app import get_image_as_base64_data_url
+        import importlib
+        get_image_as_base64_data_url = importlib.import_module(
+            'ai_infra.lambda.prompt_builder.app'
+        ).get_image_as_base64_data_url
         
         # Mock S3 error
         mock_s3_client.get_object.side_effect = Exception("S3 error")

@@ -5,12 +5,15 @@ import os
 sys.path.append(os.getcwd())
 # Add the ai_infra path for imports
 sys.path.append(os.path.join(os.getcwd(), 'ai_infra'))
+os.environ.setdefault('AWS_DEFAULT_REGION', 'us-east-1')
 
 def test_lambda_handler():
     """Test the daily digest Lambda handler."""
     print("Testing daily digest Lambda handler...")
     try:
-        from ai_infra.lambda.daily_digest.app import lambda_handler
+        import importlib
+        module = importlib.import_module('ai_infra.lambda.daily_digest.app')
+        lambda_handler = module.lambda_handler
         test_event = {"date": "2025-01-22"}
         test_context = None
         print("✓ Lambda handler imported successfully")

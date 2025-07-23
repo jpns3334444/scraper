@@ -1597,8 +1597,10 @@ def setup_logging():
     json_formatter = JSONFormatter()
     for handler in logging.root.handlers:
         handler.setFormatter(json_formatter)
-    
-    return logging.getLogger(__name__)
+
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+    return logger
 
 def log_structured_message(logger, level, message, **kwargs):
     """Log structured message in JSON format"""
