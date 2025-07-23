@@ -11,18 +11,20 @@ import os
 import sys
 from typing import Any, Dict
 
+# Configure logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
 # Import notifications module - ensure modules are packaged with Lambda deployment
 try:
     from notifications.notifier import DailyDigestGenerator
 except ImportError as e:
     logger.error(f"Failed to import notifications.notifier: {e}")
-    logger.error("DEPLOYMENT ERROR: The 'notifications' module must be packaged with this Lambda function")
+    logger.error(
+        "DEPLOYMENT ERROR: The 'notifications' module must be packaged with this Lambda function"
+    )
     logger.error("Include notifications/ directory in the deployment package or use a Lambda layer")
     raise RuntimeError(f"Missing required module 'notifications': {e}")
-
-# Configure logging
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:

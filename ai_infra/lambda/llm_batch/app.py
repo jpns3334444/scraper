@@ -409,7 +409,7 @@ async def process_candidate_with_validation(
                 client=client,
                 model=model,
                 messages=messages,
-                max_tokens=request_body.get('max_completion_tokens', 1000)
+                max_tokens=request_body.get('max_tokens', request_body.get('max_completion_tokens', 1000))
             )
             
             # Extract and validate response
@@ -597,14 +597,14 @@ async def call_openai_async(
                 response = await client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    max_completion_tokens=max_tokens
+                    max_tokens=max_tokens
                 )
             else:
                 response = await client.chat.completions.create(
                     model=model,
                     messages=messages,
                     temperature=0.2,
-                    max_completion_tokens=max_tokens
+                    max_tokens=max_tokens
                 )
             return response
             

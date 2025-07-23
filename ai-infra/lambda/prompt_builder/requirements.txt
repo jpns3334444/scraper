@@ -1,3 +1,0 @@
-# No external dependencies beyond what's provided by AWS layers
-# - boto3: Provided by AWS prebuilt layer
-# - json, os, logging, datetime: Python standard library

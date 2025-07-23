@@ -52,6 +52,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             bucket = event.get('bucket', os.environ['OUTPUT_BUCKET'])
         result_key = event.get('result_key')
         batch_result = event.get('batch_result', {})
+        if isinstance(batch_result, list):
+            batch_result = {'individual_results': batch_result}
         
         logger.info(f"Generating report for date: {date_str}")
         
@@ -125,7 +127,10 @@ def extract_openai_report(batch_result: Dict[str, Any]) -> str:
     This function extracts all 'email_report' entries and combines them.
     """
     try:
-        individual_results = batch_result.get('individual_results', [])
+        if isinstance(batch_result, list):
+            individual_results = batch_result
+        else:
+            individual_results = batch_result.get('individual_results', [])
         logger.info(f"Found {len(individual_results)} individual results to process.")
 
         successful_reports = []
