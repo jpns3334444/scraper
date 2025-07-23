@@ -111,7 +111,7 @@ def compute_base_and_adjustments(listing: Dict[str, Any],
     
     # Extract key fields
     price_per_sqm = listing.get('price_per_sqm', 0)
-    current_price = listing.get('current_price', listing.get('price', 0))
+    current_price = listing.get('price', 0)  # ETL normalizes raw price to 'price' field
     total_sqm = listing.get('total_sqm', listing.get('size_sqm', 0))
     building_age = listing.get('building_age_years', 0)
     
@@ -120,16 +120,22 @@ def compute_base_and_adjustments(listing: Dict[str, Any],
     # 1. Ward Discount (25 points)
     # Linear interpolation: 0 pts at discount ≥ 0%; 25 pts at discount ≤ -20%
     if ward_median_ppm2 and ward_median_ppm2 > 0 and price_per_sqm > 0:
-        discount_pct = (price_per_sqm - ward_median_ppm2) / ward_median_ppm2
-        if discount_pct >= 0:
-            components.ward_discount = 0.0  # No discount or premium
-        elif discount_pct <= -0.2:
-            components.ward_discount = 25.0  # 20%+ discount gets full points
+        # Additional safety check to prevent division by zero
+        if ward_median_ppm2 == 0:
+            components.ward_discount = 0.0
+            components.ward_discount_pct = 0.0
+            components.data_quality_issue = True
         else:
-            # Linear between 0 and -20%
-            components.ward_discount = 25.0 * abs(discount_pct) / 0.2
-        
-        components.ward_discount_pct = discount_pct * 100  # For gating
+            discount_pct = (price_per_sqm - ward_median_ppm2) / ward_median_ppm2
+            if discount_pct >= 0:
+                components.ward_discount = 0.0  # No discount or premium
+            elif discount_pct <= -0.2:
+                components.ward_discount = 25.0  # 20%+ discount gets full points
+            else:
+                # Linear between 0 and -20%
+                components.ward_discount = 25.0 * abs(discount_pct) / 0.2
+            
+            components.ward_discount_pct = discount_pct * 100  # For gating
     else:
         components.ward_discount = 0.0
         components.ward_discount_pct = 0.0

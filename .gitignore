@@ -71,6 +71,7 @@ logs/
 *.key
 .env.local
 .env.production
+.env.json
 secrets.json
 
 # Local data

@@ -120,6 +120,21 @@ Resources:
                 Resource: 
                   - !GetAtt RealEstateAnalysisDB.Arn
                   - !Sub '${RealEstateAnalysisDB.Arn}/index/*'
+        - PolicyName: SQSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource:
+                  - !GetAtt ETLDeadLetterQueue.Arn
+                  - !GetAtt PromptBuilderDeadLetterQueue.Arn
+                  - !GetAtt LLMBatchDeadLetterQueue.Arn
+                  - !GetAtt ReportSenderDeadLetterQueue.Arn
+                  - !GetAtt DynamoDBWriterDeadLetterQueue.Arn
+                  - !GetAtt SnapshotGeneratorDeadLetterQueue.Arn
+                  - !GetAtt DailyDigestDeadLetterQueue.Arn
 
   # DynamoDB Table for Real Estate Analysis
   RealEstateAnalysisDB:
@@ -150,6 +165,15 @@ Resources:
         ReadCapacityUnits: 5
         WriteCapacityUnits: 5
       GlobalSecondaryIndexes:
+        - IndexName: district-index
+          KeySchema:
+            - AttributeName: district_key
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 5
+            WriteCapacityUnits: 5
         - IndexName: GSI_DIST_PPSQM
           KeySchema:
             - AttributeName: district_key
@@ -211,13 +235,20 @@ Resources:
         S3Key: functions/etl.zip
         S3ObjectVersion: !Ref ETLCodeVersion
       Timeout: 900
-      MemorySize: 1024
+      MemorySize: 2048
       Layers:
-        - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
+        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
+      DeadLetterConfig:
+        TargetArn: !GetAtt ETLDeadLetterQueue.Arn
       Environment:
         Variables:
           OUTPUT_BUCKET: !Ref OutputBucket
+          DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
           LEAN_MODE: !Ref LeanMode
+          LEAN_SCORING: '1'
+          LEAN_PROMPT: '1'
+          LEAN_SCHEMA_ENFORCE: '1'
+          MAX_CANDIDATES_PER_DAY: '120'
 
   PromptBuilderFunction:
     Type: AWS::Lambda::Function
@@ -233,13 +264,17 @@ Resources:
       Timeout: 900
       MemorySize: 1024
       Layers:
-        - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
+        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
         - !Ref OpenAILayer
+      DeadLetterConfig:
+        TargetArn: !GetAtt PromptBuilderDeadLetterQueue.Arn
       Environment:
         Variables:
           OUTPUT_BUCKET: !Ref OutputBucket
           DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
           LEAN_MODE: !Ref LeanMode
+          LEAN_PROMPT: '1'
+          MAX_COMPARABLES: '8'
 
   LLMBatchFunction:
     Type: AWS::Lambda::Function
@@ -253,15 +288,19 @@ Resources:
         S3Key: functions/llm_batch.zip
         S3ObjectVersion: !Ref LLMBatchCodeVersion
       Timeout: 900  # Maximum Lambda timeout (15 minutes)
-      MemorySize: 1024
+      MemorySize: 3008
       Layers:
-        - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
+        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
         - !Ref OpenAILayer
+      DeadLetterConfig:
+        TargetArn: !GetAtt LLMBatchDeadLetterQueue.Arn
       Environment:
         Variables:
           OUTPUT_BUCKET: !Ref OutputBucket
-          OPENAI_MODEL: o3  # Use 'o3' for best quality or 'o3-mini' for cost savings
+          OPENAI_MODEL: gpt-4o  # Use 'gpt-4o' for consistent model across all functions
+          OPENAI_SECRET_NAME: ai-scraper/openai-api-key
           LEAN_MODE: !Ref LeanMode
+          LEAN_SCHEMA_ENFORCE: '1'
 
   ReportSenderFunction:
     Type: AWS::Lambda::Function
@@ -277,8 +316,10 @@ Resources:
       Timeout: 900
       MemorySize: 1024
       Layers:
-        - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
+        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
         - !Ref OpenAILayer
+      DeadLetterConfig:
+        TargetArn: !GetAtt ReportSenderDeadLetterQueue.Arn
       Environment:
         Variables:
           OUTPUT_BUCKET: !Ref OutputBucket
@@ -298,9 +339,11 @@ Resources:
         S3Key: functions/dynamodb_writer.zip
         S3ObjectVersion: !Ref DynamoDBWriterCodeVersion
       Timeout: 300
-      MemorySize: 512
+      MemorySize: 1024
       Layers:
-        - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
+        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
+      DeadLetterConfig:
+        TargetArn: !GetAtt DynamoDBWriterDeadLetterQueue.Arn
       Environment:
         Variables:
           DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
@@ -321,7 +364,9 @@ Resources:
       Timeout: 900
       MemorySize: 1024
       Layers:
-        - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
+        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
+      DeadLetterConfig:
+        TargetArn: !GetAtt SnapshotGeneratorDeadLetterQueue.Arn
       Environment:
         Variables:
           OUTPUT_BUCKET: !Ref OutputBucket
@@ -342,7 +387,9 @@ Resources:
       Timeout: 900
       MemorySize: 1024
       Layers:
-        - arn:aws:lambda:ap-northeast-1:336392948345:layer:AWSSDKPandas-Python312:15
+        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
+      DeadLetterConfig:
+        TargetArn: !GetAtt DailyDigestDeadLetterQueue.Arn
       Environment:
         Variables:
           OUTPUT_BUCKET: !Ref OutputBucket
@@ -389,78 +436,263 @@ Resources:
     Properties:
       StateMachineName: !Sub '${AWS::StackName}-ai-analysis'
       RoleArn: !GetAtt StepFunctionsExecutionRole.Arn
-      DefinitionString: !Sub |
-        {
-          "Comment": "AI analysis workflow for real estate listings",
-          "StartAt": "ETL",
-          "States": {
-            "ETL": {
-              "Type": "Task",
-              "Resource": "${ETLFunction.Arn}",
-              "Retry": [
-                {
-                  "ErrorEquals": ["States.TaskFailed"],
-                  "IntervalSeconds": 30,
-                  "MaxAttempts": 3,
-                  "BackoffRate": 2.0
-                }
-              ],
-              "Next": "PromptBuilder"
-            },
-            "PromptBuilder": {
-              "Type": "Task",
-              "Resource": "${PromptBuilderFunction.Arn}",
-              "Retry": [
-                {
-                  "ErrorEquals": ["States.TaskFailed"],
-                  "IntervalSeconds": 30,
-                  "MaxAttempts": 3,
-                  "BackoffRate": 2.0
-                }
-              ],
-              "Next": "LLMBatch"
-            },
-            "LLMBatch": {
-              "Type": "Task",
-              "Resource": "${LLMBatchFunction.Arn}",
-              "Retry": [
-                {
-                  "ErrorEquals": ["States.TaskFailed"],
-                  "IntervalSeconds": 60,
-                  "MaxAttempts": 2,
-                  "BackoffRate": 2.0
-                }
-              ],
-              "Next": "DynamoDBWriter"
-            },
-            "DynamoDBWriter": {
-              "Type": "Task",
-              "Resource": "${DynamoDBWriterFunction.Arn}",
-              "Retry": [
-                {
-                  "ErrorEquals": ["States.TaskFailed"],
-                  "IntervalSeconds": 30,
-                  "MaxAttempts": 3,
-                  "BackoffRate": 2.0
-                }
-              ],
-              "Next": "ReportSender"
-            },
-            "ReportSender": {
-              "Type": "Task",
-              "Resource": "${ReportSenderFunction.Arn}",
-              "Retry": [
-                {
-                  "ErrorEquals": ["States.TaskFailed"],
-                  "IntervalSeconds": 30,
-                  "MaxAttempts": 3,
-                  "BackoffRate": 2.0
-                }
-              ],
-              "End": true
+      DefinitionString: !Sub
+        - |
+          ${DefinitionTemplate}
+        - DefinitionTemplate: !Sub |
+            {
+              "Comment": "AI analysis workflow for real estate listings - ETL → PromptBuilder → LLMBatch → DynamoDBWriter → ReportSender",
+              "StartAt": "ETL",
+              "States": {
+                  "ETL": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::lambda:invoke",
+                      "Parameters": {
+                          "FunctionName": "${ETLFunctionArn}",
+                          "Payload": {
+                              "date.$": "$.date",
+                              "execution_time.$": "$$.State.EnteredTime"
+                          }
+                      },
+                      "ResultPath": "$.etl_result",
+                      "ResultSelector": {
+                          "date.$": "$.Payload.date",
+                          "bucket.$": "$.Payload.bucket",
+                          "jsonl_key.$": "$.Payload.jsonl_key",
+                          "listings_count.$": "$.Payload.listings_count",
+                          "processed_data.$": "$.Payload.processed_data"
+                      },
+                      "Retry": [
+                          {
+                              "ErrorEquals": [
+                                  "States.TaskFailed",
+                                  "States.ExecutionLimitExceeded",
+                                  "States.Runtime"
+                              ],
+                              "IntervalSeconds": 30,
+                              "MaxAttempts": 3,
+                              "BackoffRate": 2
+                          }
+                      ],
+                      "Catch": [
+                          {
+                              "ErrorEquals": [
+                                  "States.ALL"
+                              ],
+                              "Next": "ETLFailed",
+                              "ResultPath": "$.error"
+                          }
+                      ],
+                      "Next": "PromptBuilder"
+                  },
+                  "PromptBuilder": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::lambda:invoke",
+                      "Parameters": {
+                          "FunctionName": "${PromptBuilderFunctionArn}",
+                          "Payload": {
+                              "date.$": "$.etl_result.date",
+                              "bucket.$": "$.etl_result.bucket",
+                              "jsonl_key.$": "$.etl_result.jsonl_key"
+                          }
+                      },
+                      "ResultPath": "$.prompt_result",
+                      "ResultSelector": {
+                          "date.$": "$.Payload.date",
+                          "bucket.$": "$.Payload.bucket",
+                          "prompt_key.$": "$.Payload.prompt_key",
+                          "listings_count.$": "$.Payload.listings_count",
+                          "total_images.$": "$.Payload.total_images"
+                      },
+                      "Retry": [
+                          {
+                              "ErrorEquals": [
+                                  "States.TaskFailed",
+                                  "States.ExecutionLimitExceeded",
+                                  "States.Runtime"
+                              ],
+                              "IntervalSeconds": 30,
+                              "MaxAttempts": 3,
+                              "BackoffRate": 2
+                          }
+                      ],
+                      "Catch": [
+                          {
+                              "ErrorEquals": [
+                                  "States.ALL"
+                              ],
+                              "Next": "PromptBuilderFailed",
+                              "ResultPath": "$.error"
+                          }
+                      ],
+                      "Next": "LLMBatch"
+                  },
+                  "LLMBatch": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::lambda:invoke",
+                      "Parameters": {
+                          "FunctionName": "${LLMBatchFunctionArn}",
+                          "Payload": {
+                              "date.$": "$.prompt_result.date",
+                              "bucket.$": "$.prompt_result.bucket",
+                              "prompt_key.$": "$.prompt_result.prompt_key"
+                          }
+                      },
+                      "ResultPath": "$.llm_result",
+                      "ResultSelector": {
+                          "date.$": "$.Payload.date",
+                          "bucket.$": "$.Payload.bucket",
+                          "result_key.$": "$.Payload.result_key",
+                          "batch_id.$": "$.Payload.batch_id",
+                          "batch_result.$": "$.Payload.batch_result"
+                      },
+                      "TimeoutSeconds": 3600,
+                      "Retry": [
+                          {
+                              "ErrorEquals": [
+                                  "States.TaskFailed",
+                                  "States.ExecutionLimitExceeded"
+                              ],
+                              "IntervalSeconds": 60,
+                              "MaxAttempts": 2,
+                              "BackoffRate": 2
+                          },
+                          {
+                              "ErrorEquals": [
+                                  "States.Runtime"
+                              ],
+                              "IntervalSeconds": 30,
+                              "MaxAttempts": 1,
+                              "BackoffRate": 1
+                          }
+                      ],
+                      "Catch": [
+                          {
+                              "ErrorEquals": [
+                                  "States.ALL"
+                              ],
+                              "Next": "LLMBatchFailed",
+                              "ResultPath": "$.error"
+                          }
+                      ],
+                      "Next": "DynamoDBWriter"
+                  },
+                  "DynamoDBWriter": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::lambda:invoke",
+                      "Parameters": {
+                          "FunctionName": "${DynamoDBWriterFunctionArn}",
+                          "Payload": {
+                              "batch_result.$": "$.llm_result.batch_result"
+                          }
+                      },
+                      "ResultPath": "$.dynamodb_writer_result",
+                      "ResultSelector": {
+                          "statusCode.$": "$.Payload.statusCode",
+                          "processed_count.$": "$.Payload.body"
+                      },
+                      "Retry": [
+                          {
+                              "ErrorEquals": [
+                                  "States.TaskFailed",
+                                  "States.ExecutionLimitExceeded",
+                                  "States.Runtime"
+                              ],
+                              "IntervalSeconds": 30,
+                              "MaxAttempts": 3,
+                              "BackoffRate": 2
+                          }
+                      ],
+                      "Catch": [
+                          {
+                              "ErrorEquals": [
+                                  "States.ALL"
+                              ],
+                              "Next": "DynamoDBWriterFailed",
+                              "ResultPath": "$.error"
+                          }
+                      ],
+                      "Next": "ReportSender"
+                  },
+                  "ReportSender": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::lambda:invoke",
+                      "Parameters": {
+                          "FunctionName": "${ReportSenderFunctionArn}",
+                          "Payload": {
+                              "date.$": "$.llm_result.date",
+                              "bucket.$": "$.llm_result.bucket",
+                              "result_key.$": "$.llm_result.result_key",
+                              "batch_result.$": "$.llm_result.batch_result"
+                          }
+                      },
+                      "ResultPath": "$.report_result",
+                      "ResultSelector": {
+                          "date.$": "$.Payload.date",
+                          "bucket.$": "$.Payload.bucket",
+                          "report_key.$": "$.Payload.report_key",
+                          "top_picks_count.$": "$.Payload.top_picks_count",
+                          "email_sent.$": "$.Payload.email_sent"
+                      },
+                      "Retry": [
+                          {
+                              "ErrorEquals": [
+                                  "States.TaskFailed",
+                                  "States.ExecutionLimitExceeded",
+                                  "States.Runtime"
+                              ],
+                              "IntervalSeconds": 30,
+                              "MaxAttempts": 3,
+                              "BackoffRate": 2
+                          }
+                      ],
+                      "Catch": [
+                          {
+                              "ErrorEquals": [
+                                  "States.ALL"
+                              ],
+                              "Next": "ReportSenderFailed",
+                              "ResultPath": "$.error"
+                          }
+                      ],
+                      "Next": "Success"
+                  },
+                  "Success": {
+                      "Type": "Succeed",
+                      "Comment": "AI analysis workflow completed successfully"
+                  },
+                  "ETLFailed": {
+                      "Type": "Fail",
+                      "Cause": "ETL step failed",
+                      "Error": "ETLError"
+                  },
+                  "PromptBuilderFailed": {
+                      "Type": "Fail",
+                      "Cause": "Prompt builder step failed",
+                      "Error": "PromptBuilderError"
+                  },
+                  "LLMBatchFailed": {
+                      "Type": "Fail",
+                      "Cause": "LLM batch processing step failed",
+                      "Error": "LLMBatchError"
+                  },
+                  "DynamoDBWriterFailed": {
+                      "Type": "Fail",
+                      "Cause": "DynamoDB writer step failed",
+                      "Error": "DynamoDBWriterError"
+                  },
+                  "ReportSenderFailed": {
+                      "Type": "Fail",
+                      "Cause": "Report sender step failed",
+                      "Error": "ReportSenderError"
+                  }
+              }
             }
-          }
-        }
+          ETLFunctionArn: !GetAtt ETLFunction.Arn
+          PromptBuilderFunctionArn: !GetAtt PromptBuilderFunction.Arn
+          LLMBatchFunctionArn: !GetAtt LLMBatchFunction.Arn
+          DynamoDBWriterFunctionArn: !GetAtt DynamoDBWriterFunction.Arn
+          ReportSenderFunctionArn: !GetAtt ReportSenderFunction.Arn
 
   # EventBridge rule for daily execution (optional)
   DailyAnalysisRule:
@@ -554,6 +786,49 @@ Resources:
                 Action:
                   - states:StartExecution
                 Resource: !Ref AIAnalysisStateMachine
+
+  # Dead Letter Queues for Lambda functions
+  ETLDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-etl-dlq'
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  PromptBuilderDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-prompt-builder-dlq'
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  LLMBatchDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-llm-batch-dlq'
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  ReportSenderDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-report-sender-dlq'
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  DynamoDBWriterDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-dynamodb-writer-dlq'
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  SnapshotGeneratorDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-snapshot-generator-dlq'
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  DailyDigestDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-daily-digest-dlq'
+      MessageRetentionPeriod: 1209600  # 14 days
 
 Outputs:
   StateMachineArn:

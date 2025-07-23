@@ -26,7 +26,7 @@ def test_digest_components():
         {
             'id': 'VERIFY_001',
             'price': 50000000,
-            'size_sqm': 60.5,
+            'total_sqm': 60.5,
             'price_per_sqm': 826446,
             'ward': 'Shibuya',
             'building_age_years': 8,

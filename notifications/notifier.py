@@ -42,6 +42,35 @@ class DailyDigestGenerator:
         self.s3_client = boto3.client('s3', region_name=self.config.get_str('AWS_REGION'))
         self.ses_client = boto3.client('ses', region_name=self.config.get_str('AWS_REGION'))
         
+    def _get_candidate_field(self, candidate: Dict[str, Any], field_name: str, default_value: Any = None):
+        """
+        Standardized helper to extract fields from candidate data structures.
+        
+        Handles both flat structure (field at root level) and nested structure 
+        (field under 'components' key) to ensure consistent data access.
+        
+        Args:
+            candidate: Candidate dictionary
+            field_name: Field name to extract
+            default_value: Default value if field not found
+            
+        Returns:
+            Field value or default_value
+        """
+        # Try root level first
+        if field_name in candidate:
+            value = candidate[field_name]
+            if value is not None:
+                return value
+                
+        # Try components structure
+        if 'components' in candidate and field_name in candidate['components']:
+            value = candidate['components'][field_name]
+            if value is not None:
+                return value
+                
+        return default_value
+        
     def generate_and_send_digest(self, date_str: Optional[str] = None) -> Dict[str, Any]:
         """
         Generate and send daily digest email.
@@ -144,7 +173,7 @@ class DailyDigestGenerator:
                         
                     except Exception as e:
                         logger.error(f"Error loading candidate file {obj['Key']}: {e}", exc_info=True)
-                        results['metrics']['error_count'] = results.get('metrics', {}).get('error_count', 0) + 1
+                        # Note: Error counting is handled by the caller in generate_and_send_digest
                         
             logger.info(f"Loaded {len(candidates)} candidates from {candidates_prefix}")
             
@@ -160,12 +189,8 @@ class DailyDigestGenerator:
         watch_candidates = []
         
         for candidate in candidates:
-            # Handle different verdict structures
-            verdict = None
-            if 'verdict' in candidate:
-                verdict = candidate['verdict']
-            elif 'components' in candidate and 'verdict' in candidate['components']:
-                verdict = candidate['components']['verdict']
+            # Handle different verdict structures using standardized helper
+            verdict = self._get_candidate_field(candidate, 'verdict')
             
             # Convert verdict to string if it's an enum
             if hasattr(verdict, 'value'):
@@ -180,14 +205,9 @@ class DailyDigestGenerator:
             elif verdict_str == Verdict.WATCH.value:
                 watch_candidates.append(candidate)
                 
-        # Sort by final_score descending, handling different structures
+        # Sort by final_score descending using standardized helper
         def get_score(candidate):
-            if 'final_score' in candidate:
-                return candidate['final_score']
-            elif 'components' in candidate and 'final_score' in candidate['components']:
-                return candidate['components']['final_score']
-            else:
-                return 0
+            return self._get_candidate_field(candidate, 'final_score', 0)
                 
         buy_candidates.sort(key=get_score, reverse=True)
         watch_candidates.sort(key=get_score, reverse=True)
@@ -327,21 +347,11 @@ class DailyDigestGenerator:
             price_per_sqm = candidate.get('price_per_sqm', 0)
             ward = candidate.get('ward', 'N/A')
             
-            # Handle different score structures
-            if 'final_score' in candidate:
-                final_score = candidate['final_score']
-            elif 'components' in candidate and 'final_score' in candidate['components']:
-                final_score = candidate['components']['final_score']
-            else:
-                final_score = 0
+            # Handle different score structures using standardized helper
+            final_score = self._get_candidate_field(candidate, 'final_score', 0)
                 
-            # Handle ward discount from different structures
-            if 'ward_discount_pct' in candidate:
-                ward_discount_pct = candidate['ward_discount_pct']
-            elif 'components' in candidate and 'ward_discount_pct' in candidate['components']:
-                ward_discount_pct = candidate['components']['ward_discount_pct']
-            else:
-                ward_discount_pct = 0
+            # Handle ward discount using standardized helper
+            ward_discount_pct = self._get_candidate_field(candidate, 'ward_discount_pct', 0)
             
             # LLM analysis summary
             llm_analysis = candidate.get('llm_analysis', {})
@@ -404,14 +414,9 @@ class DailyDigestGenerator:
             </div>
             """
             
-        # Calculate summary statistics with improved score handling
+        # Calculate summary statistics with standardized score handling
         def get_score_for_stats(candidate):
-            if 'final_score' in candidate:
-                return candidate['final_score']
-            elif 'components' in candidate and 'final_score' in candidate['components']:
-                return candidate['components']['final_score']
-            else:
-                return 0
+            return self._get_candidate_field(candidate, 'final_score', 0)
                 
         avg_score = sum(get_score_for_stats(c) for c in watch_candidates) / len(watch_candidates)
         avg_price_per_sqm = sum(c.get('price_per_sqm', 0) for c in watch_candidates) / len(watch_candidates)
@@ -467,21 +472,14 @@ class DailyDigestGenerator:
             risks = '; '.join(llm_analysis.get('risks', []))
             justification = llm_analysis.get('justification', '')
             
-            # Handle verdict from different structures
-            verdict = candidate.get('verdict', '')
-            if not verdict and 'components' in candidate:
-                verdict = candidate['components'].get('verdict', '')
+            # Handle verdict using standardized helper
+            verdict = self._get_candidate_field(candidate, 'verdict', '')
             if hasattr(verdict, 'value'):
                 verdict = verdict.value
                 
-            # Handle scores from different structures
-            final_score = candidate.get('final_score', 0)
-            if not final_score and 'components' in candidate:
-                final_score = candidate['components'].get('final_score', 0)
-                
-            ward_discount_pct = candidate.get('ward_discount_pct', 0)
-            if not ward_discount_pct and 'components' in candidate:
-                ward_discount_pct = candidate['components'].get('ward_discount_pct', 0)
+            # Handle scores using standardized helper
+            final_score = self._get_candidate_field(candidate, 'final_score', 0)
+            ward_discount_pct = self._get_candidate_field(candidate, 'ward_discount_pct', 0)
             
             row = {
                 'property_id': candidate.get('property_id') or candidate.get('id', ''),
@@ -657,13 +655,3 @@ def send_daily_digest(event: Dict[str, Any] = None) -> Dict[str, Any]:
     return results
 
 
-# Legacy compatibility
-class Notifier:
-    """Legacy class for backward compatibility."""
-    
-    def __init__(self):
-        self.digest_generator = DailyDigestGenerator()
-        
-    def send_notification(self, message, channel=None):
-        """Legacy method - use DailyDigestGenerator instead."""
-        return self.digest_generator.generate_and_send_digest()

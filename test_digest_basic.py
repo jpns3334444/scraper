@@ -26,7 +26,7 @@ def test_basic_digest_generation():
         {
             'id': 'TEST_001',
             'price': 50000000,
-            'size_sqm': 60.5,
+            'total_sqm': 60.5,
             'price_per_sqm': 826446,
             'ward': 'Shibuya',
             'building_age_years': 8,
@@ -40,7 +40,7 @@ def test_basic_digest_generation():
         {
             'id': 'TEST_002',
             'price': 35000000,
-            'size_sqm': 45.0,
+            'total_sqm': 45.0,
             'price_per_sqm': 777778,
             'ward': 'Setagaya',
             'building_age_years': 12,

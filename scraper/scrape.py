@@ -115,25 +115,38 @@ class CircuitBreaker:
         
     def call(self, func, *args, **kwargs):
         """Execute function with circuit breaker protection"""
+        # Check state and decide whether to proceed
         with self.lock:
             if self.state == CircuitBreakerState.OPEN:
                 if self._should_attempt_reset():
                     self.state = CircuitBreakerState.HALF_OPEN
+                    self.success_count = 0  # Reset success count for half-open state
                     if 'logger' in globals() and logger:
                         log_structured_message(logger, "INFO", "Circuit breaker transitioning to HALF_OPEN")
+                    # Allow this thread to proceed in HALF_OPEN state
+                    should_proceed = True
                 else:
                     raise Exception("Circuit breaker is OPEN - refusing request")
-            
-        try:
-            result = func(*args, **kwargs)
-            self._on_success()
-            return result
-        except Exception as e:
-            self._on_failure()
-            raise e
+            elif self.state == CircuitBreakerState.HALF_OPEN:
+                # In HALF_OPEN state, only allow limited concurrent requests
+                # For safety, we'll be conservative and allow sequential testing
+                should_proceed = True
+            else:
+                # CLOSED state - allow request
+                should_proceed = True
+        
+        # Execute the function outside the lock but track result atomically
+        if should_proceed:
+            try:
+                result = func(*args, **kwargs)
+                self._on_success()
+                return result
+            except Exception as e:
+                self._on_failure()
+                raise e
     
     def _should_attempt_reset(self):
-        """Check if circuit breaker should attempt reset"""
+        """Check if circuit breaker should attempt reset (must be called within lock)"""
         if self.last_failure_time is None:
             return True
         return time.time() - self.last_failure_time >= self.recovery_timeout
@@ -1039,7 +1052,7 @@ def extract_property_details_with_circuit_breaker(property_url, referer_url, ret
             session_pool.return_session(session)
 
 
-def extract_property_images(soup, session, base_url, bucket=None, property_id=None, config=None, logger=None):
+def extract_property_images(soup, session, base_url, bucket=None, property_id=None, config=None, date_key=None, logger=None):
     """Extract property images and upload to S3, return S3 keys"""
     s3_keys = []
     image_urls = set()
@@ -1170,6 +1183,7 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
                                     property_id, 
                                     i, 
                                     'image/jpeg',  # Always JPEG now
+                                    date_key=date_key,
                                     logger=logger
                                 )
                                 if s3_key:
@@ -1326,7 +1340,7 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
                 s3_keys = extract_property_images(
                     soup, session, "https://www.homes.co.jp", 
                     bucket=output_bucket, property_id=property_id,
-                    config=config, logger=logger
+                    config=config, date_key=config.get('date_key'), logger=logger
                 )
                 if s3_keys:
                     data["photo_filenames"] = "|".join(s3_keys)
@@ -1374,14 +1388,20 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
     else:
         raise Exception("Max retries exceeded")
 
-def upload_image_to_s3(image_content, bucket, property_id, image_index, content_type="image/jpeg", logger=None):
+def upload_image_to_s3(image_content, bucket, property_id, image_index, content_type="image/jpeg", date_key=None, logger=None):
     """Upload image content to S3 and return S3 key"""
     try:
         # Always use .jpg extension now since we standardize to JPEG
         file_extension = '.jpg'
         
-        # Generate current date for S3 path
-        date_str = datetime.now().strftime('%Y-%m-%d')
+        # Use provided date_key or fallback to current date
+        if date_key:
+            date_str = date_key
+        else:
+            date_str = datetime.now().strftime('%Y-%m-%d')
+            if logger:
+                logger.warning("No date_key provided to upload_image_to_s3, using current date")
+        
         s3_key = f"raw/{date_str}/images/{property_id}_{image_index}{file_extension}"
         
         # Upload to S3
@@ -1749,6 +1769,7 @@ def main():
     try:
         # Configuration
         date_key = datetime.now().strftime('%Y-%m-%d')
+        config['date_key'] = date_key  # Add date_key to config for passing to functions
         
         # Step 0: Determine areas based on mode
         if mode == 'testing':

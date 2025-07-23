@@ -81,7 +81,7 @@ class DailyDigestGenerator:
         # Define CSV headers
         headers = [
             'id', 'final_score', 'verdict', 'ward_discount_pct',
-            'price', 'size_sqm', 'price_per_sqm', 'ward',
+            'price', 'total_sqm', 'price_per_sqm', 'ward',
             'building_age_years', 'nearest_station_meters'
         ]
         
@@ -192,7 +192,7 @@ class DailyDigestGenerator:
                 <td>{verdict_str}</td>
                 <td>{components.get('ward_discount_pct', 0):.1f}%</td>
                 <td>¥{candidate.get('price', 0):,.0f}</td>
-                <td>{candidate.get('size_sqm', 0):.1f}m²</td>
+                <td>{candidate.get('total_sqm', 0):.1f}m²</td>
                 <td>¥{candidate.get('price_per_sqm', 0):,.0f}</td>
                 <td>{candidate.get('ward', 'N/A')}</td>
                 <td>{candidate.get('building_age_years', 0)}y</td>
@@ -287,19 +287,3 @@ def generate_daily_digest(candidates: List[Dict[str, Any]],
     return generator.generate_digest_package(candidates, snapshots)
 
 
-def send_daily_digest_email(date_str: str = None) -> Dict[str, Any]:
-    """
-    Main entry point for sending daily digest email.
-    
-    This function delegates to the main implementation in notifications.notifier.
-    
-    Args:
-        date_str: Date string (YYYY-MM-DD), defaults to today
-        
-    Returns:
-        Dictionary with generation results and metrics
-    """
-    from notifications.notifier import send_daily_digest
-    
-    event = {'date': date_str} if date_str else {}
-    return send_daily_digest(event)

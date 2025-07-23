@@ -13,16 +13,17 @@ from typing import Any, Dict, List, Optional
 import boto3
 import openai
 from openai import OpenAI, AsyncOpenAI
+from botocore.exceptions import ClientError
 
 # Import schema validation and metrics with better error handling
 import sys
 from pathlib import Path
 
-# Add parent directories to path for local imports during Lambda execution
-if '/opt/python' not in sys.path:
-    current_dir = Path(__file__).parent
-    repo_root = current_dir.parent.parent.parent  # Navigate to repo root
-    sys.path.insert(0, str(repo_root))
+# Note: Remove sys.path manipulation - modules should be packaged with Lambda deployment
+
+# Set up logging first
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 # Try importing schema validation
 validate_llm_output = None
@@ -36,13 +37,34 @@ except ImportError as e:
     logger.warning(f"Schema validation not available: {e}")
     # Provide fallback implementations
     def validate_llm_output(response: str):
-        """Fallback validation - always returns invalid."""
-        return False, None, "Schema validation module not available"
+        """Fallback validation - basic JSON and structure check."""
+        try:
+            import json
+            data = json.loads(response)
+            # Basic structure check for lean evaluation format - use correct field names from schema
+            if isinstance(data, dict) and 'upside' in data and 'risks' in data and 'justification' in data:
+                # Check that required fields exist and are lists/strings
+                if (isinstance(data.get('upside'), list) and 
+                    isinstance(data.get('risks'), list) and 
+                    isinstance(data.get('justification'), str)):
+                    return True, data, None
+                else:
+                    return False, None, "Invalid structure - upside/risks must be lists, justification must be string"
+            else:
+                return False, None, "Missing required fields: upside, risks, justification"
+        except json.JSONDecodeError as e:
+            return False, None, f"Invalid JSON: {str(e)}"
+        except Exception as e:
+            return False, None, f"Validation error: {str(e)}"
     
     def create_fallback_evaluation(property_id: str, base_score: int, final_score: int, verdict: str = "REJECT"):
         """Fallback evaluation creation."""
         return {
-            "upsides": ["Fallback evaluation - schema validation unavailable"],
+            "property_id": property_id,
+            "base_score": base_score,
+            "final_score": final_score,
+            "verdict": verdict,
+            "upside": ["Fallback evaluation - schema validation unavailable"],
             "risks": ["Schema validation module not loaded", "Manual review required"],
             "justification": "Fallback response due to missing schema validation utilities"
         }
@@ -122,9 +144,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         # Default model from environment
         if get_config:
-            default_model = get_config().get_str('LLM_MODEL', 'gpt-4o-mini')
+            default_model = get_config().get_str('OPENAI_MODEL', 'gpt-4o')
         else:
-            default_model = os.environ.get('OPENAI_MODEL', 'o3')
+            default_model = os.environ.get('OPENAI_MODEL', 'gpt-4o')
         logger.info(f"Using model: {default_model}")
         
         # Load batch requests JSONL from S3
@@ -168,6 +190,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             'date': date_str,
             'bucket': bucket,
             'result_key': result_key,
+            'batch_id': f"batch_{date_str}",
+            'batch_result': results,
             'candidates_processed': candidates_count,
             'llm_calls': metrics['llm_calls'],
             'schema_failures': metrics['schema_failures'],
@@ -193,10 +217,47 @@ def get_openai_client() -> OpenAI:
         else:
             secret_name = os.environ.get('OPENAI_SECRET_NAME', 'ai-scraper/openai-api-key')
         
-        response = secrets_client.get_secret_value(SecretId=secret_name)
-        api_key = response['SecretString']
-        
-        return OpenAI(api_key=api_key)
+        # Retry logic for API key retrieval
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = secrets_client.get_secret_value(SecretId=secret_name)
+                api_key = response['SecretString']
+                
+                if not api_key or api_key.strip() == '':
+                    raise ValueError("Retrieved API key is empty")
+                
+                return OpenAI(api_key=api_key)
+                
+            except ClientError as e:
+                error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt  # Exponential backoff
+                    logger.warning(f"Secrets Manager attempt {attempt + 1} failed (error: {error_code}), retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"Failed to get API key after {max_retries} attempts: {error_code}")
+                    # Try fallback to environment variable
+                    fallback_key = os.environ.get('OPENAI_API_KEY')
+                    if fallback_key:
+                        logger.warning("Using fallback API key from environment variable")
+                        return OpenAI(api_key=fallback_key)
+                    else:
+                        raise Exception(f"Failed to get OpenAI API key from Secrets Manager after {max_retries} attempts: {error_code}")
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt
+                    logger.warning(f"Unexpected error retrieving API key, retrying in {wait_time}s: {e}")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"Failed to get API key after {max_retries} attempts due to unexpected error: {e}")
+                    # Try fallback to environment variable
+                    fallback_key = os.environ.get('OPENAI_API_KEY')
+                    if fallback_key:
+                        logger.warning("Using fallback API key from environment variable")
+                        return OpenAI(api_key=fallback_key)
+                    else:
+                        raise Exception(f"Failed to get OpenAI API key after {max_retries} attempts: {str(e)}")
         
     except Exception as e:
         logger.error(f"Failed to initialize OpenAI client: {e}")
@@ -625,7 +686,7 @@ if __name__ == "__main__":
     if 'OUTPUT_BUCKET' not in os.environ:
         os.environ['OUTPUT_BUCKET'] = 'tokyo-real-estate-ai-data'
     if 'OPENAI_MODEL' not in os.environ:
-        os.environ['OPENAI_MODEL'] = 'o3'
+        os.environ['OPENAI_MODEL'] = 'gpt-4o'
     
     result = lambda_handler(test_event, None)
     print(json.dumps(result, indent=2, default=str))

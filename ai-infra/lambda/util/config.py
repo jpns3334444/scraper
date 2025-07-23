@@ -7,6 +7,7 @@ and configuration flags, ensuring consistent behavior across all lambdas.
 
 import logging
 import os
+import threading
 from typing import Any, Dict, Optional, Union
 
 logger = logging.getLogger(__name__)
@@ -50,8 +51,10 @@ class LeanConfig:
         self._cache['LLM_RETRY_ATTEMPTS'] = self._get_int_from_env('LLM_RETRY_ATTEMPTS', default=1)
         
         # AWS settings
-        self._cache['AWS_REGION'] = os.getenv('AWS_REGION', 'ap-northeast-1')
-        self._cache['OUTPUT_BUCKET'] = os.getenv('OUTPUT_BUCKET', 'your-bucket-name')
+        self._cache['AWS_REGION'] = os.getenv('AWS_REGION') or os.getenv('AWS_DEFAULT_REGION', 'ap-northeast-1')
+        self._cache['OUTPUT_BUCKET'] = os.getenv('OUTPUT_BUCKET')
+        if not self._cache['OUTPUT_BUCKET']:
+            raise ValueError("OUTPUT_BUCKET environment variable is required and not set.")
         self._cache['DYNAMODB_TABLE'] = os.getenv('DYNAMODB_TABLE', '')
         
         # Email settings
@@ -210,20 +213,23 @@ class LeanConfig:
         return self._cache.copy()
 
 
-# Global instance - initialized once per lambda container
+# Global instance - initialized once per lambda container with thread safety
 _config_instance = None
+_config_lock = threading.Lock()
 
 
 def get_config() -> LeanConfig:
     """
-    Get the global configuration instance.
+    Get the global configuration instance (thread-safe singleton).
     
     Returns:
         LeanConfig singleton instance
     """
     global _config_instance
     if _config_instance is None:
-        _config_instance = LeanConfig()
+        with _config_lock:
+            if _config_instance is None:
+                _config_instance = LeanConfig()
     return _config_instance
 
 

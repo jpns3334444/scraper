@@ -133,9 +133,12 @@ def get_snapshots_context(date_str: str, bucket: str) -> Dict[str, Any]:
             'price_change_7d': global_data.get('price_change_7d_pct', 0)
         }
         
+    except s3_client.exceptions.NoSuchKey:
+        logger.warning(f"Global snapshot not found at {global_key}, using defaults")
+        context['global'] = {'median_ppm2': 650000, 'active_properties': 0, 'price_change_7d': 0}
     except Exception as e:
-        logger.warning(f"Failed to load global snapshot: {e}")
-        context['global'] = {'median_ppm2': 0, 'active_properties': 0}
+        logger.warning(f"Failed to load global snapshot: {e}, using defaults")
+        context['global'] = {'median_ppm2': 650000, 'active_properties': 0, 'price_change_7d': 0}
     
     return context
 
@@ -153,7 +156,7 @@ def load_candidate_properties(bucket: str, date_str: str) -> List[Dict[str, Any]
     """
     try:
         # Load processed listings JSONL
-        jsonl_key = f"data/processed/{date_str}/listings.jsonl"
+        jsonl_key = f"clean/{date_str}/listings.jsonl"
         response = s3_client.get_object(Bucket=bucket, Key=jsonl_key)
         content = response['Body'].read().decode('utf-8')
         
@@ -541,7 +544,10 @@ def get_image_as_base64_data_url(s3_url: str, bucket: str) -> str:
         
         # Download image from S3
         response = s3_client.get_object(Bucket=bucket, Key=key)
-        image_data = response['Body'].read()
+        try:
+            image_data = response['Body'].read()
+        finally:
+            response['Body'].close()
         
         # Determine MIME type from file extension
         file_ext = key.lower().split('.')[-1]

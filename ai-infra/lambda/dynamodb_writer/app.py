@@ -51,10 +51,19 @@ def lambda_handler(event, context):
             # Parse the analysis string to get the structured data
             analysis_json = json.loads(analysis_str)
             
-            # The actual property data is in the 'database_fields' key
-            property_data = analysis_json.get('database_fields', {})
+            # In Lean v1.3, the LLM produces a flat JSON structure (evaluation_min.json schema)
+            # Check if this is the lean format or legacy nested format
+            if 'database_fields' in analysis_json:
+                # Legacy nested format
+                property_data = analysis_json.get('database_fields', {})
+                logger.info(f"Processing legacy nested format for {result.get('custom_id')}")
+            else:
+                # Lean v1.3 flat format - use the analysis_json directly
+                property_data = analysis_json
+                logger.info(f"Processing lean flat format for {result.get('custom_id')}")
+            
             if not property_data:
-                logger.warning(f"Skipping result with missing 'database_fields': {result.get('custom_id')}")
+                logger.warning(f"Skipping result with no property data: {result.get('custom_id')}")
                 continue
 
             raw_property_id = result.get('custom_id', '').split('-')[-1]
@@ -110,119 +119,121 @@ def safe_bool(value, default=False):
     return default
 
 def create_meta_item(property_id, analysis, full_result):
-    """Creates the META item for a property with all comprehensive fields."""
+    """Creates the META item for a property. Handles both legacy and lean formats."""
     now = datetime.utcnow()
     
-    item = {
-        # Primary keys
-        'property_id': property_id,
-        'sort_key': 'META',
-        
-        # Core Property Information
-        'listing_url': full_result.get('listing_url', ''),
-        'scraped_date': full_result.get('scraped_date', now.isoformat()),
-        'analysis_date': now.isoformat(),
-        'property_type': analysis.get('property_type', 'apartment'),
-        'listing_status': 'active',
-        
-        # Price & Financial Metrics
-        'price': safe_int(analysis.get('price')),
-        'price_per_sqm': safe_int(analysis.get('price_per_sqm')),
-        'price_trend': analysis.get('price_trend', 'at_market'),
-        'estimated_market_value': safe_int(analysis.get('estimated_market_value')),
-        'price_negotiability_score': safe_int(analysis.get('price_negotiability_score'), 5),
-        'monthly_management_fee': safe_int(analysis.get('monthly_management_fee')),
-        'annual_property_tax': safe_int(analysis.get('annual_property_tax')),
-        'reserve_fund_balance': safe_int(analysis.get('reserve_fund_balance')),
-        'special_assessments': safe_int(analysis.get('special_assessments')),
-        
-        # Location & Building Details
-        'address': analysis.get('address', ''),
-        'district': analysis.get('district', ''),
-        'district_key': f"DIST#{analysis.get('district', 'Unknown').replace(' ', '_')}",
-        'nearest_station': analysis.get('nearest_station', ''),
-        'station_distance_minutes': safe_int(analysis.get('station_distance_minutes')),
-        'building_name': analysis.get('building_name', ''),
-        'building_age_years': safe_int(analysis.get('building_age_years')),
-        'total_units_in_building': safe_int(analysis.get('total_units_in_building')),
-        'floor_number': safe_int(analysis.get('floor_number')),
-        'total_floors': safe_int(analysis.get('total_floors')),
-        'direction_facing': analysis.get('direction_facing', ''),
-        'corner_unit': safe_bool(analysis.get('corner_unit')),
-        
-        # Property Specifications
-        'total_sqm': safe_float(analysis.get('total_sqm')),
-        'num_bedrooms': safe_int(analysis.get('num_bedrooms')),
-        'num_bathrooms': safe_float(analysis.get('num_bathrooms')),
-        'balcony_sqm': safe_float(analysis.get('balcony_sqm')),
-        'storage_sqm': safe_float(analysis.get('storage_sqm')),
-        'parking_included': safe_bool(analysis.get('parking_included')),
-        'parking_type': analysis.get('parking_type', 'none'),
-        'layout_efficiency_score': safe_int(analysis.get('layout_efficiency_score'), 5),
-        
-        # Image Analysis Results
-        'overall_condition_score': safe_int(analysis.get('overall_condition_score'), 5),
-        'natural_light_score': safe_int(analysis.get('natural_light_score'), 5),
-        'view_quality_score': safe_int(analysis.get('view_quality_score'), 5),
-        'mold_detected': safe_bool(analysis.get('mold_detected')),
-        'water_damage_detected': safe_bool(analysis.get('water_damage_detected')),
-        'visible_cracks': safe_bool(analysis.get('visible_cracks')),
-        'renovation_needed': analysis.get('renovation_needed', 'unknown'),
-        'flooring_condition': analysis.get('flooring_condition', 'unknown'),
-        'kitchen_condition': analysis.get('kitchen_condition', 'unknown'),
-        'bathroom_condition': analysis.get('bathroom_condition', 'unknown'),
-        'wallpaper_present': safe_bool(analysis.get('wallpaper_present')),
-        'tatami_present': safe_bool(analysis.get('tatami_present')),
-        'cleanliness_score': safe_int(analysis.get('cleanliness_score'), 5),
-        'staging_quality': analysis.get('staging_quality', 'none'),
-        
-        # Amenities & Features
-        'earthquake_resistance_standard': analysis.get('earthquake_resistance_standard', 'unknown'),
-        'elevator_access': safe_bool(analysis.get('elevator_access')),
-        'auto_lock_entrance': safe_bool(analysis.get('auto_lock_entrance')),
-        'delivery_box': safe_bool(analysis.get('delivery_box')),
-        'pet_allowed': safe_bool(analysis.get('pet_allowed')),
-        'balcony_direction': analysis.get('balcony_direction', ''),
-        'double_glazed_windows': safe_bool(analysis.get('double_glazed_windows')),
-        'floor_heating': safe_bool(analysis.get('floor_heating')),
-        'security_features': analysis.get('security_features', []),
-        
-        # Investment Analysis
-        'investment_score': safe_int(analysis.get('investment_score')),
-        'invest_partition': 'INVEST',  # For GSI
-        'rental_yield_estimate': safe_float(analysis.get('rental_yield_estimate')),
-        'appreciation_potential': analysis.get('appreciation_potential', 'medium'),
-        'liquidity_score': safe_int(analysis.get('liquidity_score'), 5),
-        'target_tenant_profile': analysis.get('target_tenant_profile', ''),
-        'renovation_roi_potential': safe_float(analysis.get('renovation_roi_potential')),
-        
-        # AI Assessment Fields
-        'price_analysis': analysis.get('price_analysis', ''),
-        'location_assessment': analysis.get('location_assessment', ''),
-        'condition_assessment': analysis.get('condition_assessment', ''),
-        'investment_thesis': analysis.get('investment_thesis', ''),
-        'competitive_advantages': analysis.get('competitive_advantages', []),
-        'risks': analysis.get('risks', []),
-        'recommended_offer_price': safe_int(analysis.get('recommended_offer_price')),
-        'recommendation': analysis.get('recommendation', 'pass'),
-        'confidence_score': safe_float(analysis.get('confidence_score'), 0.5),
-        'comparable_properties': analysis.get('comparable_properties', []),
-        
-        # Market Context
-        'market_days_listed': safe_int(analysis.get('market_days_listed')),
-        'price_reductions': safe_int(analysis.get('price_reductions')),
-        'similar_units_available': safe_int(analysis.get('similar_units_available')),
-        'recent_sales_same_building': analysis.get('recent_sales_same_building', []),
-        'neighborhood_trend': analysis.get('neighborhood_trend', 'stable'),
-        
-        # Metadata
-        'llm_model_version': full_result.get('model', ''),
-        'image_analysis_model_version': analysis.get('image_analysis_model_version', ''),
-        'full_llm_response': full_result.get('full_response', {}),
-        'processing_errors': analysis.get('processing_errors', []),
-        'data_quality_score': safe_float(analysis.get('data_quality_score'), 0.5),
-        'analysis_yymm': now.strftime('%Y-%m')
-    }
+    # Check if this is lean format (evaluation_min.json schema)
+    is_lean_format = ('verdict' in analysis and 'upside' in analysis and 'risks' in analysis)
+    
+    if is_lean_format:
+        # Lean v1.3 format - minimal fields for lean evaluation
+        item = {
+            # Primary keys
+            'property_id': property_id,
+            'sort_key': 'META',
+            
+            # Core Information
+            'listing_url': full_result.get('listing_url', ''),
+            'analysis_date': now.isoformat(),
+            'property_id_simple': analysis.get('property_id', ''),
+            
+            # Lean evaluation fields
+            'base_score': safe_int(analysis.get('base_score')),
+            'final_score': safe_int(analysis.get('final_score')),
+            'verdict': analysis.get('verdict', 'REJECT'),
+            'upside': analysis.get('upside', []),
+            'risks': analysis.get('risks', []),
+            'justification': analysis.get('justification', ''),
+            
+            # Investment Analysis (simplified)
+            'investment_score': safe_int(analysis.get('final_score')),  # Use final_score as investment_score
+            'invest_partition': 'INVEST',  # For GSI
+            'recommendation': analysis.get('verdict', 'REJECT').lower().replace('_candidate', ''),
+            
+            # Metadata
+            'llm_model_version': full_result.get('model', ''),
+            'analysis_yymm': now.strftime('%Y-%m'),
+            'data_format': 'lean_v1.3'
+        }
+    else:
+        # Legacy comprehensive format
+        item = {
+            # Primary keys
+            'property_id': property_id,
+            'sort_key': 'META',
+            
+            # Core Property Information
+            'listing_url': full_result.get('listing_url', ''),
+            'scraped_date': full_result.get('scraped_date', now.isoformat()),
+            'analysis_date': now.isoformat(),
+            'property_type': analysis.get('property_type', 'apartment'),
+            'listing_status': 'active',
+            
+            # Price & Financial Metrics (legacy comprehensive fields)
+            'price': safe_int(analysis.get('price')),
+            'price_per_sqm': safe_int(analysis.get('price_per_sqm')),
+            'price_trend': analysis.get('price_trend', 'at_market'),
+            'estimated_market_value': safe_int(analysis.get('estimated_market_value')),
+            'price_negotiability_score': safe_int(analysis.get('price_negotiability_score'), 5),
+            'monthly_management_fee': safe_int(analysis.get('monthly_management_fee')),
+            'annual_property_tax': safe_int(analysis.get('annual_property_tax')),
+            'reserve_fund_balance': safe_int(analysis.get('reserve_fund_balance')),
+            'special_assessments': safe_int(analysis.get('special_assessments')),
+            
+            # Location & Building Details
+            'address': analysis.get('address', ''),
+            'district': analysis.get('district', ''),
+            'district_key': f"DIST#{analysis.get('district', 'Unknown').replace(' ', '_')}",
+            'nearest_station': analysis.get('nearest_station', ''),
+            'station_distance_minutes': safe_int(analysis.get('station_distance_minutes')),
+            'building_name': analysis.get('building_name', ''),
+            'building_age_years': safe_int(analysis.get('building_age_years')),
+            'total_units_in_building': safe_int(analysis.get('total_units_in_building')),
+            'floor_number': safe_int(analysis.get('floor_number')),
+            'total_floors': safe_int(analysis.get('total_floors')),
+            'direction_facing': analysis.get('direction_facing', ''),
+            'corner_unit': safe_bool(analysis.get('corner_unit')),
+            
+            # Property Specifications
+            'total_sqm': safe_float(analysis.get('total_sqm')),
+            'num_bedrooms': safe_int(analysis.get('num_bedrooms')),
+            'num_bathrooms': safe_float(analysis.get('num_bathrooms')),
+            'balcony_sqm': safe_float(analysis.get('balcony_sqm')),
+            'storage_sqm': safe_float(analysis.get('storage_sqm')),
+            'parking_included': safe_bool(analysis.get('parking_included')),
+            'parking_type': analysis.get('parking_type', 'none'),
+            'layout_efficiency_score': safe_int(analysis.get('layout_efficiency_score'), 5),
+            
+            # Investment Analysis
+            'investment_score': safe_int(analysis.get('investment_score')),
+            'invest_partition': 'INVEST',  # For GSI
+            'rental_yield_estimate': safe_float(analysis.get('rental_yield_estimate')),
+            'appreciation_potential': analysis.get('appreciation_potential', 'medium'),
+            'liquidity_score': safe_int(analysis.get('liquidity_score'), 5),
+            'target_tenant_profile': analysis.get('target_tenant_profile', ''),
+            'renovation_roi_potential': safe_float(analysis.get('renovation_roi_potential')),
+            
+            # AI Assessment Fields
+            'price_analysis': analysis.get('price_analysis', ''),
+            'location_assessment': analysis.get('location_assessment', ''),
+            'condition_assessment': analysis.get('condition_assessment', ''),
+            'investment_thesis': analysis.get('investment_thesis', ''),
+            'competitive_advantages': analysis.get('competitive_advantages', []),
+            'risks': analysis.get('risks', []),
+            'recommended_offer_price': safe_int(analysis.get('recommended_offer_price')),
+            'recommendation': analysis.get('recommendation', 'pass'),
+            'confidence_score': safe_float(analysis.get('confidence_score'), 0.5),
+            'comparable_properties': analysis.get('comparable_properties', []),
+            
+            # Metadata
+            'llm_model_version': full_result.get('model', ''),
+            'image_analysis_model_version': analysis.get('image_analysis_model_version', ''),
+            'full_llm_response': full_result.get('full_response', {}),
+            'processing_errors': analysis.get('processing_errors', []),
+            'data_quality_score': safe_float(analysis.get('data_quality_score'), 0.5),
+            'analysis_yymm': now.strftime('%Y-%m'),
+            'data_format': 'legacy'
+        }
     
     return item
 

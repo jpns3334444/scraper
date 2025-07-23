@@ -11,10 +11,14 @@ import os
 import sys
 from typing import Any, Dict
 
-# Add the project root to the path so we can import our modules
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-
-from notifications.notifier import send_daily_digest
+# Import notifications module - ensure modules are packaged with Lambda deployment
+try:
+    from notifications.notifier import send_daily_digest
+except ImportError as e:
+    logger.error(f"Failed to import notifications.notifier: {e}")
+    logger.error("DEPLOYMENT ERROR: The 'notifications' module must be packaged with this Lambda function")
+    logger.error("Include notifications/ directory in the deployment package or use a Lambda layer")
+    raise RuntimeError(f"Missing required module 'notifications': {e}")
 
 # Configure logging
 logger = logging.getLogger()

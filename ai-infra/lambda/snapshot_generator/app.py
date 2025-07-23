@@ -15,17 +15,14 @@ from typing import Any, Dict
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Add the project root to the path so we can import our modules
-project_root = os.path.join(os.path.dirname(__file__), '..', '..', '..')
-sys.path.append(project_root)
-
-# Import snapshot manager
+# Import snapshot manager - ensure modules are packaged with Lambda deployment
 try:
     from snapshots.snapshot_manager import generate_daily_snapshots
 except ImportError as e:
     logger.error(f"Failed to import snapshot_manager: {e}")
-    # For AWS Lambda, we might need to handle the import differently
-    raise
+    logger.error("DEPLOYMENT ERROR: The 'snapshots' module must be packaged with this Lambda function")
+    logger.error("Include snapshots/ directory in the deployment package or use a Lambda layer")
+    raise RuntimeError(f"Missing required module 'snapshots': {e}")
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:

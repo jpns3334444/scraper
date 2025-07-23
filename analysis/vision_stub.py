@@ -64,6 +64,7 @@ class VisionStub:
     def analyze_from_filenames(self, image_urls: List[str]) -> VisionAnalysis:
         """
         Perform basic condition analysis from image filenames.
+        Limited to first 3 images as per Lean v1.3 spec.
         
         Args:
             image_urls: List of S3 image URLs or filenames
@@ -79,14 +80,17 @@ class VisionStub:
                 confidence=0.0
             )
         
+        # Limit to first 3 images as per Lean v1.3 spec
+        limited_image_urls = image_urls[:3]
+        
         positive_factors = []
         negative_factors = []
         total_score = 0
         matches_found = 0
         
-        logger.info(f"Analyzing {len(image_urls)} image filenames for condition indicators")
+        logger.info(f"Analyzing {len(limited_image_urls)} image filenames for condition indicators (limited from {len(image_urls)} total)")
         
-        for url in image_urls:
+        for url in limited_image_urls:
             # Extract filename from URL
             filename = url.split('/')[-1].lower()
             # Remove file extensions and URL encoding
@@ -121,7 +125,7 @@ class VisionStub:
             base_score = 5
             adjustment = total_score / max(1, matches_found) * 2  # Scale adjustment
             condition_score = max(0, min(10, base_score + adjustment))
-            confidence = min(1.0, matches_found / len(image_urls))
+            confidence = min(1.0, matches_found / len(limited_image_urls))
         else:
             condition_score = 5  # Neutral if no indicators found
             confidence = 0.0
@@ -145,6 +149,7 @@ class VisionStub:
     def analyze_room_types(self, image_urls: List[str]) -> Dict[str, int]:
         """
         Count different room types from image filenames.
+        Limited to first 3 images as per Lean v1.3 spec.
         
         Args:
             image_urls: List of image URLs
@@ -177,7 +182,10 @@ class VisionStub:
             'storage': ['storage', 'closet', 'wardrobe', 'pantry']
         }
         
-        for url in image_urls:
+        # Limit to first 3 images as per Lean v1.3 spec
+        limited_image_urls = image_urls[:3]
+        
+        for url in limited_image_urls:
             filename = url.split('/')[-1].lower()
             clean_name = re.sub(r'\.(jpg|jpeg|png|gif|webp)$', '', filename)
             clean_name = clean_name.replace('%20', ' ').replace('_', ' ')
@@ -199,6 +207,7 @@ class VisionStub:
 def analyze_property_images(image_urls: List[str]) -> Dict[str, Any]:
     """
     Analyze property images and return vision analysis data.
+    Limited to first 3 images as per Lean v1.3 spec.
     
     Args:
         image_urls: List of image URLs
@@ -206,9 +215,12 @@ def analyze_property_images(image_urls: List[str]) -> Dict[str, Any]:
     Returns:
         Dictionary with vision analysis results
     """
+    # Limit to first 3 images as per Lean v1.3 spec
+    limited_image_urls = image_urls[:3]
+    
     vision = VisionStub()
-    analysis = vision.analyze_from_filenames(image_urls)
-    room_counts = vision.analyze_room_types(image_urls)
+    analysis = vision.analyze_from_filenames(limited_image_urls)
+    room_counts = vision.analyze_room_types(limited_image_urls)
     
     return {
         'vision_analysis': {
@@ -218,7 +230,8 @@ def analyze_property_images(image_urls: List[str]) -> Dict[str, Any]:
             'confidence': analysis.confidence
         },
         'room_analysis': room_counts,
-        'total_images': len(image_urls)
+        'total_images': len(image_urls),  # Report original count
+        'analyzed_images': len(limited_image_urls)  # Report analyzed count
     }
 
 
@@ -245,16 +258,22 @@ def generate_vision_summary(property_data: Dict[str, Any], bucket: str, max_toke
     if not image_urls:
         return "No images available for condition assessment"
     
+    # Limit to first 3 images as per Lean v1.3 spec
+    limited_image_urls = image_urls[:3]
+    
     # Perform quick analysis
     vision = VisionStub()
-    analysis = vision.analyze_from_filenames(image_urls)
-    room_counts = vision.analyze_room_types(image_urls)
+    analysis = vision.analyze_from_filenames(limited_image_urls)
+    room_counts = vision.analyze_room_types(limited_image_urls)
     
     # Build concise summary
     parts = []
     
-    # Image count
-    parts.append(f"{len(image_urls)} images")
+    # Image count (show limited count)
+    if len(image_urls) > 3:
+        parts.append(f"{len(limited_image_urls)} images (of {len(image_urls)} total)")
+    else:
+        parts.append(f"{len(limited_image_urls)} images")
     
     # Room diversity
     room_types_with_images = sum(1 for count in room_counts.values() if count > 0)
@@ -455,10 +474,11 @@ def enrich_property_with_vision(property_data: Dict[str, Any]) -> Dict[str, Any]
                 'confidence': 0.0
             },
             'room_analysis': {},
-            'total_images': 0
+            'total_images': 0,
+            'analyzed_images': 0
         }
     
-    # Perform analysis
+    # Perform analysis (analyze_property_images already limits to 3 images)
     vision_data = analyze_property_images(image_urls)
     
     # Merge with existing property data
