@@ -10,6 +10,7 @@ import boto3
 
 # Import the ETL function
 import sys
+
 import importlib
 os.environ.setdefault('AWS_DEFAULT_REGION', 'us-east-1')
 etl_module = importlib.import_module('ai_infra.lambda.etl.app')
@@ -17,6 +18,7 @@ lambda_handler = etl_module.lambda_handler
 process_listings = etl_module.process_listings
 process_single_listing = etl_module.process_single_listing
 process_photos = etl_module.process_photos
+
 
 
 class TestETL:

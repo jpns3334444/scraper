@@ -16,10 +16,13 @@ import sys
 import importlib.util
 import argparse
 import logging
+from pathlib import Path
+
 
 # Import the scraper module using a relative path
 module_path = os.path.join(os.path.dirname(__file__), "scrape.py")
 spec = importlib.util.spec_from_file_location("scrape", module_path)
+
 scraper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(scraper)
 
