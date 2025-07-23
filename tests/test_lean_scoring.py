@@ -2,7 +2,9 @@
 Test cases for the lean deterministic scoring module.
 """
 
+import json
 import pytest
+from pathlib import Path
 from analysis.lean_scoring import (
     LeanScoring, 
     ScoringComponents, 
@@ -10,6 +12,14 @@ from analysis.lean_scoring import (
     score_property,
     batch_score_properties
 )
+
+
+@pytest.fixture
+def sample_properties():
+    """Load sample properties from fixtures."""
+    fixture_path = Path(__file__).parent / 'fixtures' / 'sample_properties.json'
+    with open(fixture_path) as f:
+        return json.load(f)
 
 
 def test_lean_scoring_initialization():
@@ -369,6 +379,225 @@ def test_lean_v13_specific_rules():
     missing_ward_data = {'current_price': 50000000, 'total_sqm': 50, 'price_per_sqm': 1000000}
     result = compute_base_and_adjustments(missing_ward_data, None, [], {}, None)
     assert result['dq_penalty'] <= -4  # Missing ward median = -4
+
+
+class TestScoringComponentBoundaries:
+    """Test boundary conditions for scoring components (merged from test_scoring_basic.py)"""
+    
+    def test_ward_discount_linearity(self):
+        """Test ward discount scoring linearity across range."""
+        from analysis.lean_scoring import compute_base_and_adjustments
+        
+        # Test perfect 20% discount (should get full 25 points)
+        listing = {
+            'price_per_sqm': 800000,
+            'current_price': 50000000, 
+            'total_sqm': 60.0,
+            'size_sqm': 60.0  # Add both variants for compatibility
+        }
+        ward_median = 1000000  # 800k vs 1000k = 20% discount
+        
+        result = compute_base_and_adjustments(listing, ward_median, [], {}, None)
+        
+        assert result['components']['ward_discount'] == 25.0
+        assert result['ward_discount_pct'] == -20.0  # 20% discount
+        
+        # Test 10% discount (should get 12.5 points)
+        listing_10pct = {
+            'price_per_sqm': 900000,
+            'current_price': 54000000,
+            'total_sqm': 60.0,
+            'size_sqm': 60.0
+        }
+        result_10pct = compute_base_and_adjustments(listing_10pct, 1000000, [], {}, None)
+        assert result_10pct['components']['ward_discount'] == 12.5
+    
+    def test_size_efficiency_boundaries(self):
+        """Test size efficiency scoring boundaries (20-120 sqm range)."""
+        from analysis.lean_scoring import compute_base_and_adjustments
+        
+        # Property within range should get 4 points
+        in_range = {
+            'price_per_sqm': 1000000,
+            'current_price': 50000000,
+            'total_sqm': 60.0,
+            'size_sqm': 60.0
+        }
+        result = compute_base_and_adjustments(in_range, 1000000, [], {}, None)
+        assert result['components']['size_efficiency'] == 4.0
+        
+        # Property too large should get 0 points
+        too_large = {
+            'price_per_sqm': 1000000,
+            'current_price': 150000000,
+            'total_sqm': 150.0,
+            'size_sqm': 150.0
+        }
+        result_large = compute_base_and_adjustments(too_large, 1000000, [], {}, None)
+        assert result_large['components']['size_efficiency'] == 0.0
+    
+    def test_data_quality_penalty_levels(self):
+        """Test data quality penalty calculations."""
+        from analysis.lean_scoring import compute_base_and_adjustments
+        
+        # Missing critical data (price): -6 penalty  
+        listing_no_price = {
+            'price_per_sqm': 1000000,
+            'total_sqm': 60.0,
+            'size_sqm': 60.0
+        }
+        result_no_price = compute_base_and_adjustments(listing_no_price, 1000000, [], {}, None)
+        assert result_no_price['dq_penalty'] <= -6
+        
+        # Complete data should have minimal penalty
+        complete_listing = {
+            'price_per_sqm': 1000000,
+            'current_price': 50000000,
+            'total_sqm': 60.0,
+            'size_sqm': 60.0
+        }
+        result_complete = compute_base_and_adjustments(complete_listing, 1000000, [], {}, None)
+        assert result_complete['dq_penalty'] >= -3  # Should have low penalty
+    
+    def test_carry_cost_boundaries(self):
+        """Test carry cost component boundaries."""
+        from analysis.lean_scoring import compute_base_and_adjustments
+        
+        # Excellent ratio (≤0.12) should get 4 points
+        excellent_listing = {
+            'price_per_sqm': 1000000,
+            'current_price': 50000000,
+            'total_sqm': 60.0,
+            'size_sqm': 60.0,
+            'hoa_fee_yen': 30000,
+            'repair_fund_yen': 30000  # Total 60k on 50M = 0.12 ratio
+        }
+        result_excellent = compute_base_and_adjustments(excellent_listing, 1000000, [], {}, None)
+        assert result_excellent['components']['carry_cost'] == 4.0
+        
+        # Poor ratio (≥0.18) should get 0 points
+        poor_listing = {
+            'price_per_sqm': 1000000,
+            'current_price': 50000000,
+            'total_sqm': 60.0,
+            'size_sqm': 60.0,
+            'hoa_fee_yen': 50000,
+            'repair_fund_yen': 40000  # Total 90k on 50M = 0.18 ratio
+        }
+        result_poor = compute_base_and_adjustments(poor_listing, 1000000, [], {}, None)
+        assert result_poor['components']['carry_cost'] == 0.0
+
+
+class TestScoringDeterminism:
+    """Test that scoring is deterministic (merged from test_scoring_basic.py)."""
+    
+    def test_score_consistency(self, sample_properties):
+        """Test that scoring is deterministic."""
+        scorer = LeanScoring()
+        
+        # Score the same property multiple times
+        prop = sample_properties[0] if sample_properties else {
+            'current_price': 50000000,
+            'total_sqm': 50,
+            'price_per_sqm': 1000000,
+            'ward_median_price_per_sqm': 1200000
+        }
+        
+        components1 = scorer.calculate_score(prop)
+        components2 = scorer.calculate_score(prop)
+        components3 = scorer.calculate_score(prop)
+        
+        # Results should be identical
+        assert components1.final_score == components2.final_score == components3.final_score
+        assert components1.verdict == components2.verdict == components3.verdict
+        assert components1.base_score == components2.base_score == components3.base_score
+
+
+class TestGatingRulesDetail:
+    """Test Lean v1.3 gating rules in detail (merged from test_scoring_basic.py)."""
+    
+    def test_buy_candidate_full_criteria(self):
+        """Test BUY_CANDIDATE gating criteria with all conditions."""
+        from analysis.lean_scoring import compute_base_and_adjustments
+        
+        # Create property that should be BUY_CANDIDATE
+        # final_score ≥75 AND ward_discount_pct ≤ -12% AND dq_penalty ≥ -4
+        excellent_listing = {
+            'price_per_sqm': 800000,      # -20% discount vs 1M ward median
+            'current_price': 48000000,
+            'total_sqm': 60.0,
+            'size_sqm': 60.0,
+            'hoa_fee_yen': 30000,
+            'repair_fund_yen': 30000
+        }
+        
+        # Good comparables
+        good_comps = [
+            {'price_per_sqm': 850000}, {'price_per_sqm': 860000},
+            {'price_per_sqm': 870000}, {'price_per_sqm': 880000}
+        ]
+        
+        # Modern condition
+        excellent_vision = {'condition_category': 'modern', 'damage_tokens': []}
+        
+        result = compute_base_and_adjustments(
+            excellent_listing, 1000000, good_comps, excellent_vision, None
+        )
+        
+        assert result['verdict'] == 'BUY_CANDIDATE'
+        assert result['final_score'] >= 75
+        assert result['ward_discount_pct'] <= -12
+        assert result['dq_penalty'] >= -4
+    
+    def test_watch_range_criteria(self):
+        """Test WATCH gating criteria."""
+        from analysis.lean_scoring import compute_base_and_adjustments
+        
+        # Create property with moderate score but in WATCH range
+        moderate_listing = {
+            'price_per_sqm': 900000,      # -10% discount
+            'current_price': 54000000,
+            'total_sqm': 60.0,
+            'size_sqm': 60.0
+        }
+        
+        moderate_vision = {'condition_category': 'dated', 'damage_tokens': []}
+        
+        result = compute_base_and_adjustments(
+            moderate_listing, 1000000, [], moderate_vision, None
+        )
+        
+        # Should be WATCH due to moderate discount in range
+        expected_watch = (
+            (60 <= result['final_score'] <= 74) or 
+            (-11.99 <= result['ward_discount_pct'] <= -8)
+        )
+        
+        if expected_watch:
+            assert result['verdict'] == 'WATCH'
+
+
+class TestExtremeValues:
+    """Test handling of extreme values (merged from test_scoring_basic.py)."""
+    
+    def test_extreme_property_values(self):
+        """Test handling of extreme values."""
+        from analysis.lean_scoring import compute_base_and_adjustments
+        
+        extreme_prop = {
+            'price_per_sqm': 10000000,  # Very expensive
+            'current_price': 500000000, # 50M for 50sqm
+            'total_sqm': 50.0,
+            'size_sqm': 50.0,
+            'hoa_fee_yen': 100000,
+            'repair_fund_yen': 100000   # High fees
+        }
+        
+        result = compute_base_and_adjustments(extreme_prop, 1000000, [], {}, None)
+        
+        assert 0 <= result['final_score'] <= 100
+        assert result['components']['ward_discount'] == 0.0  # Should get minimum for extreme premium
+        assert result['components']['carry_cost'] == 0.0     # Should get minimum for poor ratio
 
 
 if __name__ == "__main__":
