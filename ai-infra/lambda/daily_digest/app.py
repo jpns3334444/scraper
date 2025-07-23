@@ -13,7 +13,7 @@ from typing import Any, Dict
 
 # Import notifications module - ensure modules are packaged with Lambda deployment
 try:
-    from notifications.notifier import send_daily_digest
+    from notifications.notifier import DailyDigestGenerator
 except ImportError as e:
     logger.error(f"Failed to import notifications.notifier: {e}")
     logger.error("DEPLOYMENT ERROR: The 'notifications' module must be packaged with this Lambda function")
@@ -46,7 +46,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             date_str = event['date']
         
         # Generate and send digest
-        results = send_daily_digest(event)
+        generator = DailyDigestGenerator()
+        results = generator.generate_and_send_digest(date_str)
         
         logger.info("Daily digest completed successfully")
         logger.info(f"Results: {json.dumps(results, default=str)}")

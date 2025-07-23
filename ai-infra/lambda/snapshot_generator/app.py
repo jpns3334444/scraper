@@ -17,7 +17,7 @@ logger.setLevel(logging.INFO)
 
 # Import snapshot manager - ensure modules are packaged with Lambda deployment
 try:
-    from snapshots.snapshot_manager import generate_daily_snapshots
+    from snapshots.snapshot_manager import generate_all_snapshots
 except ImportError as e:
     logger.error(f"Failed to import snapshot_manager: {e}")
     logger.error("DEPLOYMENT ERROR: The 'snapshots' module must be packaged with this Lambda function")
@@ -46,7 +46,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             date_str = event['date']
         
         # Generate snapshots
-        results = generate_daily_snapshots(event)
+        results = generate_all_snapshots(event)
         
         logger.info("Snapshot generation completed successfully")
         logger.info(f"Results: {json.dumps(results, default=str)}")

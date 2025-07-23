@@ -287,6 +287,9 @@ def load_batch_requests_from_s3(bucket: str, key: str) -> List[Dict[str, Any]]:
         logger.info(f"Loaded {len(requests)} candidate batch requests from JSONL")
         return requests
         
+    except s3_client.exceptions.NoSuchKey:
+        logger.error(f"Batch requests file not found: s3://{bucket}/{key}")
+        return []
     except Exception as e:
         logger.error(f"Failed to load batch requests from s3://{bucket}/{key}: {e}")
         raise
@@ -309,7 +312,8 @@ async def process_lean_requests(
         Tuple of (results, metrics)
     """
     # Create async client
-    async_client = AsyncOpenAI(api_key=client.api_key)
+    api_key = client.api_key
+    async_client = AsyncOpenAI(api_key=api_key)
     
     # Metrics tracking
     metrics = {

@@ -175,9 +175,12 @@ def load_candidate_properties(bucket: str, date_str: str) -> List[Dict[str, Any]
         logger.info(f"Filtered {len(candidates)} candidates from {total_properties} total properties")
         return candidates
         
-    except Exception as e:
-        logger.error(f"Failed to load candidate properties: {e}")
+    except s3_client.exceptions.NoSuchKey:
+        logger.error(f"Candidate properties file not found: s3://{bucket}/{jsonl_key}")
         return []
+    except Exception as e:
+        logger.error(f"Failed to load candidate properties from s3://{bucket}/{jsonl_key}: {e}")
+        raise
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -204,7 +207,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         market_context = get_snapshots_context(date_str, bucket)
         
         # Load only candidate properties
-        candidates = load_candidate_properties(bucket, date_str)
+        candidates = event.get('candidates', [])
+        if not candidates:
+            candidates = load_candidate_properties(bucket, date_str)
         
         if not candidates:
             logger.warning("No candidate properties found - returning empty batch")

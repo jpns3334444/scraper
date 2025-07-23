@@ -37,19 +37,11 @@ def lambda_handler(event, context):
     Processes LLM batch results and writes structured data to DynamoDB.
     Handles both META (snapshot) and HIST (price change) items.
     """
-    batch_result = event.get('batch_result', {})
-    individual_results = batch_result.get('individual_results', [])
+    individual_results = event.get('batch_result', [])
     
     for result in individual_results:
         try:
-            # The 'analysis' field contains the full JSON response from the LLM
-            analysis_str = result.get('analysis', '{}')
-            if not analysis_str.strip().startswith('{'):
-                logger.warning(f"Skipping result with invalid analysis JSON: {result.get('custom_id')}")
-                continue
-
-            # Parse the analysis string to get the structured data
-            analysis_json = json.loads(analysis_str)
+            analysis_json = result.get('evaluation_data', {})
             
             # In Lean v1.3, the LLM produces a flat JSON structure (evaluation_min.json schema)
             # Check if this is the lean format or legacy nested format

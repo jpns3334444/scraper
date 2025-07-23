@@ -305,7 +305,7 @@ class SnapshotGenerator:
             raise
 
 
-def generate_daily_snapshots(event: Dict[str, Any] = None) -> Dict[str, Any]:
+def generate_all_snapshots(event: Dict[str, Any] = None) -> Dict[str, Any]:
     """
     Lambda entry point for daily snapshot generation.
     

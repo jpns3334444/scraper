@@ -9,10 +9,8 @@ Parameters:
     Default: tokyo-real-estate-ai-data
   EmailFrom:
     Type: String
-    Default: jpns3334444@gmail.com
   EmailTo:
     Type: String
-    Default: jpns3334444@gmail.com
   ETLCodeVersion:
     Type: String
     Default: latest
@@ -297,7 +295,7 @@ Resources:
       Environment:
         Variables:
           OUTPUT_BUCKET: !Ref OutputBucket
-          OPENAI_MODEL: gpt-4o  # Use 'gpt-4o' for consistent model across all functions
+          OPENAI_MODEL: o3  # Use 'gpt-4o' for consistent model across all functions
           OPENAI_SECRET_NAME: ai-scraper/openai-api-key
           LEAN_MODE: !Ref LeanMode
           LEAN_SCHEMA_ENFORCE: '1'
@@ -460,7 +458,7 @@ Resources:
                           "bucket.$": "$.Payload.bucket",
                           "jsonl_key.$": "$.Payload.jsonl_key",
                           "listings_count.$": "$.Payload.listings_count",
-                          "processed_data.$": "$.Payload.processed_data"
+                          "candidates.$": "$.Payload.candidates"
                       },
                       "Retry": [
                           {
@@ -493,7 +491,8 @@ Resources:
                           "Payload": {
                               "date.$": "$.etl_result.date",
                               "bucket.$": "$.etl_result.bucket",
-                              "jsonl_key.$": "$.etl_result.jsonl_key"
+                              "jsonl_key.$": "$.etl_result.jsonl_key",
+                              "candidates.$": "$.etl_result.candidates"
                           }
                       },
                       "ResultPath": "$.prompt_result",

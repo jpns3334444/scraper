@@ -144,11 +144,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 logger.info(f"Available files: {available_files[:10]}")  # Show first 10 for debugging
                 raise FileNotFoundError(f"No CSV files found for date {date_str} in scraper output")
                 
-        except Exception as list_error:
-            logger.error(f"Failed to list files in bucket: {list_error}")
-            # Fallback to legacy pattern for backward compatibility
-            csv_key = f"scraper-output/chofu-city-listings-{date_str}.csv"
-            logger.warning(f"Falling back to legacy pattern: {csv_key}")
+        except ClientError as e:
+            logger.error(f"Failed to list files in bucket: {e}")
+            return {
+                'statusCode': 500,
+                'error': 'S3 list objects failed',
+                'message': f"Failed to list objects in s3://{bucket}/{csv_prefix}. Error: {e}",
+                'date': date_str,
+                'bucket': bucket
+            }
         
         logger.info(f"Attempting to read CSV from s3://{bucket}/{csv_key}")
         
@@ -199,7 +203,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             'listings_count': len(processed_result['processed_data']),
             'candidates_count': len(processed_result['candidates']),
             'metrics': processed_result['metrics'],
-            'processed_data': [clean_for_json(item) for item in processed_result['processed_data'][:50]],  # Pass first 50 for next step
             'candidates': [clean_for_json(item) for item in processed_result['candidates']]  # Pass all candidates
         }
         
