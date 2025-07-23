@@ -38,7 +38,10 @@ def lambda_handler(event, context):
     Handles both META (snapshot) and HIST (price change) items.
     """
     batch_result = event.get('batch_result', {})
-    individual_results = batch_result.get('individual_results', [])
+    if isinstance(batch_result, list):
+        individual_results = batch_result
+    else:
+        individual_results = batch_result.get('individual_results', [])
     
     for result in individual_results:
         try:

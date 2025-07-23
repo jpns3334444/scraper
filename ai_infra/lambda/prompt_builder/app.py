@@ -57,6 +57,13 @@ if get_config:
 elif os.environ.get('DYNAMODB_TABLE'):
     table = dynamodb.Table(os.environ['DYNAMODB_TABLE'])
 
+# Determine default OpenAI model
+openai_model = 'gpt-4o'
+if get_config:
+    openai_model = get_config().get_str('OPENAI_MODEL', 'gpt-4o')
+else:
+    openai_model = os.environ.get('OPENAI_MODEL', 'gpt-4o')
+
 def load_lean_system_prompt() -> str:
     """
     Load the lean system prompt for Lean v1.3.
@@ -301,12 +308,12 @@ def build_lean_batch_requests(candidates: List[Dict[str, Any]], date_str: str,
                 "method": "POST",
                 "url": "/v1/chat/completions",
                 "body": {
-                    "model": "o3",
+                    "model": openai_model,
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_message_content}
                     ],
-                    "max_completion_tokens": 1000  # Reduced for lean output
+                    "max_tokens": 1000  # Reduced for lean output
                 }
             }
             
