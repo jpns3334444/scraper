@@ -9,7 +9,14 @@ import responses
 
 # Import the LLM batch function
 import sys
-sys.path.append('/mnt/c/Users/azure/Desktop/scraper/lambda/llm_batch')
+from pathlib import Path
+
+# Add the LLM Batch lambda directory to path and refresh import
+ROOT_DIR = Path(__file__).resolve().parents[1]
+LLM_DIR = ROOT_DIR / 'ai_infra' / 'lambda' / 'llm_batch'
+sys.path.insert(0, str(LLM_DIR))
+sys.modules.pop('app', None)
+
 from app import lambda_handler, create_batch_job, poll_batch_completion, download_batch_results
 
 

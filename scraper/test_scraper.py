@@ -14,9 +14,14 @@ import sys
 import importlib.util
 import argparse
 import logging
+from pathlib import Path
 
 # Import the scraper module
-spec = importlib.util.spec_from_file_location("scrape", "/mnt/c/Users/azure/Desktop/scraper/scraper/scrape.py")
+ROOT_DIR = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location(
+    "scrape",
+    str(ROOT_DIR / "scraper" / "scrape.py")
+)
 scraper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(scraper)
 

@@ -10,6 +10,10 @@ import sys
 import traceback
 from pathlib import Path
 
+# Ensure repository root is on sys.path for module imports
+ROOT_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT_DIR))
+
 # Set up detailed logging
 logging.basicConfig(
     level=logging.DEBUG,
@@ -114,25 +118,16 @@ def run_function(function_name, event_file):
     try:
         logger.info(f"Importing lambda function: {function_name}")
         
-        if function_name == "etl":
-            sys.path.insert(0, str(Path(__file__).parent / "lambda" / "etl"))
-            from app import lambda_handler
-        elif function_name == "prompt_builder":
-            sys.path.insert(0, str(Path(__file__).parent / "lambda" / "prompt_builder"))
-            from app import lambda_handler
-        elif function_name == "llm_batch":
-            sys.path.insert(0, str(Path(__file__).parent / "lambda" / "llm_batch"))
-            from app import lambda_handler
-        elif function_name == "report_sender":
-            sys.path.insert(0, str(Path(__file__).parent / "lambda" / "report_sender"))
-            from app import lambda_handler
-        elif function_name == "dynamodb_writer":
-            sys.path.insert(0, str(Path(__file__).parent / "lambda" / "dynamodb_writer"))
-            from app import lambda_handler
-        else:
+        base_lambda_dir = Path(__file__).parent / "lambda"
+        lambda_dir = base_lambda_dir / function_name
+        if not lambda_dir.exists():
             logger.error(f"Unknown function: {function_name}")
             print(f"Unknown function: {function_name}")
             return False
+        sys.modules.pop('app', None)
+        sys.path.insert(0, str(lambda_dir))
+        sys.path.insert(0, str(base_lambda_dir))
+        from app import lambda_handler
         
         logger.info(f"Successfully imported {function_name}")
         

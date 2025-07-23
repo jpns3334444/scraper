@@ -9,7 +9,14 @@ import boto3
 
 # Import the prompt builder function
 import sys
-sys.path.append('/mnt/c/Users/azure/Desktop/scraper/lambda/prompt_builder')
+from pathlib import Path
+
+# Add the Prompt Builder lambda directory to path and refresh import
+ROOT_DIR = Path(__file__).resolve().parents[1]
+PB_DIR = ROOT_DIR / 'ai_infra' / 'lambda' / 'prompt_builder'
+sys.path.insert(0, str(PB_DIR))
+sys.modules.pop('app', None)
+
 from app import lambda_handler, sort_and_filter_listings, build_batch_requests, generate_presigned_url, prioritize_images
 
 
