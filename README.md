@@ -1,64 +1,80 @@
-# Tokyo Real Estate Lean Analysis System
 
-This repository contains an automated pipeline for analysing Tokyo real estate listings using a deterministic workflow referred to as **Lean v1.3**.  The code is intended to be maintained entirely by coding agents.  The pipeline collects property data, scores and filters candidates and generates a daily digest email.
+# Real Estate Scraper
 
-## Overview
+This is a sophisticated HTTP-based scraper designed to collect property data from `homes.co.jp`. It includes advanced features like stealth browsing, session management, a circuit breaker for reliability, and integration with AWS for data storage and monitoring.
 
-The repository is split into two major parts:
+## Features
 
-- **scraper/** – an EC2 based scraper that downloads property listings and images to S3.
-- **ai_infra/** – a collection of AWS Lambda functions orchestrated by Step Functions that process the scraped data.
+*   **Multiple Scraping Modes:**
+    *   `normal`: Standard, high-speed scraping.
+    *   `testing`: A lightweight mode for quick tests, limited to a small number of properties.
+    *   `stealth`: A slower, more human-like browsing mode to avoid detection.
+*   **Session Management:** Uses a pool of rotating sessions with varied browser profiles to mimic real user behavior.
+*   **Circuit Breaker:** Automatically halts requests when a high error rate is detected, preventing IP bans and gracefully handling site interruptions.
+*   **AWS Integration:** Can upload scraped data and images to S3 and send performance metrics to CloudWatch.
+*   **Dynamic Area Discovery:** Can automatically discover and distribute scraping tasks across all areas in Tokyo.
 
-Supporting modules live under `analysis/`, `snapshots/`, `notifications/` and `schemas/`.  Unit tests are located in `tests/`.
+## Dependencies
 
-## Lean v1.3 Workflow
+The following Python libraries are required to run the scraper:
 
-1. **ETL** – normalises raw listings and applies deterministic scoring defined in `analysis/lean_scoring.py`.
-2. **Candidate gating** – properties meeting score and discount thresholds are kept for LLM analysis.  Only ~20% of listings become candidates.
-3. **Prompt builder & LLM** – candidates are enriched with comparables and a short prompt is sent to the LLM to obtain qualitative notes (upsides, risks, justification).  Schema validation is enforced via `schemas/evaluation_min.json`.
-4. **Snapshots & Digest** – daily market snapshots are generated and a single digest email summarising all candidates is produced.
+*   `pandas`
+*   `requests`
+*   `beautifulsoup4`
+*   `boto3`
+*   `Pillow`
 
-The LLM is only used for short text generation on gated candidates.  All scoring logic and gating rules are implemented in Python for deterministic behaviour.
-
-## Important Environment Variables
-
-```
-LEAN_MODE=1                 # Enable Lean pipeline (default 0)
-LEAN_SCORING=1              # Use deterministic scoring
-LEAN_PROMPT=1               # Use lean prompt structure
-LEAN_SCHEMA_ENFORCE=1       # Enforce JSON schema on LLM output
-MAX_CANDIDATES_PER_DAY=120  # Safety limit on daily candidates
-OUTPUT_BUCKET=<s3-bucket>   # Destination for processed data
-AWS_REGION=ap-northeast-1   # Deployment region (Tokyo only)
+You can install them using pip:
+```bash
+pip install pandas requests beautifulsoup4 boto3 Pillow
 ```
 
-## Repository Layout
+## How to Run
 
-```
-analysis/       Deterministic scoring and comparable selection modules
-notifications/  Daily digest generation and notifier helpers
-snapshots/      Market snapshot utilities
-schemas/        JSON schema definitions and dataclasses
-ai_infra/       Lambda functions and Step Functions definition
-scraper/        EC2 scraper and deployment scripts
-examples/       Sample candidate data and digest output
-```
+The scraper is run from the command line and can be configured using arguments and environment variables.
 
-## Running Tests
-
-Install Python 3.11 and the required packages then execute `pytest`:
+### Basic Usage
 
 ```bash
-pip install boto3 pandas requests responses moto==4.2.14 openai jsonschema
-pytest -q
+python3 scrape.py
 ```
 
-Tests cover scoring, comparable selection, prompt assembly and digest creation.  They can be used as a reference when modifying pipeline components.
+### Scraping Modes
 
-## Notes for Coding Agents
+You can specify the scraping mode using the `--mode` flag.
 
-- The system is deterministic by default.  Avoid sending all listings to the LLM.
-- Limit new dependencies – Lambda functions rely on AWS provided runtimes.
-- Keep modules small and unit testable.  When adding features create tests in `tests/`.
-- Deployment scripts are located in `scraper/` and `ai_infra/`; SAM or Docker are not used.
+*   **Normal Mode:**
+    ```bash
+    python3 scrape.py --mode normal --max-properties 100 --areas "shibuya-ku,shinjuku-ku"
+    ```
+
+*   **Testing Mode:** (Runs with a hard limit of 5 properties for quick validation)
+    ```bash
+    python3 scrape.py --mode testing
+    ```
+
+*   **Stealth Mode:** (Uses human-like delays and browsing patterns)
+    ```bash
+    python3 scrape.py --mode stealth --max-properties 50
+    ```
+
+### Command-Line Arguments
+
+*   `--mode`: The scraping mode (`normal`, `testing`, `stealth`). Default: `normal`.
+*   `--max-properties`: The maximum number of properties to scrape.
+*   `--output-bucket`: The S3 bucket to upload the results to.
+*   `--max-threads`: The number of concurrent threads to use for scraping.
+*   `--areas`: A comma-separated list of Tokyo areas to scrape (e.g., `"chofu-city,shibuya-ku"`).
+
+### Environment Variables
+
+The scraper can also be configured using the following environment variables:
+
+*   `MODE`
+*   `MAX_PROPERTIES`
+*   `OUTPUT_BUCKET`
+*   `MAX_THREADS`
+*   `AREAS`
+*   `SESSION_ID` (Used in stealth mode to identify the scraping session)
+*   `ENTRY_POINT` (Used in stealth mode to simulate different user entry points)
 

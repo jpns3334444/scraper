@@ -94,3 +94,9 @@ echo "  Automation: $AUTOMATION_STACK_NAME"
 echo
 echo "🚀 To test the scraper, run:"
 echo "  aws lambda invoke --function-name tokyo-real-estate-trigger --payload '{}' /tmp/response.json --region $REGION"
+echo
+echo "💡 Next Steps:"
+echo "  1. Deploy the AI infrastructure:"
+echo "     cd ../ai_infra && ./deploy-ai.sh"
+echo "  2. Deploy the dashboard (after AI stack):"
+echo "     cd ../dashboard && ./deploy-dashboard.sh"
