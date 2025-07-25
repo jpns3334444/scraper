@@ -14,7 +14,7 @@ NC='\033[0m'       # reset
 # ─── Vars ──────────────────────────────────────────────────────────────────────
 MODE=${1:-testing}
 SESSION_ID=${2:-manual-$(date +%s)}
-LAMBDA_FUNCTION="trigger-scraper"
+LAMBDA_FUNCTION="tokyo-real-estate-trigger"
 LOG_GROUP_NAME="/aws/lambda/$LAMBDA_FUNCTION"
 START_TIME=$(($(date +%s) * 1000))   # CloudWatch needs ms
 
@@ -46,7 +46,7 @@ LOG_STREAM=$(aws logs describe-log-streams \
 
 # ─── Pick up EC2 instance ID from CFN output ──────────────────────────────────
 INSTANCE_ID=$(aws cloudformation describe-stacks \
-  --stack-name scraper-compute-stack \
+  --stack-name tokyo-real-estate-compute \
   --query "Stacks[0].Outputs[?OutputKey=='ScraperInstanceId'].OutputValue" \
   --output text)
 echo -e "${YELLOW}Instance ID: $INSTANCE_ID${NC}"

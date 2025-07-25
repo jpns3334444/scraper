@@ -91,7 +91,7 @@ Resources:
               try:
                   response = ec2.describe_instances(
                       Filters=[
-                          {'Name': 'tag:Name', 'Values': ['MarketScraper']},
+                          {'Name': 'tag:Name', 'Values': ['tokyo-real-estate-scraper']},
                           {'Name': 'instance-state-name', 'Values': ['stopped', 'running', 'pending']}
                       ]
                   )
