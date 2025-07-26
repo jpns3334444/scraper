@@ -737,7 +737,7 @@ circuit_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=60)
 
 def extract_listing_urls_from_html(html_content):
     """Extract unique listing URLs from HTML content"""
-    relative_urls = re.findall(r'/mansion/b-\d+/', html_content)
+    relative_urls = re.findall(r'/mansion/b-\d+/?', html_content)
     unique_listings = set()
     
     for url in relative_urls:
@@ -1452,8 +1452,8 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
             
             # Try multiple patterns for property ID extraction
             patterns = [
-                r'/mansion/b-(\d+)/',           # /mansion/b-1234567890/
-                r'/b-(\d+)/',                   # /b-1234567890/
+                r'/mansion/b-(\d+)/?',          # /mansion/b-1234567890/ or /mansion/b-1234567890
+                r'/b-(\d+)/?',                  # /b-1234567890/ or /b-1234567890
                 r'property[_-]?id[=:](\d+)',    # property_id=123 or property:123
                 r'mansion[_-]?(\d{8,})',        # mansion_12345678 or mansion-12345678
                 r'/(\d{10,})/'                  # Any 10+ digit number in URL path
