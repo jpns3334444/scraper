@@ -1,0 +1,94 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# AWS SAM
+.aws-sam/
+samconfig.toml
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# Logs
+*.log
+logs/
+
+# Secrets and credentials
+# *.pem  # Keep SSH keys for scraper system
+*.key
+.env.local
+.env.production
+.env.json
+secrets.json
+
+# Local data
+sample_data/raw/
+sample_data/clean/
+sample_data/prompts/
+sample_data/batch_output/
+sample_data/reports/
+
+# Temporary files
+*.tmp
+*.temp
+.temp/
+tmp/
+
+# Docker
+.dockerignore
+
+# CloudFormation
+.aws/

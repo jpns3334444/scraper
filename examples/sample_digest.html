@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Tokyo Real Estate Daily Digest - 2025-07-22</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        table { border-collapse: collapse; width: 100%; margin: 20px 0; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .summary { background-color: #f9f9f9; padding: 15px; margin: 20px 0; }
+        .candidate-row { background-color: #e8f5e8; }
+        .header { background-color: #2c5530; color: white; padding: 20px; text-align: center; }
+        .metric { display: inline-block; margin: 0 20px; text-align: center; }
+        .metric-value { font-size: 24px; font-weight: bold; }
+        .metric-label { font-size: 12px; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Tokyo Real Estate Daily Digest</h1>
+        <p>Date: 2025-07-22 | Lean Mode v1.3</p>
+    </div>
+    
+    <div class="summary">
+        <h2>Market Summary</h2>
+        <div class="metric">
+            <div class="metric-value">3</div>
+            <div class="metric-label">BUY CANDIDATES</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value">¥985,000</div>
+            <div class="metric-label">MARKET MEDIAN/SQM</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value">2.1%</div>
+            <div class="metric-label">CANDIDATE RATIO</div>
+        </div>
+        
+        <h3>Today's Results:</h3>
+        <ul>
+            <li><strong>Total Properties Analyzed:</strong> 147</li>
+            <li><strong>Candidates Found:</strong> 3 (2.0%)</li>
+            <li><strong>LLM Calls Made:</strong> 3 (98% reduction vs legacy)</li>
+            <li><strong>Processing Time:</strong> 18 minutes</li>
+        </ul>
+        
+        <h3>Candidate Breakdown:</h3>
+        <ul>
+            <li>BUY_CANDIDATE: 3</li>
+            <li>WATCH: 0</li>
+            <li>REJECT: 144</li>
+        </ul>
+    </div>
+    
+    <h2>Top Candidates</h2>
+    <table>
+        <tr>
+            <th>ID</th>
+            <th>Score</th>
+            <th>Verdict</th>
+            <th>Ward Discount</th>
+            <th>Price</th>
+            <th>Size</th>
+            <th>Price/sqm</th>
+            <th>Ward</th>
+            <th>Age</th>
+            <th>Station</th>
+        </tr>
+        <tr class="candidate-row">
+            <td>PROP_2025_0722_001</td>
+            <td>83.8</td>
+            <td>BUY_CANDIDATE</td>
+            <td>-25.4%</td>
+            <td>¥48,000,000</td>
+            <td>58.5m²</td>
+            <td>¥820,513</td>
+            <td>Shibuya</td>
+            <td>8y</td>
+            <td>350m</td>
+        </tr>
+        <tr class="candidate-row">
+            <td>PROP_2025_0722_002</td>
+            <td>78.2</td>
+            <td>BUY_CANDIDATE</td>
+            <td>-18.5%</td>
+            <td>¥52,000,000</td>
+            <td>65.0m²</td>
+            <td>¥800,000</td>
+            <td>Setagaya</td>
+            <td>12y</td>
+            <td>450m</td>
+        </tr>
+        <tr class="candidate-row">
+            <td>PROP_2025_0722_003</td>
+            <td>75.1</td>
+            <td>BUY_CANDIDATE</td>
+            <td>-15.2%</td>
+            <td>¥35,000,000</td>
+            <td>45.0m²</td>
+            <td>¥777,778</td>
+            <td>Nakano</td>
+            <td>6y</td>
+            <td>280m</td>
+        </tr>
+    </table>
+    
+    <h2>Ward Analysis</h2>
+    <table>
+        <tr>
+            <th>Ward</th>
+            <th>Median Price/sqm</th>
+            <th>Total Inventory</th>
+            <th>Candidates</th>
+            <th>Candidate Rate</th>
+        </tr>
+        <tr>
+            <td>Setagaya</td>
+            <td>¥850,000</td>
+            <td>45</td>
+            <td>1</td>
+            <td>2.2%</td>
+        </tr>
+        <tr>
+            <td>Shibuya</td>
+            <td>¥1,100,000</td>
+            <td>32</td>
+            <td>1</td>
+            <td>3.1%</td>
+        </tr>
+        <tr>
+            <td>Nakano</td>
+            <td>¥920,000</td>
+            <td>28</td>
+            <td>1</td>
+            <td>3.6%</td>
+        </tr>
+        <tr>
+            <td>Shinjuku</td>
+            <td>¥1,250,000</td>
+            <td>25</td>
+            <td>0</td>
+            <td>0.0%</td>
+        </tr>
+        <tr>
+            <td>Minato</td>
+            <td>¥1,450,000</td>
+            <td>17</td>
+            <td>0</td>
+            <td>0.0%</td>
+        </tr>
+    </table>
+    
+    <div class="summary">
+        <h2>Market Insights</h2>
+        <p><strong>Key Trends:</strong></p>
+        <ul>
+            <li>Strong candidate activity in mid-tier wards (Setagaya, Nakano)</li>
+            <li>Premium wards (Minato, Shinjuku) showing limited value opportunities</li>
+            <li>Average ward discount for candidates: -19.7%</li>
+            <li>Renovation-recent properties dominating candidate pool</li>
+        </ul>
+        
+        <p><strong>Recommended Actions:</strong></p>
+        <ul>
+            <li>Priority investigation: PROP_2025_0722_001 (highest score, best location)</li>
+            <li>Consider bulk evaluation: Setagaya ward showing consistent opportunities</li>
+            <li>Monitor: Recent price cuts in Shibuya may indicate seller motivation</li>
+        </ul>
+    </div>
+    
+    <hr>
+    <p style="font-size: 12px; color: #666; text-align: center;">
+        Generated by Tokyo Real Estate AI v1.3 | Lean Mode Active | 
+        <a href="mailto:alerts@company.com">Contact Support</a>
+    </p>
+</body>
+</html>

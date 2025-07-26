@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl:*)",
+      "Bash(./deploy-all.sh)",
+      "Bash(./test-local.sh:*)",
+      "Bash(chmod:*)",
+      "Bash(chmod:*)",
+      "Bash(./deploy-ai.sh:*)",
+      "Bash(aws cloudformation describe-stacks:*)",
+      "Bash(aws lambda get-function-configuration:*)",
+      "Bash(./trigger_scraper_script.sh:*)",
+      "Bash(aws lambda list-functions:*)",
+      "Bash(aws cloudformation list-stacks:*)",
+      "Bash(aws ec2 describe-instances:*)",
+      "Bash(find:*)",
+      "Bash(aws cloudformation deploy:*)",
+      "Bash(aws ssm send-command:*)",
+      "Bash(aws ssm get-command-invocation:*)",
+      "Bash(aws logs describe-log-streams:*)",
+      "Bash(./deploy-compute.sh:*)",
+      "Bash(./trigger_ai_workflow.sh:*)",
+      "Bash(sudo docker:*)",
+      "Bash(aws cloudformation:*)"
+    ],
+    "deny": []
+  }
+}

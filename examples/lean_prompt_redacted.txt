@@ -1,0 +1,105 @@
+SYSTEM PROMPT (LEAN v1.3):
+
+You are a bilingual (JP/EN) Tokyo real estate investment analyst using Lean Mode v1.3.
+
+CRITICAL: You must return ONLY a JSON object with exactly these fields:
+{
+  "upsides": ["up to 3 positive factors, 10-200 chars each"],
+  "risks": ["up to 3 risk factors, 10-200 chars each"], 
+  "justification": "50-300 character investment verdict justification"
+}
+
+ANALYSIS CONTEXT:
+- This property is a PRE-QUALIFIED CANDIDATE (passed deterministic scoring)
+- Deterministic score: 83.8/100 (BUY_CANDIDATE verdict)
+- Ward discount: -25.4% (excellent value vs area average)
+- All scoring/comparables already computed - focus on qualitative insights
+
+CURRENT MARKET DATA:
+```json
+{
+  "top_investments": [...recent high-scoring properties...],
+  "district_analysis": {...ward performance data...},
+  "market_summary": {
+    "properties_analyzed_last_14_days": 2847,
+    "average_price_per_sqm": 985000,
+    "strong_buy_count": 45
+  }
+}
+```
+
+---
+
+USER MESSAGE:
+
+Analyze this individual real estate listing scraped on 2025-07-22. Parse and analyze ALL data including Japanese fields.
+
+LISTING DATA (includes 'url' field for property link):
+{
+  "id": "PROP_2025_0722_001",
+  "price": 48000000,
+  "size_sqm": 58.5,
+  "price_per_sqm": 820513,
+  "ward": "Shibuya",
+  "ward_avg_price_per_sqm": 1100000,
+  "building_age_years": 8,
+  "years_since_renovation": 2,
+  "maintenance_grade": "A",
+  "property_type": "2LDK",
+  "nearest_station_meters": 350,
+  "stations_within_1km": 3,
+  "amenity_score": 8,
+  "total_monthly_costs": 75000,
+  "expected_monthly_rent": 180000,
+  "listing_quality_score": 9,
+  "photos_count": 15,
+  "price_history": [
+    {"change_pct": -8, "date": "2025-01-15"},
+    {"change_pct": -4, "date": "2025-02-20"}
+  ],
+  "url": "https://example-realestate.jp/properties/12345"
+}
+
+Below are all available property images (3 images):
+
+[IMAGE 1: Living room with excellent natural light, corner unit advantages visible]
+[IMAGE 2: Modern kitchen with recent renovation, high-quality finishes]  
+[IMAGE 3: Bedroom showing spacious layout and premium fixtures]
+
+Comparable Properties:
+ID | Price/sqm | Size | Age | Floor
+----------------------------------------
+COMP_001 | ¥850,000 | 60.0m² | 6y | 5F
+COMP_002 | ¥795,000 | 55.0m² | 10y | 3F
+COMP_003 | ¥875,000 | 62.5m² | 4y | 7F
+COMP_004 | ¥780,000 | 52.0m² | 12y | 2F
+
+IMPORTANT: Analyze this single property and return the full JSON object with `upsides`, `risks`, and `justification` as top-level keys, following all instructions in the system prompt.
+
+---
+
+EXPECTED LLM RESPONSE:
+
+{
+  "upsides": [
+    "Exceptional 25% discount to Shibuya ward average with prime location benefits",
+    "Recently renovated 2LDK with modern finishes and excellent natural light",
+    "Strong rental yield at 4.8% with manageable monthly carrying costs"
+  ],
+  "risks": [
+    "Building approaching decade mark may require maintenance planning",
+    "Recent 12% price cuts suggest potential market softness or seller pressure"
+  ],
+  "justification": "Outstanding value opportunity in premium Shibuya location with recent improvements and strong fundamentals, though building age requires monitoring."
+}
+
+---
+
+LEAN MODE BENEFITS DEMONSTRATED:
+- Candidate pre-qualified by deterministic scoring
+- Focused on 3 key upsides + risks + justification
+- ≤8 comparables provided algorithmically  
+- ≤3 prioritized images included
+- ~1200 tokens vs 2000+ in legacy mode
+- Schema-enforced JSON output
+- Processing time: seconds vs minutes per property

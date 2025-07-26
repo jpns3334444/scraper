@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LeanEvaluation",
+  "type": "object",
+  "required": ["property_id", "base_score", "final_score", "verdict", "upside", "risks", "justification"],
+  "properties": {
+    "property_id": {
+      "type": "string"
+    },
+    "base_score": {
+      "type": "integer"
+    },
+    "final_score": {
+      "type": "integer"
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["BUY_CANDIDATE", "WATCH", "REJECT"]
+    },
+    "upside": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 60
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 60
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "justification": {
+      "type": "string",
+      "maxLength": 600
+    }
+  },
+  "additionalProperties": false
+}

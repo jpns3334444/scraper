@@ -1,0 +1,95 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Tokyo Real Estate Compute - EC2 Instance for Web Scraping"
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: "tokyo-real-estate"
+    Description: Project name for resource naming
+  KeyName:
+    Type: String
+    Description: Name of an existing EC2 KeyPair
+  OutputBucket:
+    Type: String
+    Description: S3 bucket to upload scraper results to
+    Default: "tokyo-real-estate-ai-data"
+  InfraStackName:
+    Type: String
+    Description: Name of the infrastructure stack to import from
+    Default: "tokyo-real-estate-infra"
+  InstanceType:
+    Type: String
+    Description: EC2 instance type
+    Default: t3.small
+    AllowedValues:
+      - t3.micro
+      - t3.small
+      - t3.medium
+      - t3.large
+
+Mappings:
+  RegionMap:
+    us-east-1:
+      AMI: ami-0866a3c8686eaeeba # Ubuntu 22.04 LTS
+    us-west-2:
+      AMI: ami-0866a3c8686eaeeba # Ubuntu 22.04 LTS
+    ap-northeast-1:
+      AMI: ami-09013b9396188007c # Ubuntu 22.04 LTS
+    ap-southeast-1:
+      AMI: ami-047126e50991d067b # Ubuntu 22.04 LTS
+    eu-west-1:
+      AMI: ami-0866a3c8686eaeeba # Ubuntu 22.04 LTS
+
+Resources:
+  ScraperInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AMI]
+      IamInstanceProfile: 
+        Fn::ImportValue: !Sub "${InfraStackName}-ScraperInstanceProfileName"
+      SecurityGroupIds:
+        - Fn::ImportValue: !Sub "${InfraStackName}-ScraperSecurityGroupId"
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-scraper"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Stack
+          Value: !Ref "AWS::StackName"
+      UserData:
+        Fn::Base64:
+          Fn::Sub: 
+            - |
+              #!/bin/bash
+              # Download and execute the setup script
+              export OUTPUT_BUCKET="${DataBucket}"
+              export AWS_REGION="${AWS::Region}"
+              
+              # Download setup script from GitHub
+              curl -sSL https://raw.githubusercontent.com/jpns3334444/scraper/master/scraper/setup_ec2.sh -o /tmp/setup_ec2.sh
+              
+              # Make executable and run
+              chmod +x /tmp/setup_ec2.sh
+              /tmp/setup_ec2.sh
+            - DataBucket: !Ref OutputBucket
+
+Outputs:
+  ScraperInstanceId:
+    Description: "Instance ID of the scraper EC2 instance"
+    Value: !Ref ScraperInstance
+    Export:
+      Name: !Sub "${AWS::StackName}-ScraperInstanceId"
+
+  ScraperInstanceName:
+    Description: "Name tag of the scraper EC2 instance"
+    Value: !Sub "${ProjectName}-scraper"
+    Export:
+      Name: !Sub "${AWS::StackName}-ScraperInstanceName"
+
+  ScraperPublicIP:
+    Description: "Public IP of EC2 instance"
+    Value: !GetAtt ScraperInstance.PublicIp
+    Export:
+      Name: !Sub "${AWS::StackName}-ScraperPublicIP"

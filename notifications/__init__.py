@@ -1,0 +1,1 @@
+"""Notifications module for alerts and updates"""

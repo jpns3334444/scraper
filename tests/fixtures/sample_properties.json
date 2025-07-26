@@ -1,0 +1,145 @@
+[
+  {
+    "id": "PROP_001",
+    "price": 50000000,
+    "size_sqm": 60.5,
+    "price_per_sqm": 826446,
+    "ward": "Shibuya",
+    "ward_avg_price_per_sqm": 1100000,
+    "building_avg_price_per_sqm": 950000,
+    "building_age_years": 8,
+    "years_since_renovation": 2,
+    "maintenance_grade": "A",
+    "property_type": "2LDK",
+    "nearest_station_meters": 400,
+    "stations_within_1km": 3,
+    "amenity_score": 8,
+    "total_monthly_costs": 80000,
+    "expected_monthly_rent": 180000,
+    "num_comparables": 6,
+    "comparable_price_variance": 0.15,
+    "listing_quality_score": 8,
+    "photos_count": 15,
+    "price_history": [
+      {"change_pct": -5, "date": "2024-01-01"},
+      {"change_pct": -3, "date": "2024-02-01"}
+    ],
+    "vision_analysis": {
+      "positive_factors": ["excellent_natural_light", "corner_unit"],
+      "negative_factors": []
+    }
+  },
+  {
+    "id": "PROP_002", 
+    "price": 70000000,
+    "size_sqm": 45.0,
+    "price_per_sqm": 1555556,
+    "ward": "Minato",
+    "ward_avg_price_per_sqm": 1200000,
+    "building_avg_price_per_sqm": 1300000,
+    "building_age_years": 25,
+    "years_since_renovation": 15,
+    "maintenance_grade": "C",
+    "property_type": "1LDK",
+    "nearest_station_meters": 200,
+    "stations_within_1km": 5,
+    "amenity_score": 9,
+    "total_monthly_costs": 120000,
+    "expected_monthly_rent": 220000,
+    "num_comparables": 12,
+    "comparable_price_variance": 0.08,
+    "listing_quality_score": 6,
+    "photos_count": 8,
+    "price_history": [],
+    "vision_analysis": {
+      "positive_factors": ["prime_location"],
+      "negative_factors": ["dated_interior", "small_kitchen"]
+    }
+  },
+  {
+    "id": "PROP_003",
+    "price": 35000000,
+    "size_sqm": 55.0,
+    "price_per_sqm": 636364,
+    "ward": "Setagaya",
+    "ward_avg_price_per_sqm": 800000,
+    "building_avg_price_per_sqm": 750000,
+    "building_age_years": 12,
+    "years_since_renovation": 5,
+    "maintenance_grade": "B",
+    "property_type": "3LDK",
+    "nearest_station_meters": 800,
+    "stations_within_1km": 2,
+    "amenity_score": 6,
+    "total_monthly_costs": 70000,
+    "expected_monthly_rent": 140000,
+    "num_comparables": 4,
+    "comparable_price_variance": 0.25,
+    "listing_quality_score": 7,
+    "photos_count": 12,
+    "price_history": [
+      {"change_pct": -10, "date": "2024-01-15"}
+    ],
+    "vision_analysis": {
+      "positive_factors": ["spacious_layout"],
+      "negative_factors": []
+    }
+  },
+  {
+    "id": "PROP_004",
+    "price": 90000000,
+    "size_sqm": 75.0,
+    "price_per_sqm": 1200000,
+    "ward": "Shibuya",
+    "ward_avg_price_per_sqm": 1100000,
+    "building_avg_price_per_sqm": 1150000,
+    "building_age_years": 3,
+    "years_since_renovation": 3,
+    "maintenance_grade": "A",
+    "property_type": "3LDK",
+    "nearest_station_meters": 150,
+    "stations_within_1km": 4,
+    "amenity_score": 10,
+    "total_monthly_costs": 150000,
+    "expected_monthly_rent": 280000,
+    "num_comparables": 8,
+    "comparable_price_variance": 0.12,
+    "listing_quality_score": 9,
+    "photos_count": 20,
+    "price_history": [],
+    "vision_analysis": {
+      "positive_factors": ["luxury_finishes", "high_floor", "exceptional_view"],
+      "negative_factors": []
+    }
+  },
+  {
+    "id": "PROP_005",
+    "price": 28000000,
+    "size_sqm": 40.0,
+    "price_per_sqm": 700000,
+    "ward": "Shibuya",
+    "ward_avg_price_per_sqm": 1100000,
+    "building_avg_price_per_sqm": 1000000,
+    "building_age_years": 35,
+    "years_since_renovation": 25,
+    "maintenance_grade": "D",
+    "property_type": "1DK",
+    "nearest_station_meters": 1200,
+    "stations_within_1km": 1,
+    "amenity_score": 3,
+    "total_monthly_costs": 90000,
+    "expected_monthly_rent": 120000,
+    "num_comparables": 2,
+    "comparable_price_variance": 0.40,
+    "listing_quality_score": 4,
+    "photos_count": 5,
+    "price_history": [
+      {"change_pct": -15, "date": "2024-01-01"},
+      {"change_pct": -8, "date": "2024-02-15"}
+    ],
+    "vision_analysis": {
+      "positive_factors": [],
+      "negative_factors": ["poor_condition", "outdated_fixtures", "poor_lighting"]
+    }
+  }
+]
