@@ -52,7 +52,7 @@ rm amazon-cloudwatch-agent.deb
 # Configure CloudWatch Agent
 log "Configuring CloudWatch Agent..."
 mkdir -p /opt/aws/amazon-cloudwatch-agent/etc/
-cat > /opt/aws/amazon-cloudwatch-agent/etc/config.json << 'EOF'
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'EOF'
 {
   "logs": {
     "logs_collected": {
@@ -141,7 +141,7 @@ log "Starting CloudWatch Agent..."
 /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
     -a fetch-config \
     -m ec2 \
-    -c file:/opt/aws/amazon-cloudwatch-agent/etc/config.json \
+    -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json \
     -s
 
 # Enable and start SSM Agent
