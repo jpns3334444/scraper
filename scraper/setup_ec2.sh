@@ -107,7 +107,7 @@ for i in $(seq 1 $MAX_RETRIES); do
         log "Successfully cloned repository on attempt $i"
         
         # Copy scraper script
-        cp /tmp/scraper-repo/scrape.py /home/ubuntu/scrape.py
+        cp /tmp/scraper-repo/scraper/scrape.py /home/ubuntu/scrape.py
         rm -rf /tmp/scraper-repo
         
         # Set permissions
