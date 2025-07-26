@@ -1044,8 +1044,15 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
                     metadata = extract_listing_metadata_from_listing_page(url, session, logger)
                     if metadata:
                         record = create_listing_meta_record(metadata)
-                        batch.put_item(Item=record)
-                        batch_count += 1
+                        # Validate record and required keys before writing to DynamoDB
+                        if record and record.get('property_id') and record.get('sort_key'):
+                            batch.put_item(Item=record)
+                            batch_count += 1
+                        else:
+                            if logger:
+                                property_id = record.get('property_id') if record else None
+                                sort_key = record.get('sort_key') if record else None
+                                logger.warning(f"Skipping record with missing keys: property_id={property_id}, sort_key={sort_key}, url={url}")
                         
                         # Batch limit and delay management
                         if batch_count % 25 == 0:
@@ -2058,6 +2065,10 @@ def create_listing_meta_record(metadata, date_str=None):
         raw_id = metadata.get('raw_property_id')
         if raw_id:
             property_id = create_property_id_key(raw_id, date_str)
+    
+    # Ensure we have a valid property_id
+    if not property_id:
+        return None
     
     record = {
         'property_id': property_id,
