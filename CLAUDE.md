@@ -58,6 +58,10 @@ cd scraper/ai_infra
 # Deploy compute (EC2) only
 cd scraper/scraper
 ./deploy-compute.sh
+
+# Recreate compute (EC2) instance from scratch
+cd scraper/scraper
+./deploy-compute.sh --recreate
 ```
 
 ### Manual Triggers

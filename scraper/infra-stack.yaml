@@ -99,6 +99,24 @@ Resources:
                 Action:
                   - states:StartExecution
                 Resource: "*"
+        - PolicyName: AllowDynamoDB
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeTable
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Scan
+                  - dynamodb:Query
+                  - dynamodb:BatchGetItem
+                  - dynamodb:BatchWriteItem
+                Resource: 
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/tokyo-real-estate-ai-RealEstateAnalysis"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/tokyo-real-estate-ai-RealEstateAnalysis/index/*"
 
   ScraperInstanceProfile:
     Type: AWS::IAM::InstanceProfile

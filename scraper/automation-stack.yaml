@@ -56,9 +56,16 @@ Resources:
               session_id = event.get('session_id', f"session-{int(time.time())}")
               mode = event.get('mode', 'stealth')
               single_area = event.get('single_area', 'chofu-city')
+              full_mode = event.get('full_mode', False)
               
               # Configure based on mode
-              if mode == 'testing':
+              if full_mode:
+                  # Full load mode overrides other settings
+                  max_properties = 0  # No limit
+                  stealth_mode = False
+                  areas = []  # Will discover all areas
+                  mode = 'full-load'
+              elif mode == 'testing':
                   max_properties = 5
                   stealth_mode = False
                   areas = [single_area]  # Single area for testing
@@ -200,7 +207,7 @@ Resources:
                   }
               
               # STEP 2: Run the scraper
-              print(f"Starting {mode} scraper job - Session: {session_id}, Max Properties: {max_properties}")
+              print(f"Starting {mode} scraper job - Session: {session_id}, Max Properties: {max_properties}, Full Mode: {full_mode}")
               start_time = datetime.now()
               
               try:
@@ -216,6 +223,7 @@ Resources:
                   export ENTRY_POINT="{entry_point}"
                   export MODE="{mode}"
                   export AREAS="{areas_env}"
+                  export FULL_LOAD={str(full_mode).lower()}
                   
                   # AI Workflow ARN - will be imported from ai-scraper-dev stack
                   export AI_WORKFLOW_ARN="{os.environ.get('AI_WORKFLOW_ARN', '')}"

@@ -722,7 +722,7 @@ def get_scraper_config(args):
         'enable_deduplication': enable_deduplication,
         'track_price_changes': args.track_price_changes if hasattr(args, 'track_price_changes') else True,
         'batch_size': min(args.batch_size, 25) if hasattr(args, 'batch_size') else 25,  # DynamoDB limit
-        'dynamodb_table': args.dynamodb_table if hasattr(args, 'dynamodb_table') else 'ai-stack-RealEstateAnalysisDB'
+        'dynamodb_table': args.dynamodb_table if hasattr(args, 'dynamodb_table') else 'tokyo-real-estate-ai-RealEstateAnalysis'
     }
 
 # Backward compatibility alias
@@ -1809,7 +1809,7 @@ def setup_dynamodb_client(logger=None):
         dynamodb = boto3.resource('dynamodb', region_name='ap-northeast-1')
         
         # Use the same table as the AI pipeline
-        table_name = os.environ.get('DYNAMODB_TABLE', 'ai-stack-RealEstateAnalysisDB')
+        table_name = os.environ.get('DYNAMODB_TABLE', 'tokyo-real-estate-ai-RealEstateAnalysis')
         table = dynamodb.Table(table_name)
         
         # Test connection by getting table description
@@ -2280,7 +2280,7 @@ def parse_arguments():
     parser.add_argument(
         '--dynamodb-table',
         type=str,
-        default=os.environ.get('DYNAMODB_TABLE', 'ai-stack-RealEstateAnalysisDB'),
+        default=os.environ.get('DYNAMODB_TABLE', 'tokyo-real-estate-ai-RealEstateAnalysis'),
         help='DynamoDB table name for deduplication and price tracking'
     )
     
