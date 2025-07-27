@@ -294,7 +294,17 @@ Resources:
                               new_output = output[last_output_len:]
                               for line in new_output.split('\n'):
                                   if line.strip():
-                                      print(f"[EC2] {line}")
+                                      # Try to parse JSON and extract just the message
+                                      try:
+                                          import json as json_module
+                                          log_data = json_module.loads(line)
+                                          if 'message' in log_data:
+                                              print(f"[EC2] {log_data['message']}")
+                                          else:
+                                              print(f"[EC2] {line}")
+                                      except:
+                                          # Not JSON, print as is
+                                          print(f"[EC2] {line}")
                               last_output_len = len(output)
                           
                           # Stream new errors
