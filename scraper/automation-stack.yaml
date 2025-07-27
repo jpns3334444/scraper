@@ -40,6 +40,7 @@ Resources:
           import os
           import time
           import random
+          import re
           from datetime import datetime, timezone
 
           def lambda_handler(event, context):
@@ -57,6 +58,8 @@ Resources:
               mode = event.get('mode', 'stealth')
               single_area = event.get('single_area', 'chofu-city')
               full_mode = event.get('full_mode', False)
+              
+              print(f"🚀 Starting {mode} scraper - Session: {session_id}")
               
               # Configure based on mode
               if full_mode:
@@ -114,7 +117,7 @@ Resources:
                   
                   if not active_instances:
                       error_msg = "No MarketScraper instance found"
-                      print(error_msg)
+                      print(f"❌ {error_msg}")
                       
                       if notification_enabled and sns_topic_arn:
                           sns.publish(
@@ -142,13 +145,13 @@ Resources:
                       # Wait for instance to be running
                       waiter = ec2.get_waiter('instance_running')
                       waiter.wait(InstanceIds=[instance_id])
-                      print(f"Instance {instance_id} is now running")
+                      print(f"✅ Instance {instance_id} is now running")
                       
                       # Wait for instance status checks to pass
                       print("Waiting for instance status checks...")
                       waiter = ec2.get_waiter('instance_status_ok')
                       waiter.wait(InstanceIds=[instance_id])
-                      print(f"Instance {instance_id} status checks passed")
+                      print(f"✅ Instance {instance_id} status checks passed")
                       
                       # Wait for SSM agent to be online
                       print("Waiting for SSM agent to come online...")
@@ -158,13 +161,13 @@ Resources:
                                   Filters=[{'Key': 'InstanceIds', 'Values': [instance_id]}]
                               )
                               if response['InstanceInformationList']:
-                                  print(f"SSM agent is online on {instance_id}")
+                                  print(f"✅ SSM agent is online on {instance_id}")
                                   break
                           except:
                               pass
                           time.sleep(1)
                       else:
-                          print("Warning: SSM agent status unclear, proceeding anyway")
+                          print("⚠️ Warning: SSM agent status unclear, proceeding anyway")
                       
                   elif current_state == 'stopping':
                       print("Instance is stopping, waiting for it to stop before starting...")
@@ -177,7 +180,7 @@ Resources:
                       waiter.wait(InstanceIds=[instance_id])
                       waiter = ec2.get_waiter('instance_status_ok')
                       waiter.wait(InstanceIds=[instance_id])
-                      print(f"Instance {instance_id} restarted and status checks passed")
+                      print(f"✅ Instance {instance_id} restarted and status checks passed")
                       
                   elif current_state == 'pending':
                       print("Instance is already starting, waiting for it to be ready...")
@@ -185,14 +188,14 @@ Resources:
                       waiter.wait(InstanceIds=[instance_id])
                       waiter = ec2.get_waiter('instance_status_ok')
                       waiter.wait(InstanceIds=[instance_id])
-                      print(f"Instance {instance_id} finished starting and status checks passed")
+                      print(f"✅ Instance {instance_id} finished starting and status checks passed")
                   
                   # Instance should now be running
-                  print(f"Instance {instance_id} is ready for scraping")
+                  print(f"✅ Instance {instance_id} is ready for scraping")
                   
               except Exception as e:
                   error_msg = f"Error managing EC2 instance: {str(e)}"
-                  print(error_msg)
+                  print(f"❌ {error_msg}")
                   
                   if notification_enabled and sns_topic_arn:
                       sns.publish(
@@ -206,15 +209,15 @@ Resources:
                       "body": json.dumps({"error": error_msg, "session_id": session_id, "mode": mode})
                   }
               
-              # STEP 2: Run the scraper
-              print(f"Starting {mode} scraper job - Session: {session_id}, Max Properties: {max_properties}, Full Mode: {full_mode}")
+              # STEP 2: Run the scraper with DIRECT OUTPUT STREAMING
+              print(f"🏃 Starting {mode} scraper job - Session: {session_id}, Max Properties: {max_properties}")
               start_time = datetime.now()
               
               try:
                   # Build command with session parameters
                   areas_env = ','.join(areas) if areas else ''
                   
-                  # Modified command to wait for scraper completion
+                  # Modified command to output directly
                   scraper_command = f"""
                   export OUTPUT_BUCKET=tokyo-real-estate-ai-data
                   export SESSION_ID="{session_id}"
@@ -228,16 +231,28 @@ Resources:
                   # AI Workflow ARN - will be imported from ai-scraper-dev stack
                   export AI_WORKFLOW_ARN="{os.environ.get('AI_WORKFLOW_ARN', '')}"
                   
-                  # Run the scraper and wait for it to complete
+                  # Run the scraper
                   cd /home/ubuntu
-                  echo "Starting scraper at $(date)" >> /var/log/scraper/run.log
-                  python3 scrape.py >> /var/log/scraper/run.log 2>&1
+                  echo "=== SCRAPER START: $(date) ==="
+                  echo "Mode: $MODE, Session: $SESSION_ID, Max Properties: $MAX_PROPERTIES"
+                  
+                  # Check if scraper exists
+                  if [ ! -f scrape.py ]; then
+                      echo "ERROR: scrape.py not found in /home/ubuntu/"
+                      ls -la /home/ubuntu/
+                      exit 1
+                  fi
+                  
+                  # Run scraper
+                  python3 scrape.py 2>&1
                   SCRAPER_EXIT_CODE=$?
                   
-                  # Log completion
-                  echo "Scraper completed with exit code: $SCRAPER_EXIT_CODE at $(date)" >> /var/log/scraper/run.log
+                  echo "=== SCRAPER END: $(date), Exit code: $SCRAPER_EXIT_CODE ==="
                   
-                  # Exit with the scraper's exit code so SSM knows if it succeeded
+                  # Save to log for debugging
+                  mkdir -p /var/log/scraper
+                  echo "Session $SESSION_ID completed with exit code: $SCRAPER_EXIT_CODE" >> /var/log/scraper/run.log
+                  
                   exit $SCRAPER_EXIT_CODE
                   """
                   
@@ -251,15 +266,18 @@ Resources:
                   )
                   
                   command_id = response['Command']['CommandId']
-                  print(f"SSM command sent: {command_id}")
+                  print(f"📋 SSM command sent: {command_id}")
                   
-                  # Monitor command execution with timeout
+                  # Monitor command execution with DIRECT OUTPUT STREAMING
                   status = "InProgress"
+                  last_output_len = 0
+                  last_error_len = 0
                   wait_count = 0
                   max_waits = 120  # 60 minutes max (30s intervals)
+                  properties_scraped = 0
                   
                   while status == "InProgress" and wait_count < max_waits:
-                      time.sleep(30)
+                      time.sleep(5 if wait_count < 10 else 30)  # Quick checks at start, then slower
                       wait_count += 1
                       
                       try:
@@ -268,66 +286,65 @@ Resources:
                               InstanceId=instance_id
                           )
                           status = invocation['Status']
-                          print(f"Command status: {status} (check {wait_count}/{max_waits})")
+                          output = invocation.get('StandardOutputContent', '')
+                          error_output = invocation.get('StandardErrorContent', '')
+                          
+                          # Stream new output
+                          if len(output) > last_output_len:
+                              new_output = output[last_output_len:]
+                              for line in new_output.split('\n'):
+                                  if line.strip():
+                                      print(f"[EC2] {line}")
+                              last_output_len = len(output)
+                          
+                          # Stream new errors
+                          if len(error_output) > last_error_len:
+                              new_errors = error_output[last_error_len:]
+                              for line in new_errors.split('\n'):
+                                  if line.strip():
+                                      print(f"[EC2-ERR] {line}")
+                              last_error_len = len(error_output)
+                          
+                          # Extract properties count from output
+                          if output:
+                              match = re.search(r'(\d+) successful', output)
+                              if match:
+                                  properties_scraped = int(match.group(1))
+                          
                       except ssm.exceptions.InvocationDoesNotExist:
                           # Command might still be initializing
+                          if wait_count <= 3:
+                              print("⏳ Waiting for command to start...")
                           continue
                   
                   end_time = datetime.now()
                   duration = (end_time - start_time).total_seconds()
                   
-                  # Get final invocation details
-                  try:
-                      final_invocation = ssm.get_command_invocation(
-                          CommandId=command_id,
-                          InstanceId=instance_id
-                      )
-                      status = final_invocation['Status']
-                      output = final_invocation.get('StandardOutputContent', '')
-                      error_output = final_invocation.get('StandardErrorContent', '')
-                      
-                      # Log the output for debugging
-                      if output:
-                          print(f"Command output: {output[:500]}")
-                      if error_output:
-                          print(f"Command error: {error_output[:500]}")
-                  except Exception as e:
-                      output = ""
-                      error_output = f"Could not retrieve command output: {str(e)}"
-                      print(f"Error getting command output: {str(e)}")
+                  # Final status
+                  print(f"\n{'✅' if status == 'Success' else '❌'} Scraper {status}")
+                  print(f"⏱️ Duration: {duration:.1f} seconds")
+                  print(f"📊 Properties scraped: {properties_scraped}")
                   
-                  # Extract properties scraped from output (if available)
-                  properties_scraped = 0
-                  try:
-                      import re
-                      match = re.search(r'(\d+) successful', output)
-                      if match:
-                          properties_scraped = int(match.group(1))
-                  except:
-                      pass
-                  
-                  # --- NEW SHUTDOWN LOGIC ---
+                  # Shutdown logic
                   if status == "Success":
-                      print(f"Scraper command completed successfully. Shutting down instance {instance_id}...")
+                      print(f"🛑 Shutting down instance {instance_id}...")
                       try:
-                          # Use ec2.stop_instances instead of poweroff for cleaner shutdown
                           ec2.stop_instances(InstanceIds=[instance_id])
-                          print(f"EC2 stop command sent to {instance_id}.")
+                          print(f"✅ EC2 stop command sent to {instance_id}")
                           instance_shutdown = True
                       except Exception as shutdown_e:
-                          print(f"Failed to stop instance {instance_id}: {shutdown_e}")
+                          print(f"⚠️ Failed to stop instance {instance_id}: {shutdown_e}")
                           instance_shutdown = False
                   else:
-                      print(f"Scraper command failed with status {status}. Keeping instance {instance_id} running for debugging.")
+                      print(f"⚠️ Scraper failed with status {status}. Keeping instance {instance_id} running for debugging.")
                       instance_shutdown = False
-                  # --- END NEW SHUTDOWN LOGIC ---
 
                   if notification_enabled and sns_topic_arn:
                       if status == "Success":
                           message = f" {mode.title()} scraper session completed successfully\n\nSession ID: {session_id}\nMode: {mode}\nStart Time: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\nEnd Time: {end_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\nDuration: {duration:.1f} seconds\nProperties Scraped: {properties_scraped}\nMax Properties: {max_properties}\nCommand ID: {command_id}\nInstance ID: {instance_id}\nInstance Shutdown: {instance_shutdown}\n\nCheck S3 bucket for scraped data."
                           subject = f"{mode.title()} Scraper Session - Success"
                       else:
-                          message = f" {mode.title()} scraper session failed\n\nSession ID: {session_id}\nMode: {mode}\nStart Time: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\nEnd Time: {end_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\nDuration: {duration:.1f} seconds\nStatus: {status}\nCommand ID: {command_id}\nInstance ID: {instance_id}\n\nError Output:\n{error_output}\n\nInstance kept running for debugging."
+                          message = f" {mode.title()} scraper session failed\n\nSession ID: {session_id}\nMode: {mode}\nStart Time: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\nEnd Time: {end_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\nDuration: {duration:.1f} seconds\nStatus: {status}\nCommand ID: {command_id}\nInstance ID: {instance_id}\n\nInstance kept running for debugging."
                           subject = f"{mode.title()} Scraper Session - Failed"
                       
                       sns.publish(
@@ -353,7 +370,7 @@ Resources:
                   
               except Exception as e:
                   error_msg = f"Lambda error: {str(e)}"
-                  print(error_msg)
+                  print(f"❌ {error_msg}")
                   
                   if notification_enabled and sns_topic_arn:
                       sns.publish(

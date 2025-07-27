@@ -18,8 +18,13 @@ show_usage() {
     echo "  $0 production --full  # Run in production mode with full load"
 }
 
-# Colours
-BLUE='\033[0;34m'; ORANGE='\033[0;33m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+ORANGE='\033[0;33m'
+NC='\033[0m'
 
 # Parse arguments
 MODE="testing"
@@ -54,17 +59,18 @@ fi
 # Set defaults  
 [[ -z "$SESSION_ID" ]] && SESSION_ID="manual-$(date +%s)"
 
-# Vars
+# Variables
 LAMBDA_FUNCTION="tokyo-real-estate-trigger"
 LOG_GROUP_NAME="/aws/lambda/$LAMBDA_FUNCTION"
-START_TIME=$(($(date +%s) * 1000))   # CloudWatch needs ms
 
-echo -e "${GREEN}🚀  TRIGGERING LAMBDA: $LAMBDA_FUNCTION${NC}"
+echo -e "${GREEN}🚀 TRIGGERING SCRAPER${NC}"
 echo -e "${YELLOW}Mode: $MODE | Session: $SESSION_ID | Full Load: $FULL_MODE${NC}"
+echo ""
 
 # Build payload with full mode
 PAYLOAD="{\"mode\":\"$MODE\",\"session_id\":\"$SESSION_ID\",\"full_mode\":$FULL_MODE}"
 
+# Invoke Lambda
 aws lambda invoke \
   --function-name "$LAMBDA_FUNCTION" \
   --invocation-type Event \
@@ -74,119 +80,37 @@ aws lambda invoke \
 
 echo -e "${GREEN}Lambda triggered. Response:${NC}"
 cat /tmp/response.json
-echo
+echo ""
 
+# Wait a moment for logs to start
+echo -e "${YELLOW}Waiting for logs to start...${NC}"
 sleep 3
-LOG_STREAM=$(aws logs describe-log-streams \
-  --log-group-name "$LOG_GROUP_NAME" \
-  --order-by LastEventTime --descending --limit 1 \
-  --query 'logStreams[0].logStreamName' --output text)
 
-[[ "$LOG_STREAM" != "None" ]] \
-  && echo -e "${GREEN}Found log stream: $LOG_STREAM${NC}" \
-  || echo -e "${YELLOW}Warning: Could not find log stream yet${NC}"
+echo -e "${GREEN}=== MONITORING LAMBDA LOGS ===${NC}"
+echo -e "${BLUE}All output (including EC2 scraper output) will appear here${NC}"
+echo -e "${YELLOW}Press Ctrl+C to stop monitoring${NC}"
+echo ""
 
-INSTANCE_ID=$(aws cloudformation describe-stacks \
-  --stack-name tokyo-real-estate-compute \
-  --query "Stacks[0].Outputs[?OutputKey=='ScraperInstanceId'].OutputValue" \
-  --output text)
-echo -e "${YELLOW}Instance ID: $INSTANCE_ID${NC}"
-
-echo -e "${GREEN}=== MONITORING LOGS (ctrl-c to abort) ===${NC}"
-echo -e "${BLUE}🔷 = Lambda logs (shows full execution: instance start, scraper run, completion)${NC}"
-echo -e "${ORANGE}🔶 = EC2 run.log (direct scraper output, may not appear if CloudWatch agent is initializing)${NC}"
-echo
-
-LAMBDA_LOG_FILE="/tmp/lambda_logs_${SESSION_ID}.txt"
-> "$LAMBDA_LOG_FILE"
-LAST_LAM_COUNT=0
-EC2_NEXT_TOKEN=""
-
-LAMBDA_COMPLETE=false
-SCRAPING_COMPLETE=false
-
-while true; do
-  ts=$(date +'%H:%M:%S')
-
-  # ── Lambda stream ───────────────────────────────────────────────────────────
-  if [[ -n "$LOG_STREAM" && "$LOG_STREAM" != "None" && "$LAMBDA_COMPLETE" == false ]]; then
-    if ! aws logs get-log-events \
-      --log-group-name "$LOG_GROUP_NAME" \
-      --log-stream-name "$LOG_STREAM" \
-      --start-time "$START_TIME" \
-      --query 'events[*].message' --output text > "${LAMBDA_LOG_FILE}.new" 2>&1; then
-      echo -e "${YELLOW}Warning: Failed to fetch lambda logs${NC}" >&2
-      touch "${LAMBDA_LOG_FILE}.new"
-    fi
-
-    NEW_COUNT=$(wc -l < "${LAMBDA_LOG_FILE}.new")
-    if (( NEW_COUNT > LAST_LAM_COUNT )); then
-      while IFS= read -r line; do
-        [[ -z "$line" ]] && continue
-        echo -e "${BLUE}🔷 $line${NC}"
-        if [[ "$line" == *"Command status: Success"* || "$line" == *"Command status: Failed"* ]]; then
-          LAMBDA_COMPLETE=true
-        fi
-      done < <(tail -n +"$((LAST_LAM_COUNT + 1))" "${LAMBDA_LOG_FILE}.new")
-      LAST_LAM_COUNT=$NEW_COUNT
-      cp "${LAMBDA_LOG_FILE}.new" "$LAMBDA_LOG_FILE"
-    fi
-  fi
-
-  # ── EC2 stream (CloudWatch) ────────────────────────────────────────────
-  if [[ -n "$INSTANCE_ID" && "$INSTANCE_ID" != "None" ]]; then
-    # First check if the log stream exists
-    if ! aws logs describe-log-streams --log-group-name "scraper-logs" --log-stream-name-prefix "$INSTANCE_ID" --query 'logStreams[0].logStreamName' --output text >/dev/null 2>&1; then
-      echo -e "${YELLOW}No EC2 log stream found for $INSTANCE_ID${NC}"
-      echo -e "${YELLOW}Note: Instance starts fresh each time, CloudWatch agent may need time to initialize${NC}"
+# Tail Lambda logs - this now includes all EC2 output
+aws logs tail "$LOG_GROUP_NAME" --follow --since 5m --format short | while IFS= read -r line; do
+    # Color code the output
+    if [[ "$line" == *"[EC2]"* ]]; then
+        # EC2 output in green
+        echo -e "${GREEN}$line${NC}"
+    elif [[ "$line" == *"[EC2-ERR]"* ]] || [[ "$line" == *"ERROR"* ]] || [[ "$line" == *"❌"* ]]; then
+        # Errors in red
+        echo -e "${RED}$line${NC}"
+    elif [[ "$line" == *"✅"* ]] || [[ "$line" == *"SUCCESS"* ]] || [[ "$line" == *"successful"* ]]; then
+        # Success messages in green
+        echo -e "${GREEN}$line${NC}"
+    elif [[ "$line" == *"🚀"* ]] || [[ "$line" == *"🏃"* ]] || [[ "$line" == *"📋"* ]]; then
+        # Status messages in blue
+        echo -e "${BLUE}$line${NC}"
+    elif [[ "$line" == *"⏳"* ]] || [[ "$line" == *"⚠️"* ]]; then
+        # Warnings in yellow
+        echo -e "${YELLOW}$line${NC}"
     else
-      CW_ARGS=(--log-group-name "scraper-logs" --log-stream-names "$INSTANCE_ID" --start-time "$START_TIME")
-      [[ -n "$EC2_NEXT_TOKEN" ]] && CW_ARGS+=(--next-token "$EC2_NEXT_TOKEN")
-
-      if ! EC2_JSON=$(aws logs filter-log-events "${CW_ARGS[@]}" 2>&1); then
-        echo -e "${YELLOW}Warning: Failed to fetch EC2 logs: $(echo "$EC2_JSON" | head -1)${NC}" >&2
-        EC2_JSON='{}'
-      fi
-      EC2_NEXT_TOKEN=$(echo "$EC2_JSON" | jq -r '.nextToken // empty' 2>/dev/null || true)
-
-      # print new messages
-      while IFS= read -r line; do
-        [[ -z "$line" ]] && continue
-        if [[ "$line" == "{"* ]]; then
-          if msg=$(echo "$line" | jq -r '.message // empty' 2>/dev/null); then
-            echo -e "${ORANGE}🔶 ${msg}${NC}"
-          else
-            echo -e "${ORANGE}🔶 $line${NC}"
-          fi
-        else
-          echo -e "${ORANGE}🔶 $line${NC}"
-        fi
-      done < <(echo "$EC2_JSON" | jq -r '.events[].message // empty' 2>/dev/null || echo "")
-
-      # completion check
-      if echo "$EC2_JSON" | grep -q -E 'Job summary written|summary\.json uploaded|scraping completed successfully'; then
-        SCRAPING_COMPLETE=true
-      fi
+        # Default output
+        echo "$line"
     fi
-  fi
-
-  # ── Exit conditions ─────────────────────────────────────────────────────────
-  if [[ "$SCRAPING_COMPLETE" == true ]]; then
-    echo -e "${GREEN}🛑 Scraping completed successfully (marker found).${NC}"
-    sleep 3
-    break
-  fi
-
-  if [[ "$LAMBDA_COMPLETE" == true ]]; then
-    echo -e "${YELLOW}[${ts}] Lambda done – waiting on EC2…${NC}"
-  else
-    echo -e "${YELLOW}[${ts}] monitoring…${NC}"
-  fi
-  sleep 2
 done
-
-echo -e "\n${GREEN}=== FINAL S3 OUTPUTS ===${NC}"
-aws s3 ls s3://tokyo-real-estate-ai-data/scraper-output/ --recursive \
-  | grep -E "${SESSION_ID}|$(date +%Y-%m-%d)" | tail -10 || true
-
-echo -e "${GREEN}Done.${NC}"
