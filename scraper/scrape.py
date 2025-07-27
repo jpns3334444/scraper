@@ -868,7 +868,7 @@ def collect_area_listing_urls(area_name, max_pages=None, session=None, stealth_c
         if should_close_session:
             session.close()
 
-def collect_multiple_areas_urls(areas, stealth_config=None, logger=None):
+def collect_multiple_areas_urls(areas, stealth_config=None, logger=None, max_urls=None):
     """Collect listing URLs from multiple Tokyo areas in one session"""
     stealth_mode = stealth_config and stealth_config.get('stealth_mode', False)
     session = create_stealth_session(stealth_mode=stealth_mode, logger=logger)
@@ -876,7 +876,7 @@ def collect_multiple_areas_urls(areas, stealth_config=None, logger=None):
     
     if logger:
         log_structured_message(logger, "INFO", "Starting multi-area URL collection", 
-                             areas=areas, total_areas=len(areas), stealth_mode=stealth_mode)
+                             areas=areas, total_areas=len(areas), stealth_mode=stealth_mode, max_urls=max_urls)
     
     try:
         # Simulate search behavior once at the beginning in stealth mode
@@ -904,6 +904,12 @@ def collect_multiple_areas_urls(areas, stealth_config=None, logger=None):
             
             if logger:
                 logger.info(f"✅ Area {area}: {len(area_urls)} URLs in {area_duration:.1f}s (Total: {len(all_urls)})")
+                
+                # Check if we've reached the max_urls limit
+                if max_urls and len(all_urls) >= max_urls:
+                    logger.info(f"🚀 Reached max URLs limit ({max_urls}), stopping collection early")
+                    all_urls = all_urls[:max_urls]  # Trim to exact limit
+                    break
                 
                 # Show ETA for remaining areas
                 if i < len(areas) - 1:
@@ -1757,54 +1763,39 @@ def write_job_summary(summary_data):
             print(f"❌ Failed to write job summary: {e}")
 
 def setup_logging():
-    """Configure logging with JSON formatting"""
+    """Configure logging with simple text formatting"""
     # Configure root logger
     logging.basicConfig(
         level=logging.INFO,
-        format='%(message)s',  # Just the message, as we'll format it as JSON
+        format='%(asctime)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
         handlers=[
             logging.StreamHandler()  # Output to stdout
         ]
     )
     
-    # Create a custom formatter that outputs JSON
-    class JSONFormatter(logging.Formatter):
-        def format(self, record):
-            log_entry = {
-                "timestamp": datetime.now().isoformat(),
-                "level": record.levelname,
-                "message": record.getMessage(),
-                "module": record.module,
-                "function": record.funcName
-            }
-            # Add any extra fields from the record
-            if hasattr(record, 'extra_fields'):
-                log_entry.update(record.extra_fields)
-            return json.dumps(log_entry)
-    
-    # Apply JSON formatter to all handlers
-    json_formatter = JSONFormatter()
-    for handler in logging.root.handlers:
-        handler.setFormatter(json_formatter)
-    
     return logging.getLogger(__name__)
 
 def log_structured_message(logger, level, message, **kwargs):
-    """Log structured message in JSON format"""
+    """Log message with simple text formatting"""
     if not logger:
         return
     
-    # Create a custom log record with extra fields
-    extra = {'extra_fields': kwargs}
+    # Format additional fields as simple key=value pairs
+    if kwargs:
+        extra_info = " ".join([f"{k}={v}" for k, v in kwargs.items()])
+        full_message = f"{message} - {extra_info}"
+    else:
+        full_message = message
     
     if level == "INFO":
-        logger.info(message, extra=extra)
+        logger.info(full_message)
     elif level == "WARNING":
-        logger.warning(message, extra=extra)
+        logger.warning(full_message)
     elif level == "ERROR":
-        logger.error(message, extra=extra)
+        logger.error(full_message)
     elif level == "DEBUG":
-        logger.debug(message, extra=extra)
+        logger.debug(full_message)
 
 # =============================================================================
 # DynamoDB Helper Functions for Full Load and Duplicate Detection
@@ -1941,7 +1932,10 @@ def check_existing_listings_batch(urls, table, logger=None):
                 raw_property_id = extract_property_id_from_url(url)
                 if raw_property_id:
                     property_id = create_property_id_key(raw_property_id, date_str)
-                    key = {'property_id': property_id, 'sort_key': 'META'}
+                    key = {
+                        'property_id': {'S': property_id}, 
+                        'sort_key': {'S': 'META'}
+                    }
                     keys_to_urls[f"{property_id}#META"] = url
                     valid_urls.append(url)
                     
@@ -2449,7 +2443,14 @@ def main():
         else:
             # Standard collection for other modes
             if len(session_areas) > 1:
-                all_urls, session = collect_multiple_areas_urls(session_areas, config, logger)
+                # Pass max_urls limit for full load mode with max_properties set
+                max_urls_limit = None
+                if full_load_mode and config.get('max_properties') and config['max_properties'] > 0:
+                    max_urls_limit = config['max_properties']
+                    if logger:
+                        logger.info(f"🚀 Full load mode with max_properties limit: will collect only {max_urls_limit} URLs")
+                
+                all_urls, session = collect_multiple_areas_urls(session_areas, config, logger, max_urls=max_urls_limit)
                 BASE_URL = "https://www.homes.co.jp"  # Base URL for multi-area
             else:
                 # Single area fallback - collect all pages

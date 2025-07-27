@@ -57,31 +57,32 @@ Resources:
               mode = event.get('mode', 'stealth')
               single_area = event.get('single_area', 'chofu-city')
               full_mode = event.get('full_mode', False)
+              max_properties_override = event.get('max_properties')
               
               print(f"🚀 Starting {mode} scraper - Session: {session_id}")
               
               # Configure based on mode
               if full_mode:
                   # Full load mode overrides other settings
-                  max_properties = 0  # No limit
+                  max_properties = max_properties_override if max_properties_override else 0  # No limit unless override
                   stealth_mode = False
                   areas = []  # Will discover all areas
                   mode = 'full-load'
               elif mode == 'testing':
-                  max_properties = 5
+                  max_properties = max_properties_override if max_properties_override else 5
                   stealth_mode = False
                   areas = [single_area]  # Single area for testing
               elif mode == 'stealth':
-                  max_properties = event.get('max_properties', 10000)
+                  max_properties = max_properties_override if max_properties_override else 10000
                   stealth_mode = True
                   # Use area distribution logic for comprehensive coverage
                   areas = []  # Will be handled by scraper's internal logic
               elif mode == 'normal':
-                  max_properties = 500
+                  max_properties = max_properties_override if max_properties_override else 500
                   stealth_mode = False
                   areas = [single_area]
               else:
-                  max_properties = event.get('max_properties', 8)
+                  max_properties = max_properties_override if max_properties_override else 8
                   stealth_mode = True
                   areas = []
               
@@ -242,8 +243,8 @@ Resources:
                       exit 1
                   fi
                   
-                  # Run scraper
-                  python3 scrape.py 2>&1
+                  # Run scraper and redirect output to log file for CloudWatch
+                  python3 scrape.py 2>&1 | tee -a /var/log/scraper/run.log
                   SCRAPER_EXIT_CODE=$?
                   
                   echo "=== SCRAPER END: $(date), Exit code: $SCRAPER_EXIT_CODE ==="

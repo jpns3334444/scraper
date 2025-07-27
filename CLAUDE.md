@@ -116,3 +116,8 @@ AWS_REGION=ap-northeast-1      # Tokyo region only
 
 ## Scraping Guidelines
 - Do not run the scraper script locally as we do not want our IP to be attached to the scraping
+
+## Critical Infrastructure Warnings
+
+### EC2 Logging Configuration
+- NEVER, EVER FUCKING CHANGE THE EC2 LOG CONFIGURATION WITHOUT CONSULTING ME. IT GOES EC2 > OUTPUT FILE > AND THEN AGENT SENDS THEM TO CLOUDWATCH. DO NOT FUCK WITH IT, DO U FUCKING UNDERSTAND?

@@ -3,19 +3,21 @@ set -euo pipefail
 
 # Function to show usage
 show_usage() {
-    echo "Usage: $0 [MODE] [SESSION_ID] [--full]"
+    echo "Usage: $0 [MODE] [SESSION_ID] [--full] [--max-properties N]"
     echo ""
     echo "Arguments:"
-    echo "  MODE        Scraper mode (default: testing)"
-    echo "  SESSION_ID  Session identifier (default: manual-TIMESTAMP)"
-    echo "  --full, -f  Enable full load mode (scrapes all properties)"
+    echo "  MODE                   Scraper mode (default: testing)"
+    echo "  SESSION_ID             Session identifier (default: manual-TIMESTAMP)"
+    echo "  --full, -f             Enable full load mode (scrapes all properties)"
+    echo "  --max-properties N     Limit to N properties (useful for testing full load)"
     echo ""
     echo "Examples:"
-    echo "  $0                    # Run in testing mode"
-    echo "  $0 production         # Run in production mode"
-    echo "  $0 testing my-session # Run with custom session ID"
-    echo "  $0 -f                 # Run in testing mode with full load"
-    echo "  $0 production --full  # Run in production mode with full load"
+    echo "  $0                                # Run in testing mode"
+    echo "  $0 production                     # Run in production mode"
+    echo "  $0 testing my-session             # Run with custom session ID"
+    echo "  $0 -f                             # Run in testing mode with full load"
+    echo "  $0 production --full              # Run in production mode with full load"
+    echo "  $0 --full --max-properties 50     # Full load but limit to 50 properties"
 }
 
 # Colors
@@ -36,10 +38,13 @@ log() {
 MODE="testing"
 SESSION_ID=""
 FULL_MODE=false
+MAX_PROPERTIES=""
 POSITIONAL_ARGS=()
 
 # Process arguments
-for arg in "$@"; do
+i=1
+while [[ $i -le $# ]]; do
+    arg="${!i}"
     case $arg in
         --help|-h)
             show_usage
@@ -48,10 +53,20 @@ for arg in "$@"; do
         --full|-f)
             FULL_MODE=true
             ;;
+        --max-properties)
+            i=$((i + 1))
+            if [[ $i -le $# ]]; then
+                MAX_PROPERTIES="${!i}"
+            else
+                echo "Error: --max-properties requires a number"
+                exit 1
+            fi
+            ;;
         *)
             POSITIONAL_ARGS+=("$arg")
             ;;
     esac
+    i=$((i + 1))
 done
 
 # Process positional arguments
@@ -81,6 +96,7 @@ log "${YELLOW}Configuration:${NC}"
 log "  Mode: ${BLUE}$MODE${NC}"
 log "  Session ID: ${BLUE}$SESSION_ID${NC}"
 log "  Full Load: ${BLUE}$FULL_MODE${NC}"
+log "  Max Properties: ${BLUE}${MAX_PROPERTIES:-unlimited}${NC}"
 log "  Lambda Function: ${BLUE}$LAMBDA_FUNCTION${NC}"
 log "  Region: ${BLUE}$REGION${NC}"
 log "  Log Group: ${BLUE}$EC2_LOG_GROUP${NC}"
@@ -171,7 +187,11 @@ echo ""
 
 # Step 5: Trigger Lambda
 log "${YELLOW}STEP 5: Triggering Lambda function...${NC}"
-PAYLOAD="{\"mode\":\"$MODE\",\"session_id\":\"$SESSION_ID\",\"full_mode\":$FULL_MODE}"
+if [[ -n "$MAX_PROPERTIES" ]]; then
+    PAYLOAD="{\"mode\":\"$MODE\",\"session_id\":\"$SESSION_ID\",\"full_mode\":$FULL_MODE,\"max_properties\":$MAX_PROPERTIES}"
+else
+    PAYLOAD="{\"mode\":\"$MODE\",\"session_id\":\"$SESSION_ID\",\"full_mode\":$FULL_MODE}"
+fi
 log "  Payload: $PAYLOAD"
 
 INVOKE_START=$(date +%s)
@@ -382,17 +402,7 @@ if aws logs describe-log-groups --log-group-name-prefix "$EC2_LOG_GROUP" --regio
       --follow \
       --format short \
       --region "$REGION" \
-      --since 2m | while read -r line; do
-        # Extract just the message if it's JSON
-        if [[ "$line" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[[:space:]]\{ ]]; then
-            timestamp=$(echo "$line" | cut -d' ' -f1)
-            json=$(echo "$line" | cut -d' ' -f2-)
-            message=$(echo "$json" | jq -r .message 2>/dev/null || echo "$line")
-            echo "$timestamp $message"
-        else
-            echo "$line"
-        fi
-    done
+      --since 2m
 else
     log "${RED}✗ Log group $EC2_LOG_GROUP still doesn't exist${NC}"
     log "${YELLOW}Waiting for CloudWatch agent to create it...${NC}"
