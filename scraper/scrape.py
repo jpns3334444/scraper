@@ -1839,11 +1839,11 @@ def setup_dynamodb_client(logger=None):
 def extract_property_id_from_url(url):
     """Extract property ID from listing URL"""
     patterns = [
-        r'/mansion/b-(\d+)/',           # /mansion/b-1234567890/
-        r'/b-(\d+)/',                   # /b-1234567890/
+        r'/mansion/b-(\d+)/?$',         # /mansion/b-1234567890 or /mansion/b-1234567890/
+        r'/b-(\d+)/?$',                 # /b-1234567890 or /b-1234567890/
         r'property[_-]?id[=:](\d+)',    # property_id=123 or property:123
         r'mansion[_-]?(\d{8,})',        # mansion_12345678 or mansion-12345678
-        r'/(\d{10,})/'                  # Any 10+ digit number in URL path
+        r'/(\d{10,})/?$'                # Any 10+ digit number at end of URL path
     ]
     
     for pattern in patterns:
@@ -2327,7 +2327,7 @@ def main():
                              start_time=job_start_time.isoformat())
         logger.info(f"🧪 TESTING MODE - Session: {config['session_id']}, Max Properties: {max_properties_limit}, Areas: {config['areas']}")
     elif full_load_mode or mode == 'full-load':
-        max_properties_limit = 0  # No limit in full-load mode
+        max_properties_limit = config['max_properties'] if config['max_properties'] > 0 else 0 # No limit in full-load mode
         mode_name = "FULL LOAD MODE"
         stealth_enabled = False  # Full load uses own optimization
         log_structured_message(logger, "INFO", "FULL LOAD MODE: Complete Tokyo market with deduplication", 

@@ -40,7 +40,6 @@ Resources:
           import os
           import time
           import random
-          import re
           from datetime import datetime, timezone
 
           def lambda_handler(event, context):
@@ -209,7 +208,7 @@ Resources:
                       "body": json.dumps({"error": error_msg, "session_id": session_id, "mode": mode})
                   }
               
-              # STEP 2: Run the scraper with DIRECT OUTPUT STREAMING
+              # STEP 2: Run the scraper command
               print(f"🏃 Starting {mode} scraper job - Session: {session_id}, Max Properties: {max_properties}")
               start_time = datetime.now()
               
@@ -267,17 +266,15 @@ Resources:
                   
                   command_id = response['Command']['CommandId']
                   print(f"📋 SSM command sent: {command_id}")
+                  print(f"ℹ️ Scraper logs are being sent directly to CloudWatch Logs group: scraper-logs")
                   
-                  # Monitor command execution with DIRECT OUTPUT STREAMING
+                  # Wait for command completion without streaming output
                   status = "InProgress"
-                  last_output_len = 0
-                  last_error_len = 0
                   wait_count = 0
                   max_waits = 120  # 60 minutes max (30s intervals)
-                  properties_scraped = 0
                   
                   while status == "InProgress" and wait_count < max_waits:
-                      time.sleep(5 if wait_count < 10 else 30)  # Quick checks at start, then slower
+                      time.sleep(30)  # Check every 30 seconds
                       wait_count += 1
                       
                       try:
@@ -286,40 +283,10 @@ Resources:
                               InstanceId=instance_id
                           )
                           status = invocation['Status']
-                          output = invocation.get('StandardOutputContent', '')
-                          error_output = invocation.get('StandardErrorContent', '')
                           
-                          # Stream new output
-                          if len(output) > last_output_len:
-                              new_output = output[last_output_len:]
-                              for line in new_output.split('\n'):
-                                  if line.strip():
-                                      # Try to parse JSON and extract just the message
-                                      try:
-                                          import json as json_module
-                                          log_data = json_module.loads(line)
-                                          if 'message' in log_data:
-                                              print(f"[EC2] {log_data['message']}")
-                                          else:
-                                              print(f"[EC2] {line}")
-                                      except:
-                                          # Not JSON, print as is
-                                          print(f"[EC2] {line}")
-                              last_output_len = len(output)
-                          
-                          # Stream new errors
-                          if len(error_output) > last_error_len:
-                              new_errors = error_output[last_error_len:]
-                              for line in new_errors.split('\n'):
-                                  if line.strip():
-                                      print(f"[EC2-ERR] {line}")
-                              last_error_len = len(error_output)
-                          
-                          # Extract properties count from output
-                          if output:
-                              match = re.search(r'(\d+) successful', output)
-                              if match:
-                                  properties_scraped = int(match.group(1))
+                          # Only print status updates
+                          if wait_count % 4 == 0:  # Every 2 minutes
+                              print(f"⏳ Scraper still running... ({wait_count * 30 / 60:.0f} minutes elapsed)")
                           
                       except ssm.exceptions.InvocationDoesNotExist:
                           # Command might still be initializing
@@ -330,10 +297,31 @@ Resources:
                   end_time = datetime.now()
                   duration = (end_time - start_time).total_seconds()
                   
+                  # Get final output for summary
+                  if status in ['Success', 'Failed']:
+                      final_invocation = ssm.get_command_invocation(
+                          CommandId=command_id,
+                          InstanceId=instance_id
+                      )
+                      output = final_invocation.get('StandardOutputContent', '')
+                      error_output = final_invocation.get('StandardErrorContent', '')
+                      
+                      # Extract properties count from output
+                      properties_scraped = 0
+                      import re
+                      if output:
+                          match = re.search(r'(\d+) successful', output)
+                          if match:
+                              properties_scraped = int(match.group(1))
+                  else:
+                      properties_scraped = 0
+                  
                   # Final status
                   print(f"\n{'✅' if status == 'Success' else '❌'} Scraper {status}")
                   print(f"⏱️ Duration: {duration:.1f} seconds")
                   print(f"📊 Properties scraped: {properties_scraped}")
+                  print(f"📋 Command ID: {command_id}")
+                  print(f"🔍 View logs at: CloudWatch Logs > scraper-logs > {instance_id}")
                   
                   # Shutdown logic
                   if status == "Success":
@@ -351,10 +339,10 @@ Resources:
 
                   if notification_enabled and sns_topic_arn:
                       if status == "Success":
-                          message = f" {mode.title()} scraper session completed successfully\n\nSession ID: {session_id}\nMode: {mode}\nStart Time: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\nEnd Time: {end_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\nDuration: {duration:.1f} seconds\nProperties Scraped: {properties_scraped}\nMax Properties: {max_properties}\nCommand ID: {command_id}\nInstance ID: {instance_id}\nInstance Shutdown: {instance_shutdown}\n\nCheck S3 bucket for scraped data."
+                          message = f" {mode.title()} scraper session completed successfully\n\nSession ID: {session_id}\nMode: {mode}\nStart Time: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\nEnd Time: {end_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\nDuration: {duration:.1f} seconds\nProperties Scraped: {properties_scraped}\nMax Properties: {max_properties}\nCommand ID: {command_id}\nInstance ID: {instance_id}\nInstance Shutdown: {instance_shutdown}\n\nCheck CloudWatch Logs group 'scraper-logs' for detailed output."
                           subject = f"{mode.title()} Scraper Session - Success"
                       else:
-                          message = f" {mode.title()} scraper session failed\n\nSession ID: {session_id}\nMode: {mode}\nStart Time: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\nEnd Time: {end_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\nDuration: {duration:.1f} seconds\nStatus: {status}\nCommand ID: {command_id}\nInstance ID: {instance_id}\n\nInstance kept running for debugging."
+                          message = f" {mode.title()} scraper session failed\n\nSession ID: {session_id}\nMode: {mode}\nStart Time: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\nEnd Time: {end_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\nDuration: {duration:.1f} seconds\nStatus: {status}\nCommand ID: {command_id}\nInstance ID: {instance_id}\n\nInstance kept running for debugging. Check CloudWatch Logs group 'scraper-logs' for details."
                           subject = f"{mode.title()} Scraper Session - Failed"
                       
                       sns.publish(
@@ -374,7 +362,9 @@ Resources:
                           "mode": mode,
                           "properties_scraped": properties_scraped,
                           "max_properties": max_properties,
-                          "instance_shutdown": instance_shutdown
+                          "instance_shutdown": instance_shutdown,
+                          "cloudwatch_logs_group": "scraper-logs",
+                          "cloudwatch_logs_stream": instance_id
                       })
                   }
                   
