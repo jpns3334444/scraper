@@ -533,12 +533,24 @@ def discover_tokyo_areas(stealth_mode=False, logger=None):
         # Remove duplicates and sort
         unique_areas = sorted(list(set(area_links)))
         
+        # Filter out invalid area names
+        valid_areas = []
+        for area in unique_areas:
+            # Skip invalid patterns
+            if (area and
+                not area.endswith('/') and
+                not area.startswith('list') and
+                len(area) > 2 and
+                not any(char in area for char in ['?', '&', '=', '#'])):
+                valid_areas.append(area)
+        
         if logger:
             log_structured_message(logger, "INFO", "Tokyo areas discovered", 
-                                 total_areas=len(unique_areas), 
-                                 areas=unique_areas[:10])  # Log first 10 for brevity
+                                 total_areas=len(valid_areas), 
+                                 filtered_out=len(unique_areas) - len(valid_areas),
+                                 areas=valid_areas[:10])  # Log first 10 for brevity
         
-        return unique_areas
+        return valid_areas
         
     except Exception as e:
         if logger:
