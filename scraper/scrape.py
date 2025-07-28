@@ -746,6 +746,270 @@ def extract_listing_urls_from_html(html_content):
     
     return list(unique_listings)
 
+def extract_listings_with_metadata_from_html(html_content):
+    """Extract listing URLs with metadata (including prices) from HTML content
+    
+    Note: This function attempts to extract prices from listing pages.
+    If prices are not available on listing pages, it returns URLs with empty metadata.
+    """
+    from bs4 import BeautifulSoup
+    
+    try:
+        soup = BeautifulSoup(html_content, 'html.parser')
+        listings = []
+        
+        # Find all listing links
+        relative_urls = re.findall(r'/mansion/b-\d+/?', html_content)
+        
+        for url in relative_urls:
+            absolute_url = f"https://www.homes.co.jp{url.rstrip('/')}"
+            
+            # Try to extract price from the listing context
+            # This is a best-effort approach - prices might not be available on listing pages
+            listing_metadata = {
+                'url': absolute_url,
+                'price': None,
+                'price_display': None,
+                'title': None
+            }
+            
+            # Look for price patterns near the URL in the HTML
+            # Pattern 1: Look for price in万円 format around the URL
+            url_context_pattern = f"{re.escape(url)}.*?(\\d{{1,4}}(?:,\\d{{3}})*万円)"
+            price_match = re.search(url_context_pattern, html_content, re.DOTALL)
+            if not price_match:
+                # Pattern 2: Look backwards from the URL
+                reverse_pattern = f"(\\d{{1,4}}(?:,\\d{{3}})*万円).*?{re.escape(url)}"
+                price_match = re.search(reverse_pattern, html_content, re.DOTALL)
+            
+            if price_match:
+                price_text = price_match.group(1)
+                try:
+                    price_num = int(price_text.replace('万円', '').replace(',', '')) * 10000
+                    listing_metadata['price'] = price_num
+                    listing_metadata['price_display'] = price_text
+                except ValueError:
+                    pass
+            
+            listings.append(listing_metadata)
+        
+        # Remove duplicates based on URL
+        seen_urls = set()
+        unique_listings = []
+        for listing in listings:
+            if listing['url'] not in seen_urls:
+                seen_urls.add(listing['url'])
+                unique_listings.append(listing)
+        
+        return unique_listings
+        
+    except Exception as e:
+        # Fallback to URL-only extraction if metadata extraction fails
+        return [{'url': url, 'price': None, 'price_display': None, 'title': None} 
+                for url in extract_listing_urls_from_html(html_content)]
+
+def collect_area_listing_urls_efficient(area_name, existing_properties=None, max_pages=None, session=None, stealth_config=None, logger=None):
+    """Efficiently collect listing URLs from a specific Tokyo area with price checking during collection"""
+    base_url = f"https://www.homes.co.jp/mansion/chuko/tokyo/{area_name}/list"
+    stealth_mode = stealth_config and stealth_config.get('stealth_mode', False)
+    
+    # Use provided session or create new one
+    if session is None:
+        session = create_stealth_session(stealth_mode=stealth_mode, logger=logger)
+        should_close_session = True
+    else:
+        should_close_session = False
+    
+    # Initialize result containers
+    new_urls = []
+    price_changed_urls = []
+    price_unchanged_urls = []
+    existing_properties = existing_properties or {}
+    
+    if logger:
+        log_structured_message(logger, "INFO", "Starting efficient area URL collection", 
+                             area=area_name, base_url=base_url, stealth_mode=stealth_mode,
+                             existing_properties_count=len(existing_properties))
+    
+    try:
+        # Step 1: Get page 1 to establish session
+        if logger:
+            logger.info(f"=== Efficiently collecting from {area_name} (page 1) ===")
+        response = session.get(base_url, timeout=15)
+        
+        if response.status_code != 200:
+            raise Exception(f"Failed to access {area_name}: HTTP {response.status_code}")
+        
+        if "pardon our interruption" in response.text.lower():
+            raise Exception(f"Anti-bot protection detected on {area_name}")
+        
+        # Parse pagination info
+        soup = BeautifulSoup(response.content, 'html.parser')
+        total_element = soup.select_one('.totalNum')
+        total_count = int(total_element.text) if total_element else 0
+        
+        page_links = soup.select('a[data-page]')
+        total_pages = max([int(link.get('data-page', 1)) for link in page_links]) if page_links else 1
+        
+        # Set reasonable upper limit to prevent infinite loops, but allow all pages
+        max_page = min(total_pages, max_pages) if max_pages else total_pages
+        
+        # Log if we're limiting pages
+        if max_pages and total_pages > max_pages:
+            if logger:
+                log_structured_message(logger, "INFO", "Page limit applied", 
+                                     area=area_name, total_pages=total_pages, max_pages=max_pages)
+        
+        if logger:
+            log_structured_message(logger, "INFO", "Area pagination info parsed", 
+                                 area=area_name, total_listings=total_count, 
+                                 total_pages=total_pages, max_page=max_page)
+        
+        # Extract listings with metadata from page 1
+        page1_listings = extract_listings_with_metadata_from_html(response.text)
+        
+        # Process page 1 listings
+        page1_new, page1_changed, page1_unchanged = process_listings_with_existing_check(
+            page1_listings, existing_properties, logger)
+        
+        new_urls.extend(page1_new)
+        price_changed_urls.extend(page1_changed)
+        price_unchanged_urls.extend(page1_unchanged)
+        
+        if logger:
+            logger.info(f"{area_name} page 1: Found {len(page1_listings)} listings "
+                       f"(new: {len(page1_new)}, changed: {len(page1_changed)}, unchanged: {len(page1_unchanged)})")
+        
+        # Set referer for subsequent requests
+        session.headers['Referer'] = base_url
+        
+        # Step 2: Get remaining pages with stealth timing
+        for page_num in range(2, max_page + 1):
+            if logger:
+                logger.info(f"=== Efficiently collecting from {area_name} (page {page_num}) ===")
+            
+            # Use human-like delays in stealth mode
+            if stealth_mode:
+                delay = simulate_navigation_delay() + random.uniform(2, 5)
+            else:
+                delay = random.uniform(1, 3)
+            
+            time.sleep(delay)
+            page_url = f"{base_url}/?page={page_num}"
+            
+            try:
+                response = session.get(page_url, timeout=15)
+                
+                if response.status_code != 200:
+                    if logger:
+                        log_structured_message(logger, "WARNING", "Failed to access area page", 
+                                             area=area_name, page=page_num, status_code=response.status_code)
+                    continue
+                
+                if "pardon our interruption" in response.text.lower():
+                    if logger:
+                        log_structured_message(logger, "ERROR", "Anti-bot protection triggered", 
+                                             area=area_name, page=page_num)
+                    break
+                
+                # Extract listings with metadata from this page
+                page_listings = extract_listings_with_metadata_from_html(response.text)
+                
+                # Process listings
+                page_new, page_changed, page_unchanged = process_listings_with_existing_check(
+                    page_listings, existing_properties, logger)
+                
+                new_urls.extend(page_new)
+                price_changed_urls.extend(page_changed)
+                price_unchanged_urls.extend(page_unchanged)
+                
+                if logger:
+                    logger.info(f"{area_name} page {page_num}: Found {len(page_listings)} listings "
+                               f"(new: {len(page_new)}, changed: {len(page_changed)}, unchanged: {len(page_unchanged)})")
+                
+                session.headers['Referer'] = page_url
+                if logger:
+                    log_structured_message(logger, "INFO", "Area page scraped successfully", 
+                                         area=area_name, page=page_num, listings_found=len(page_listings))
+                
+            except Exception as e:
+                if logger:
+                    log_structured_message(logger, "ERROR", "Error fetching area page", 
+                                         area=area_name, page=page_num, error=str(e))
+                continue
+        
+        total_listings = len(new_urls) + len(price_changed_urls) + len(price_unchanged_urls)
+        if logger:
+            log_structured_message(logger, "INFO", "Efficient area URL collection completed", 
+                                 area=area_name, total_listings=total_listings,
+                                 new_urls=len(new_urls), price_changed=len(price_changed_urls),
+                                 price_unchanged=len(price_unchanged_urls))
+        
+        return {
+            'new_urls': new_urls,
+            'price_changed_urls': price_changed_urls,
+            'price_unchanged_urls': price_unchanged_urls,
+            'session': session if not should_close_session else None
+        }
+        
+    except Exception as e:
+        if logger:
+            log_structured_message(logger, "ERROR", "Failed to collect area URLs efficiently", 
+                                 area=area_name, error=str(e))
+        raise
+    finally:
+        if should_close_session and session:
+            session.close()
+
+def process_listings_with_existing_check(listings_with_metadata, existing_properties, logger=None):
+    """Process listings to categorize them as new, price changed, or unchanged"""
+    new_urls = []
+    price_changed_urls = []
+    price_unchanged_urls = []
+    
+    for listing in listings_with_metadata:
+        url = listing['url']
+        current_price = listing.get('price')
+        
+        # Extract property ID from URL
+        raw_property_id = extract_property_id_from_url(url)
+        if not raw_property_id:
+            # If we can't extract property ID, treat as new
+            new_urls.append(url)
+            continue
+        
+        # Check if property exists
+        if raw_property_id in existing_properties:
+            existing_record = existing_properties[raw_property_id]
+            existing_price = existing_record.get('price', 0)
+            
+            # Compare prices if both are available
+            if current_price is not None and existing_price > 0:
+                if current_price != existing_price:
+                    # Price changed
+                    price_changed_urls.append({
+                        'url': url,
+                        'existing_record': existing_record,
+                        'current_metadata': listing,
+                        'price_change': {
+                            'old_price': existing_price,
+                            'new_price': current_price,
+                            'change_amount': current_price - existing_price,
+                            'change_percent': ((current_price - existing_price) / existing_price) * 100 if existing_price > 0 else 0
+                        }
+                    })
+                else:
+                    # Price unchanged
+                    price_unchanged_urls.append(url)
+            else:
+                # Can't compare prices, but property exists - treat as unchanged unless we need to re-scrape
+                price_unchanged_urls.append(url)
+        else:
+            # New property
+            new_urls.append(url)
+    
+    return new_urls, price_changed_urls, price_unchanged_urls
+
 def collect_area_listing_urls(area_name, max_pages=None, session=None, stealth_config=None, logger=None):
     """Collect listing URLs from a specific Tokyo area"""
     base_url = f"https://www.homes.co.jp/mansion/chuko/tokyo/{area_name}/list"
@@ -937,7 +1201,7 @@ def collect_multiple_areas_urls(areas, stealth_config=None, logger=None, max_url
         raise
 
 def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=True, logger=None):
-    """Enhanced URL collection with deduplication and metadata extraction"""
+    """Efficient URL collection with deduplication and metadata extraction"""
     if not enable_dedup:
         # Fall back to standard collection if deduplication is disabled
         if len(areas) > 1:
@@ -946,80 +1210,80 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
             base_url = f"https://www.homes.co.jp/mansion/chuko/tokyo/{areas[0]}/list"
             return collect_all_listing_urls(base_url, None, stealth_config, logger)
     
-    # Enhanced collection with deduplication
+    # Enhanced collection with deduplication using new efficient flow
     stealth_mode = stealth_config and stealth_config.get('stealth_mode', False)
     
     if logger:
-        logger.info(f"🔍 Starting enhanced URL collection with deduplication for {len(areas)} areas")
+        logger.info(f"🚀 Starting efficient URL collection with deduplication for {len(areas)} areas")
     
     try:
         # Setup DynamoDB connection
         dynamodb, table = setup_dynamodb_client(logger)
         
-        # Step 1: Collect all URLs using standard method
-        if len(areas) > 1:
-            all_urls, session = collect_multiple_areas_urls(areas, stealth_config, logger)
-        else:
-            base_url = f"https://www.homes.co.jp/mansion/chuko/tokyo/{areas[0]}/list"
-            all_urls, session = collect_all_listing_urls(base_url, None, stealth_config, logger)
+        # Step 1: Load all existing properties from DynamoDB into memory for O(1) lookups
+        existing_properties = load_all_existing_properties(table, logger)
         
-        if logger:
-            logger.info(f"📋 Collected {len(all_urls)} total URLs, checking for duplicates...")
+        # Step 2: Collect URLs and perform price checking during collection
+        session = create_stealth_session(stealth_mode=stealth_mode, logger=logger)
         
-        # Step 2: Check for existing listings in batches
-        existing_listings, new_urls = check_existing_listings_batch(all_urls, table, logger)
+        all_new_urls = []
+        all_price_changed_urls = []
+        all_price_unchanged_urls = []
         
-        # Step 3: For existing listings, extract metadata to check for price changes
-        price_changed_urls = []
-        price_unchanged_urls = []
+        # Simulate search behavior once at the beginning in stealth mode
+        if stealth_mode and areas:
+            first_area_url = f"https://www.homes.co.jp/mansion/chuko/tokyo/{areas[0]}/list"
+            simulate_search_behavior(session, first_area_url, stealth_mode, logger)
         
-        if existing_listings:
+        for i, area in enumerate(areas):
+            progress_pct = ((i + 1) / len(areas)) * 100
             if logger:
-                logger.info(f"🔍 Checking {len(existing_listings)} existing listings for price changes...")
+                logger.info(f"\n=== [{progress_pct:.1f}%] Efficiently processing area {i+1}/{len(areas)}: {area} ===")
             
-            price_check_start = time.time()
-            for idx, (url, existing_record) in enumerate(existing_listings.items()):
-                progress_pct = ((idx + 1) / len(existing_listings)) * 100
-                
-                # Log progress every 10 items or at key milestones
-                if (idx + 1) % 10 == 0 or idx == 0 or idx == len(existing_listings) - 1:
-                    elapsed = time.time() - price_check_start
-                    rate = (idx + 1) / elapsed if elapsed > 0 else 0
-                    eta = (len(existing_listings) - (idx + 1)) / rate if rate > 0 else 0
-                    if logger:
-                        logger.info(f"💰 [{progress_pct:.1f}%] Price check progress: {idx+1}/{len(existing_listings)} (~{eta/60:.1f}min remaining)")
-                
-                # Extract current metadata for price comparison
-                current_metadata = extract_listing_metadata_from_listing_page(url, session, logger)
-                
-                if current_metadata:
-                    price_changed, price_change = compare_listing_price(url, current_metadata, existing_record, logger)
-                    
-                    if price_changed:
-                        price_changed_urls.append({
-                            'url': url,
-                            'existing_record': existing_record,
-                            'current_metadata': current_metadata,
-                            'price_change': price_change
-                        })
-                    else:
-                        price_unchanged_urls.append(url)
-                else:
-                    # If we can't extract metadata, treat as unchanged
-                    price_unchanged_urls.append(url)
-                
-                # Add delay between metadata extractions
-                if stealth_mode:
-                    time.sleep(random.uniform(1, 3))
-                else:
-                    time.sleep(random.uniform(0.5, 1.5))
-        
-        # Step 4: Process price changes in DynamoDB
-        if price_changed_urls:
+            # Add delay between areas in stealth mode
+            if stealth_mode and i > 0:
+                area_transition_delay = simulate_navigation_delay() + random.uniform(5, 15)
+                if logger:
+                    logger.info(f"Stealth mode: Area transition delay {area_transition_delay:.1f}s")
+                time.sleep(area_transition_delay)
+            
+            # Efficiently collect URLs with price checking for this area
+            area_start_time = time.time()
+            area_result = collect_area_listing_urls_efficient(
+                area, existing_properties, max_pages=None, session=session, 
+                stealth_config=stealth_config, logger=logger)
+            area_duration = time.time() - area_start_time
+            
+            # Aggregate results
+            all_new_urls.extend(area_result['new_urls'])
+            all_price_changed_urls.extend(area_result['price_changed_urls'])
+            all_price_unchanged_urls.extend(area_result['price_unchanged_urls'])
+            
+            total_area_listings = len(area_result['new_urls']) + len(area_result['price_changed_urls']) + len(area_result['price_unchanged_urls'])
             if logger:
-                logger.info(f"💰 Updating {len(price_changed_urls)} listings with price changes...")
+                logger.info(f"✅ Area {area}: {total_area_listings} URLs in {area_duration:.1f}s "
+                           f"(new: {len(area_result['new_urls'])}, changed: {len(area_result['price_changed_urls'])}, unchanged: {len(area_result['price_unchanged_urls'])})")
+                
+                # Show ETA for remaining areas
+                if i < len(areas) - 1:
+                    avg_time_per_area = area_duration
+                    remaining_areas = len(areas) - (i + 1)
+                    eta_seconds = remaining_areas * avg_time_per_area
+                    eta_minutes = eta_seconds / 60
+                    total_processed = len(all_new_urls) + len(all_price_changed_urls) + len(all_price_unchanged_urls)
+                    logger.info(f"📊 Progress: {total_processed} URLs processed, ~{eta_minutes:.1f} minutes remaining")
+        
+        # Apply browsing patterns in stealth mode for new URLs only
+        if stealth_mode and stealth_config and all_new_urls:
+            entry_point = stealth_config.get('entry_point', 'default')
+            all_new_urls = simulate_browsing_patterns(session, all_new_urls, entry_point, stealth_mode, logger)
+        
+        # Step 3: Process price changes in DynamoDB if any were found
+        if all_price_changed_urls:
+            if logger:
+                logger.info(f"💰 Updating {len(all_price_changed_urls)} listings with price changes...")
             
-            for item in price_changed_urls:
+            for item in all_price_changed_urls:
                 update_listing_with_price_change(
                     item['existing_record'], 
                     item['current_metadata'], 
@@ -1027,26 +1291,27 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
                     logger
                 )
         
-        # Step 5: Create discovery records for truly new listings
-        if new_urls:
+        # Step 4: Create discovery records for truly new listings
+        if all_new_urls:
             if logger:
-                logger.info(f"✨ Creating discovery records for {len(new_urls)} new listings...")
+                logger.info(f"✨ Creating discovery records for {len(all_new_urls)} new listings...")
             
-            # Extract metadata for new listings and create discovery records
+            # Extract full metadata for new listings and create discovery records
             discovery_start = time.time()
             with table.batch_writer() as batch:
                 batch_count = 0
-                for idx, url in enumerate(new_urls):
-                    progress_pct = ((idx + 1) / len(new_urls)) * 100
+                for idx, url in enumerate(all_new_urls):
+                    progress_pct = ((idx + 1) / len(all_new_urls)) * 100
                     
                     # Log progress every 25 items or at key milestones
-                    if (idx + 1) % 25 == 0 or idx == 0 or idx == len(new_urls) - 1:
+                    if (idx + 1) % 25 == 0 or idx == 0 or idx == len(all_new_urls) - 1:
                         elapsed = time.time() - discovery_start
                         rate = (idx + 1) / elapsed if elapsed > 0 else 0
-                        eta = (len(new_urls) - (idx + 1)) / rate if rate > 0 else 0
+                        eta = (len(all_new_urls) - (idx + 1)) / rate if rate > 0 else 0
                         if logger:
-                            logger.info(f"✨ [{progress_pct:.1f}%] Discovery progress: {idx+1}/{len(new_urls)} (~{eta/60:.1f}min remaining)")
+                            logger.info(f"✨ [{progress_pct:.1f}%] Discovery progress: {idx+1}/{len(all_new_urls)} (~{eta/60:.1f}min remaining)")
                     
+                    # Extract full metadata from individual property page
                     metadata = extract_listing_metadata_from_listing_page(url, session, logger)
                     if metadata:
                         record = create_listing_meta_record(metadata)
@@ -1071,23 +1336,24 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
                     else:
                         time.sleep(random.uniform(0.5, 1.5))
         
-        # Step 6: Log summary
+        # Step 5: Log summary
+        total_processed = len(all_new_urls) + len(all_price_changed_urls) + len(all_price_unchanged_urls)
         summary = {
-            'total_urls_found': len(all_urls),
-            'existing_listings': len(existing_listings),
-            'new_listings': len(new_urls),
-            'price_changed': len(price_changed_urls),
-            'price_unchanged': len(price_unchanged_urls),
-            'processed_for_full_scraping': len(new_urls)  # Only new URLs need full scraping
+            'total_urls_found': total_processed,
+            'existing_listings': len(all_price_changed_urls) + len(all_price_unchanged_urls),
+            'new_listings': len(all_new_urls),
+            'price_changed': len(all_price_changed_urls),
+            'price_unchanged': len(all_price_unchanged_urls),
+            'processed_for_full_scraping': len(all_new_urls)  # Only new URLs need full scraping
         }
         
         if logger:
-            log_structured_message(logger, "INFO", "Deduplication summary", **summary)
-            logger.info(f"📊 Summary: {summary['total_urls_found']} total, {summary['new_listings']} new, "
+            log_structured_message(logger, "INFO", "Efficient deduplication summary", **summary)
+            logger.info(f"🚀 Efficient Summary: {summary['total_urls_found']} total, {summary['new_listings']} new, "
                        f"{summary['price_changed']} price changes, {summary['existing_listings']} existing")
         
         # Return only new URLs for full scraping
-        return new_urls, session, summary
+        return all_new_urls, session, summary
         
     except Exception as e:
         if logger:
@@ -1901,6 +2167,54 @@ def extract_listing_metadata_from_listing_page(url, session, logger=None):
             logger.warning(f"Failed to extract metadata from {url}: {str(e)}")
         return None
 
+def load_all_existing_properties(table, logger=None):
+    """Load all existing properties from DynamoDB into a dictionary for O(1) lookups"""
+    if logger:
+        logger.info("📊 Loading all existing properties from DynamoDB...")
+    
+    existing_properties = {}
+    date_str = datetime.now().strftime('%Y%m%d')
+    
+    try:
+        # Scan the table to get all META items
+        scan_kwargs = {
+            'FilterExpression': boto3.dynamodb.conditions.Attr('sort_key').eq('META')
+        }
+        
+        items_processed = 0
+        while True:
+            response = table.scan(**scan_kwargs)
+            items = response.get('Items', [])
+            
+            for item in items:
+                raw_property_id = item.get('property_id', '').replace(f'_{date_str}', '')
+                if raw_property_id:
+                    # Store with raw property ID as key for easy lookup
+                    existing_properties[raw_property_id] = {
+                        'property_id': item.get('property_id'),
+                        'price': int(item.get('price', 0)),
+                        'analysis_date': item.get('analysis_date', ''),
+                        'listing_url': item.get('listing_url', ''),
+                        'recommendation': item.get('recommendation', ''),
+                        'investment_score': int(item.get('investment_score', 0))
+                    }
+                    items_processed += 1
+            
+            # Check if there are more items to scan
+            if 'LastEvaluatedKey' not in response:
+                break
+            scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
+        
+        if logger:
+            logger.info(f"📋 Loaded {items_processed} existing properties from DynamoDB")
+        
+        return existing_properties
+        
+    except Exception as e:
+        if logger:
+            logger.error(f"❌ Failed to load existing properties: {str(e)}")
+        return {}
+
 def check_existing_listings_batch(urls, table, logger=None):
     """Check multiple URLs against DynamoDB in batch to find existing listings with retry logic"""
     date_str = datetime.now().strftime('%Y%m%d')
@@ -2487,15 +2801,17 @@ def main():
             else:
                 raise Exception("No listing URLs found")
         
-        # Apply hard limit in testing mode (but not in full-load mode)
+        # Apply limits based on mode and user settings
         if mode == 'testing':
             max_props = 5  # Hard limit for testing mode
             all_urls = all_urls[:max_props]
             logger.info(f"🧪 TESTING MODE: LIMITED TO {len(all_urls)} PROPERTIES")
-        elif not full_load_mode and config['max_properties'] and config['max_properties'] > 0:
-            # Apply user-specified limit in other modes (but not full-load)
+        elif config['max_properties'] and config['max_properties'] > 0:
+            # Apply user-specified limit in all modes (including full-load)
+            original_count = len(all_urls)
             all_urls = all_urls[:config['max_properties']]
-            logger.info(f"🌐 LIMITED TO {len(all_urls)} PROPERTIES (user specified)")
+            mode_label = "FULL-LOAD" if full_load_mode else "STANDARD"
+            logger.info(f"🌐 {mode_label} MODE: LIMITED TO {len(all_urls)} PROPERTIES (user specified max_properties={config['max_properties']}, found {original_count} total)")
         else:
             # No limit - process all found properties
             logger.info(f"🚀 PROCESSING ALL {len(all_urls)} PROPERTIES FOUND")
