@@ -1924,7 +1924,7 @@ def check_existing_listings_batch(urls, table, logger=None):
                 logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch_urls)} URLs)")
             
             # Prepare batch request
-            request_items = {}
+            keys_to_get = []
             keys_to_urls = {}
             valid_urls = []
             
@@ -1933,46 +1933,50 @@ def check_existing_listings_batch(urls, table, logger=None):
                 if raw_property_id:
                     property_id = create_property_id_key(raw_property_id, date_str)
                     key = {
-                        'property_id': {'S': property_id}, 
-                        'sort_key': {'S': 'META'}
+                        'property_id': property_id, 
+                        'sort_key': 'META'
                     }
                     keys_to_urls[f"{property_id}#META"] = url
                     valid_urls.append(url)
-                    
-                    if table.table_name not in request_items:
-                        request_items[table.table_name] = {'Keys': []}
-                    request_items[table.table_name]['Keys'].append(key)
+                    keys_to_get.append(key)
                 else:
                     # URLs without valid property IDs are treated as new
                     not_found.append(url)
             
-            if not request_items:
+            if not keys_to_get:
                 not_found.extend(valid_urls)
                 continue
             
-            # Execute batch get with retry logic
+            # Execute batch get with retry logic using resource API
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    dynamodb_client = boto3.client('dynamodb', region_name='ap-northeast-1')
-                    response = dynamodb_client.batch_get_item(RequestItems=request_items)
+                    # Use the high-level resource API for batch operations
+                    dynamodb = boto3.resource('dynamodb', region_name='ap-northeast-1')
+                    response = dynamodb.batch_get_item(
+                        RequestItems={
+                            table.table_name: {
+                                'Keys': keys_to_get
+                            }
+                        }
+                    )
                     
                     # Process results
                     if table.table_name in response.get('Responses', {}):
                         for item in response['Responses'][table.table_name]:
-                            property_id = item['property_id']['S']
-                            sort_key = item['sort_key']['S']
+                            property_id = item.get('property_id')
+                            sort_key = item.get('sort_key')
                             key = f"{property_id}#{sort_key}"
                             
                             if key in keys_to_urls:
                                 url = keys_to_urls[key]
                                 existing_listings[url] = {
                                     'property_id': property_id,
-                                    'price': int(item.get('price', {}).get('N', '0')),
-                                    'analysis_date': item.get('analysis_date', {}).get('S', ''),
-                                    'listing_url': item.get('listing_url', {}).get('S', ''),
-                                    'recommendation': item.get('recommendation', {}).get('S', ''),
-                                    'investment_score': int(item.get('investment_score', {}).get('N', '0'))
+                                    'price': int(item.get('price', 0)),
+                                    'analysis_date': item.get('analysis_date', ''),
+                                    'listing_url': item.get('listing_url', ''),
+                                    'recommendation': item.get('recommendation', ''),
+                                    'investment_score': int(item.get('investment_score', 0))
                                 }
                     
                     # Handle unprocessed items (if any)
