@@ -20,7 +20,6 @@ from enum import Enum
 from typing import Optional, Dict, Any, List
 import urllib.parse
 import io
-import argparse
 import logging
 from PIL import Image
 from decimal import Decimal
@@ -615,28 +614,28 @@ def get_daily_area_distribution(all_areas, session_id, date_key):
     return assigned_areas
 
 def get_scraper_config(args):
-    """Get scraper configuration from command line arguments"""
-    areas = [area.strip() for area in args.areas.split(',') if area.strip()] if args.areas else []
+    """Get scraper configuration from lambda event arguments"""
+    areas = [area.strip() for area in args['areas'].split(',') if area.strip()] if args['areas'] else []
     
     config = {
         'session_id': os.environ.get('SESSION_ID', f'session-{int(time.time())}'),
-        'max_properties': args.max_properties,
+        'max_properties': args['max_properties'],
         'entry_point': os.environ.get('ENTRY_POINT', 'default'),
         'stealth_mode': True,  # Always use stealth mode
         'areas': areas,
-        'max_threads': args.max_threads,
-        'output_bucket': args.output_bucket,
+        'max_threads': args['max_threads'],
+        'output_bucket': args['output_bucket'],
         # Always enable deduplication and price tracking
         'enable_deduplication': True,
         'track_price_changes': True,
-        'batch_size': min(args.batch_size, 25) if hasattr(args, 'batch_size') else 25,  # DynamoDB limit
-        'dynamodb_table': args.dynamodb_table if hasattr(args, 'dynamodb_table') else 'tokyo-real-estate-ai-RealEstateAnalysis',
+        'batch_size': min(args['batch_size'], 25),  # DynamoDB limit
+        'dynamodb_table': args['dynamodb_table'],
         # Batch processing settings
-        'batch_mode': args.batch_mode,
-        'batch_area_size': args.batch_area_size,  # Areas per batch, different from DynamoDB batch_size
-        'batch_number': args.batch_number,
-        'total_batches': args.total_batches,
-        'enable_batching': args.batch_mode
+        'batch_mode': args['batch_mode'],
+        'batch_area_size': args['batch_area_size'],  # Areas per batch, different from DynamoDB batch_size
+        'batch_number': args['batch_number'],
+        'total_batches': args['total_batches'],
+        'enable_batching': args['batch_mode']
     }
     
     return config
@@ -1930,46 +1929,75 @@ def send_cloudwatch_metrics(success_count, error_count, duration_seconds, total_
 def write_job_summary(summary_data):
     """Write job summary to JSON file"""
     try:
-        summary_path = "/var/log/scraper/summary.json"
-        os.makedirs(os.path.dirname(summary_path), exist_ok=True)
+        # Use /tmp for Lambda (writeable) or fallback to /var/log/scraper for EC2
+        if os.path.exists("/tmp"):
+            summary_path = "/tmp/summary.json"
+        else:
+            summary_path = "/tmp/summary.json"
+        
         with open(summary_path, "w") as f:
             json.dump(summary_data, f, indent=2)
         print(f"📋 Job summary written to {summary_path}")
     except Exception as e:
-        # Fallback to current directory if /var/log/scraper not accessible
-        try:
-            with open("summary.json", "w") as f:
-                json.dump(summary_data, f, indent=2)
-            print(f"📋 Job summary written to summary.json")
-        except:
-            print(f"❌ Failed to write job summary: {e}")
+        print(f"❌ Failed to write job summary: {e}")
 
 def setup_logging():
-    """Configure logging with simple text formatting"""
-    # Configure root logger
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
-        handlers=[
-            logging.StreamHandler()  # Output to stdout
-        ]
-    )
+    """Configure logging optimized for AWS Lambda environment"""
     
-    return logging.getLogger(__name__)
+    # Configure root logger for Lambda
+    root_logger = logging.getLogger()
+    
+    # Remove existing handlers to avoid duplication
+    if root_logger.handlers:
+        for handler in root_logger.handlers:
+            root_logger.removeHandler(handler)
+    
+    # Set logging level
+    root_logger.setLevel(logging.INFO)
+    
+    # Create console handler that works well with Lambda
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    
+    # Simple formatter that works well with CloudWatch
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    console_handler.setFormatter(formatter)
+    
+    # Add handler to root logger
+    root_logger.addHandler(console_handler)
+    
+    # Create and return module-specific logger
+    logger = logging.getLogger(__name__)
+    
+    # Test logging to ensure it works
+    logger.info("🚀 Lambda logging initialized successfully")
+    
+    return logger
 
 def log_structured_message(logger, level, message, **kwargs):
-    """Log message with simple text formatting"""
+    """Log message with structured data for CloudWatch"""
     if not logger:
         return
     
-    # Format additional fields as simple key=value pairs
+    # Create structured log entry
+    log_entry = {
+        'timestamp': datetime.now().isoformat(),
+        'level': level,
+        'message': message
+    }
+    
+    # Add additional fields
     if kwargs:
-        extra_info = " ".join([f"{k}={v}" for k, v in kwargs.items()])
-        full_message = f"{message} - {extra_info}"
+        log_entry.update(kwargs)
+    
+    # Format for readability in CloudWatch
+    if kwargs:
+        extra_info = " | ".join([f"{k}={v}" for k, v in kwargs.items()])
+        full_message = f"{message} | {extra_info}"
     else:
         full_message = message
     
+    # Log at appropriate level
     if level == "INFO":
         logger.info(full_message)
     elif level == "WARNING":
@@ -1978,6 +2006,8 @@ def log_structured_message(logger, level, message, **kwargs):
         logger.error(full_message)
     elif level == "DEBUG":
         logger.debug(full_message)
+    else:
+        logger.info(full_message)
 
 # =============================================================================
 # DynamoDB Helper Functions for Full Load and Duplicate Detection
@@ -2473,11 +2503,12 @@ def create_batch_summary_file(batch_info, total_batches, areas_processed, logger
     }
     
     filename = f"batch_{batch_info['batch_number']}_of_{total_batches}_summary.json"
+    filepath = os.path.join("/tmp", filename)
     try:
-        with open(filename, 'w') as f:
+        with open(filepath, 'w') as f:
             json.dump(batch_summary, f, indent=2)
         if logger:
-            logger.info(f"📋 Batch summary saved: {filename}")
+            logger.info(f"📋 Batch summary saved: {filepath}")
     except Exception as e:
         if logger:
             logger.warning(f"Failed to save batch summary: {e}")
@@ -2550,92 +2581,27 @@ def validate_property_data(property_data):
     
     return True, "Data validation passed"
 
-def parse_arguments():
-    """Parse command line arguments with environment variable fallbacks"""
-    parser = argparse.ArgumentParser(
-        description="HTTP-based scraper for homes.co.jp with stealth capabilities and deduplication"
-    )
-    
-    parser.add_argument(
-        '--max-properties',
-        type=int,
-        default=int(os.environ.get('MAX_PROPERTIES', '0')),
-        help='Maximum number of properties to scrape (default: 0 for no limit)'
-    )
-    
-    parser.add_argument(
-        '--output-bucket',
-        type=str,
-        default=os.environ.get('OUTPUT_BUCKET', ''),
-        help='S3 bucket for output (optional)'
-    )
-    
-    parser.add_argument(
-        '--max-threads',
-        type=int,
-        default=int(os.environ.get('MAX_THREADS', '2')),
-        help='Maximum number of threads for concurrent scraping (default: 2)'
-    )
-    
-    parser.add_argument(
-        '--areas',
-        type=str,
-        default=os.environ.get('AREAS', ''),
-        help='Comma-separated list of Tokyo areas to scrape'
-    )
-    
-    
-    
-    
-    parser.add_argument(
-        '--batch-size',
-        type=int,
-        default=int(os.environ.get('BATCH_SIZE', '25')),
-        help='Batch size for DynamoDB operations (default: 25, max: 25)'
-    )
-    
-    parser.add_argument(
-        '--dynamodb-table',
-        type=str,
-        default=os.environ.get('DYNAMODB_TABLE', 'tokyo-real-estate-ai-RealEstateAnalysis'),
-        help='DynamoDB table name for deduplication and price tracking'
-    )
-    
-    # Batch processing arguments
-    parser.add_argument(
-        '--batch-mode',
-        action='store_true',
-        default=os.environ.get('BATCH_MODE', 'false').lower() in ('true', '1', 'yes'),
-        help='Enable batch processing for full-load mode'
-    )
-    
-    parser.add_argument(
-        '--batch-area-size',
-        type=int,
-        default=int(os.environ.get('BATCH_AREA_SIZE', '5')),
-        help='Number of areas to process per batch (default: 5)'
-    )
-    
-    parser.add_argument(
-        '--batch-number',
-        type=int,
-        default=int(os.environ.get('BATCH_NUMBER', '1')),
-        help='Current batch number to process (1-based indexing)'
-    )
-    
-    parser.add_argument(
-        '--total-batches',
-        type=int,
-        default=int(os.environ.get('TOTAL_BATCHES', '0')),
-        help='Total number of batches (auto-calculated if 0)'
-    )
-    
-    return parser.parse_args()
+def parse_lambda_event(event):
+    """Parse lambda event with environment variable fallbacks"""
+    return {
+        'max_properties': event.get('max_properties', int(os.environ.get('MAX_PROPERTIES', '0'))),
+        'output_bucket': event.get('output_bucket', os.environ.get('OUTPUT_BUCKET', '')),
+        'max_threads': event.get('max_threads', int(os.environ.get('MAX_THREADS', '2'))),
+        'areas': event.get('areas', os.environ.get('AREAS', '')),
+        'batch_size': event.get('batch_size', int(os.environ.get('BATCH_SIZE', '25'))),
+        'dynamodb_table': event.get('dynamodb_table', os.environ.get('DYNAMODB_TABLE', 'tokyo-real-estate-ai-RealEstateAnalysis')),
+        'batch_mode': event.get('batch_mode', os.environ.get('BATCH_MODE', 'false').lower() in ('true', '1', 'yes')),
+        'batch_area_size': event.get('batch_area_size', int(os.environ.get('BATCH_AREA_SIZE', '5'))),
+        'batch_number': event.get('batch_number', int(os.environ.get('BATCH_NUMBER', '1'))),
+        'total_batches': event.get('total_batches', int(os.environ.get('TOTAL_BATCHES', '0')))
+    }
 
-def main():
+def main(event=None):
     """Main scraper function with stealth capabilities, deduplication, and full Tokyo coverage"""
-    # Parse command line arguments
-    args = parse_arguments()
+    # Parse lambda event or use defaults
+    if event is None:
+        event = {}
+    args = parse_lambda_event(event)
     
     # Setup logging
     logger = setup_logging()
@@ -2928,14 +2894,9 @@ def main():
         else:
             filename = f"tokyo-multi-area-listings-{date_str}.csv"
         
-        # Save locally (try desktop first, fallback to current directory)
-        try:
-            desktop_path = os.path.join(os.path.expanduser("~"), "Desktop", filename)
-            df.to_csv(desktop_path, index=False)
-            local_path = desktop_path
-        except:
-            local_path = filename
-            df.to_csv(local_path, index=False)
+        # Save locally (use /tmp for Lambda environment)
+        local_path = os.path.join("/tmp", filename)
+        df.to_csv(local_path, index=False)
         
         log_structured_message(logger, "INFO", "Data saved locally", file_path=local_path)
         
@@ -3125,6 +3086,67 @@ def main():
         # Close the original session if it exists
         if session:
             session.close()
+
+def lambda_handler(event, context):
+    """AWS Lambda handler function with improved logging"""
+    
+    # Initialize logging first
+    logger = setup_logging()
+    
+    # Log function start with context
+    logger.info("="*80)
+    logger.info("🚀 LAMBDA EXECUTION STARTED")
+    logger.info("="*80)
+    logger.info(f"Request ID: {context.aws_request_id}")
+    logger.info(f"Function Name: {context.function_name}")
+    logger.info(f"Remaining Time: {context.get_remaining_time_in_millis()}ms")
+    logger.info(f"Memory Limit: {context.memory_limit_in_mb}MB")
+    
+    # Log the incoming event
+    logger.info("📝 INCOMING EVENT:")
+    logger.info(json.dumps(event, indent=2))
+    
+    try:
+        # Call main function
+        logger.info("🏁 Starting main scraper execution...")
+        main(event)
+        
+        logger.info("="*80)
+        logger.info("✅ LAMBDA EXECUTION COMPLETED SUCCESSFULLY")
+        logger.info("="*80)
+        
+        return {
+            'statusCode': 200,
+            'body': json.dumps({
+                'message': 'Scraper completed successfully',
+                'session_id': event.get('session_id', os.environ.get('SESSION_ID', f'session-{int(time.time())}')),
+                'timestamp': datetime.now().isoformat(),
+                'request_id': context.aws_request_id
+            })
+        }
+    except Exception as e:
+        logger.error("="*80)
+        logger.error("❌ LAMBDA EXECUTION FAILED")
+        logger.error("="*80)
+        logger.error(f"Error: {str(e)}")
+        logger.error(f"Error Type: {type(e).__name__}")
+        
+        # Log stack trace for debugging
+        import traceback
+        logger.error("Stack trace:")
+        for line in traceback.format_exc().split('\n'):
+            if line.strip():
+                logger.error(f"  {line}")
+        
+        return {
+            'statusCode': 500,
+            'body': json.dumps({
+                'error': str(e),
+                'error_type': type(e).__name__,
+                'timestamp': datetime.now().isoformat(),
+                'request_id': context.aws_request_id
+            })
+        }
 
 if __name__ == "__main__":
     main()

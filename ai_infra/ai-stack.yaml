@@ -32,6 +32,9 @@ Parameters:
   DailyDigestCodeVersion:
     Type: String
     Default: latest
+  ScraperCodeVersion:
+    Type: String
+    Default: latest
   OpenAILayerObjectVersion:
     Type: String
     Description: S3 object version ID for openai-layer.zip
@@ -79,6 +82,7 @@ Resources:
                   - s3:GetObject
                   - s3:PutObject
                   - s3:ListBucket
+                  - s3:DeleteObject
                 Resource:
                   - !Sub 'arn:aws:s3:::${OutputBucket}'
                   - !Sub 'arn:aws:s3:::${OutputBucket}/*'
@@ -115,6 +119,7 @@ Resources:
                   - dynamodb:GetItem
                   - dynamodb:Query
                   - dynamodb:Scan
+                  - dynamodb:DescribeTable
                 Resource: 
                   - !GetAtt RealEstateAnalysisDB.Arn
                   - !Sub '${RealEstateAnalysisDB.Arn}/index/*'
@@ -133,6 +138,7 @@ Resources:
                   - !GetAtt DynamoDBWriterDeadLetterQueue.Arn
                   - !GetAtt SnapshotGeneratorDeadLetterQueue.Arn
                   - !GetAtt DailyDigestDeadLetterQueue.Arn
+                  - !GetAtt ScraperDeadLetterQueue.Arn
 
   # DynamoDB Table for Real Estate Analysis
   RealEstateAnalysisDB:
@@ -394,6 +400,32 @@ Resources:
           EMAIL_FROM: !Ref EmailFrom
           EMAIL_TO: !Ref EmailTo
           LEAN_MODE: !Ref LeanMode
+
+  ScraperFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-scraper'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/scraper.zip
+        S3ObjectVersion: !Ref ScraperCodeVersion
+      Timeout: 900  # 15 minutes - scraping can take time
+      MemorySize: 2048
+      Layers:
+        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
+      DeadLetterConfig:
+        TargetArn: !GetAtt ScraperDeadLetterQueue.Arn
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref OutputBucket
+          DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
+          MAX_PROPERTIES: '0'  # 0 = unlimited
+          MAX_THREADS: '2'
+          BATCH_SIZE: '25'
+          AREAS: ''  # Empty = auto-detect all areas
 
   # Step Functions
   StepFunctionsExecutionRole:
@@ -827,6 +859,12 @@ Resources:
       QueueName: !Sub '${AWS::StackName}-daily-digest-dlq'
       MessageRetentionPeriod: 1209600  # 14 days
 
+  ScraperDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-scraper-dlq'
+      MessageRetentionPeriod: 1209600  # 14 days
+
 Outputs:
   StateMachineArn:
     Description: 'ARN of the Step Functions state machine'
@@ -877,3 +915,9 @@ Outputs:
     Value: !GetAtt DailyDigestFunction.Arn
     Export:
       Name: !Sub '${AWS::StackName}-DailyDigestFunctionArn'
+
+  ScraperFunctionArn:
+    Description: 'ARN of the Scraper Lambda function'
+    Value: !GetAtt ScraperFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ScraperFunctionArn'

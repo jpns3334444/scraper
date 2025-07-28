@@ -132,11 +132,29 @@ REPORT_SENDER_VERSION="latest"
 DYNAMODB_WRITER_VERSION="latest"
 SNAPSHOT_GENERATOR_VERSION="latest"
 DAILY_DIGEST_VERSION="latest"
+SCRAPER_VERSION="latest"
 
-for func in etl prompt_builder llm_batch report_sender dynamodb_writer snapshot_generator daily_digest; do
+for func in etl prompt_builder llm_batch report_sender dynamodb_writer snapshot_generator daily_digest scraper; do
     [ -d "lambda/$func" ] || error "Function directory lambda/$func not found"
     
     info "Packaging $func..."
+    
+    # Handle scraper-specific dependencies
+    if [ "$func" = "scraper" ]; then
+        info "Installing scraper dependencies..."
+        
+        # Create temporary directory for dependencies
+        DEPS_DIR="lambda/$func/deps"
+        mkdir -p "$DEPS_DIR"
+        
+        # Install required packages with progress output
+        info "Installing: requests, beautifulsoup4, Pillow..."
+        if ! timeout 300 pip install requests beautifulsoup4 Pillow --target "$DEPS_DIR" --no-cache-dir; then
+            error "Failed to install scraper dependencies (timeout or error)"
+        fi
+        
+        info "✅ Scraper dependencies installed to $DEPS_DIR"
+    fi
     
     # Windows-compatible ZIP creation using Python - try multiple Python commands
     PYTHON_CMD=""
@@ -165,7 +183,7 @@ def create_zip(func_name, output_zip):
         func_dir = f'lambda/{func_name}'
         if os.path.exists(func_dir):
             for root, dirs, files in os.walk(func_dir):
-                # Skip __pycache__ directories
+                # Skip __pycache__ directories and handle deps specially
                 dirs[:] = [d for d in dirs if d != '__pycache__']
                 
                 for file in files:
@@ -174,7 +192,14 @@ def create_zip(func_name, output_zip):
                         continue
                         
                     file_path = os.path.join(root, file)
-                    arc_name = os.path.relpath(file_path, func_dir)
+                    
+                    # Handle deps directory specially for scraper
+                    if func_name == 'scraper' and '/deps/' in file_path:
+                        # Put deps contents at root level for imports
+                        arc_name = os.path.relpath(file_path, os.path.join(func_dir, 'deps'))
+                    else:
+                        arc_name = os.path.relpath(file_path, func_dir)
+                    
                     zipf.write(file_path, arc_name)
         
         # Add shared modules (util, analysis, schemas, etc.)
@@ -223,7 +248,13 @@ print('Created $func.zip with shared modules')
                     \$_.FullName -notlike '*__pycache__*' -and
                     -not \$_.PSIsContainer
                 } | ForEach-Object {
-                    \$relativePath = \$_.FullName.Substring(\$funcSource.Length + 1)
+                    # Handle deps directory specially for scraper
+                    if (\$func -eq 'scraper' -and \$_.FullName -like '*\\deps\\*') {
+                        \$depsIndex = \$_.FullName.IndexOf('\\deps\\')
+                        \$relativePath = \$_.FullName.Substring(\$depsIndex + 6)  # Skip '\deps\'
+                    } else {
+                        \$relativePath = \$_.FullName.Substring(\$funcSource.Length + 1)
+                    }
                     \$destPath = Join-Path \$tempDir \$relativePath
                     \$destDir = Split-Path \$destPath
                     if (-not (Test-Path \$destDir)) { New-Item -ItemType Directory -Path \$destDir -Force | Out-Null }
@@ -294,9 +325,18 @@ print('Created $func.zip with shared modules')
         daily_digest)
             DAILY_DIGEST_VERSION="$OBJECT_VERSION"
             ;;
+        scraper)
+            SCRAPER_VERSION="$OBJECT_VERSION"
+            ;;
     esac
     
     rm $func.zip
+    
+    # Clean up scraper dependencies
+    if [ "$func" = "scraper" ]; then
+        rm -rf "lambda/$func/deps"
+        info "Cleaned up scraper dependencies"
+    fi
     
     status "✅ $func packaged and uploaded (version: $OBJECT_VERSION)"
 done
@@ -358,6 +398,7 @@ aws cloudformation deploy \
       DynamoDBWriterCodeVersion=$DYNAMODB_WRITER_VERSION \
       SnapshotGeneratorCodeVersion=$SNAPSHOT_GENERATOR_VERSION \
       DailyDigestCodeVersion=$DAILY_DIGEST_VERSION \
+      ScraperCodeVersion=$SCRAPER_VERSION \
       OpenAILayerObjectVersion=$LAYER_OBJECT_VERSION
 
 status "✅ CloudFormation stack deployed"
@@ -376,6 +417,12 @@ ETL_FUNCTION_ARN=$(aws cloudformation describe-stacks \
     --query 'Stacks[0].Outputs[?OutputKey==`ETLFunctionArn`].OutputValue' \
     --output text 2>/dev/null)
 
+SCRAPER_FUNCTION_ARN=$(aws cloudformation describe-stacks \
+    --stack-name $STACK_NAME \
+    --region $REGION \
+    --query 'Stacks[0].Outputs[?OutputKey==`ScraperFunctionArn`].OutputValue' \
+    --output text 2>/dev/null)
+
 # Success summary
 echo ""
 status "🎉 Deployment completed successfully!"
@@ -389,10 +436,17 @@ echo ""
 echo "🔧 Stack Resources:"
 echo "  State Machine: $STATE_MACHINE_ARN"
 echo "  ETL Function: $ETL_FUNCTION_ARN"
+echo "  Scraper Function: $SCRAPER_FUNCTION_ARN"
 echo ""
 echo "🧪 Test Commands:"
 echo "  # Test ETL function"
 echo "  aws lambda invoke --function-name $STACK_NAME-etl --payload '{\"date\":\"$(date +%Y-%m-%d)\"}' test-response.json --region $REGION"
+echo ""
+echo "  # Test Scraper function"
+echo "  aws lambda invoke --function-name $STACK_NAME-scraper --payload '{\"max_properties\":5}' scraper-response.json --region $REGION"
+echo ""
+echo "  # Run scraper with trigger script"
+echo "  cd $SCRIPT_DIR && ./trigger_lambda_scraper.sh --max-properties 5 --sync"
 echo ""
 echo "  # Run full AI workflow"
 echo "  aws stepfunctions start-execution --state-machine-arn $STATE_MACHINE_ARN --input '{\"date\":\"$(date +%Y-%m-%d)\"}' --region $REGION"
