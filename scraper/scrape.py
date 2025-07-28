@@ -2696,26 +2696,36 @@ def main():
             session_areas = config['areas'] if config['areas'] else ["chofu-city"]
             logger.info(f"🧪 TESTING MODE - Using areas: {session_areas}")
         elif full_load_mode or mode == 'full-load':
-            # Full-load mode: validate environment and discover all Tokyo areas
-            logger.info(f"\n🌍 FULL LOAD MODE - Validating environment...")
-            
-            # Validate environment for full-load mode
-            is_valid, validation_errors = validate_full_load_environment(config, logger)
-            if not is_valid:
-                error_msg = f"Full-load environment validation failed: {', '.join(validation_errors)}"
-                logger.error(error_msg)
-                raise Exception(error_msg)
-            
-            logger.info(f"✅ Environment validation passed - Discovering all Tokyo areas...")
-            session_areas = discover_tokyo_areas(stealth_mode=False, logger=logger)
-            
-            if not session_areas:
-                raise Exception("No Tokyo areas discovered for full load")
-            
-            logger.info(f"🏙️ Full load will process {len(session_areas)} Tokyo areas: {session_areas[:5]}{'...' if len(session_areas) > 5 else ''}")
-            log_structured_message(logger, "INFO", "Full load area discovery", 
-                                 total_areas=len(session_areas),
-                                 sample_areas=session_areas[:10])
+            # Full-load mode: Check if this is a testing scenario
+            if config['max_properties'] and config['max_properties'] <= 50:
+                # Testing scenario - use limited areas for efficiency
+                if config['areas']:
+                    session_areas = config['areas']
+                    logger.info(f"🧪 FULL LOAD TESTING - Using specified areas: {session_areas}")
+                else:
+                    session_areas = ["chofu-city"]  # Default to single area for testing
+                    logger.info(f"🧪 FULL LOAD TESTING - Using default single area: {session_areas}")
+            else:
+                # True full-load mode: validate environment and discover all Tokyo areas
+                logger.info(f"\n🌍 FULL LOAD MODE - Validating environment...")
+                
+                # Validate environment for full-load mode
+                is_valid, validation_errors = validate_full_load_environment(config, logger)
+                if not is_valid:
+                    error_msg = f"Full-load environment validation failed: {', '.join(validation_errors)}"
+                    logger.error(error_msg)
+                    raise Exception(error_msg)
+                
+                logger.info(f"✅ Environment validation passed - Discovering all Tokyo areas...")
+                session_areas = discover_tokyo_areas(stealth_mode=False, logger=logger)
+                
+                if not session_areas:
+                    raise Exception("No Tokyo areas discovered for full load")
+                
+                logger.info(f"🏙️ Full load will process {len(session_areas)} Tokyo areas: {session_areas[:5]}{'...' if len(session_areas) > 5 else ''}")
+                log_structured_message(logger, "INFO", "Full load area discovery", 
+                                    total_areas=len(session_areas),
+                                    sample_areas=session_areas[:10])
         elif mode == 'normal':
             # Use specific areas from configuration or default to chofu-city
             session_areas = config['areas'] if config['areas'] else ["chofu-city"]
@@ -2730,9 +2740,9 @@ def main():
             
             logger.info(f"🏆 Session {config['session_id']} assigned areas: {session_areas}")
             log_structured_message(logger, "INFO", "Session area assignment", 
-                                 session_id=config['session_id'],
-                                 assigned_areas=session_areas,
-                                 total_tokyo_areas=len(all_tokyo_areas))
+                                session_id=config['session_id'],
+                                assigned_areas=session_areas,
+                                total_tokyo_areas=len(all_tokyo_areas))
         else:
             # Fallback to single area for other modes
             session_areas = ["chofu-city"]
