@@ -59,7 +59,15 @@ Resources:
               full_mode = event.get('full_mode', False)
               max_properties_override = event.get('max_properties')
               
-              print(f"🚀 Starting {mode} scraper - Session: {session_id}")
+              # Batch mode parameters
+              batch_mode = event.get('batch_mode', False)
+              batch_size = event.get('batch_size', 5)
+              batch_number = event.get('batch_number', 1)
+              
+              if batch_mode:
+                  print(f"🚀 Starting {mode} scraper - Session: {session_id} - Batch {batch_number} (size: {batch_size})")
+              else:
+                  print(f"🚀 Starting {mode} scraper - Session: {session_id}")
               
               # Configure based on mode
               if full_mode:
@@ -227,6 +235,9 @@ Resources:
                   export MODE="{mode}"
                   export AREAS="{areas_env}"
                   export FULL_LOAD={str(full_mode).lower()}
+                  export BATCH_MODE={str(batch_mode).lower()}
+                  export BATCH_SIZE={batch_size}
+                  export BATCH_NUMBER={batch_number}
                   
                   # AI Workflow ARN - will be imported from ai-scraper-dev stack
                   export AI_WORKFLOW_ARN="{os.environ.get('AI_WORKFLOW_ARN', '')}"
@@ -234,7 +245,11 @@ Resources:
                   # Run the scraper
                   cd /home/ubuntu
                   echo "=== SCRAPER START: $(date) ==="
-                  echo "Mode: $MODE, Session: $SESSION_ID, Max Properties: $MAX_PROPERTIES"
+                  if [ "$BATCH_MODE" = "true" ]; then
+                      echo "Mode: $MODE, Session: $SESSION_ID, Max Properties: $MAX_PROPERTIES, Batch: $BATCH_NUMBER (size: $BATCH_SIZE)"
+                  else
+                      echo "Mode: $MODE, Session: $SESSION_ID, Max Properties: $MAX_PROPERTIES"
+                  fi
                   
                   # Check if scraper exists
                   if [ ! -f scrape.py ]; then

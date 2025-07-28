@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Function to show usage
 show_usage() {
-    echo "Usage: $0 [MODE] [SESSION_ID] [--full] [--max-properties N] [--areas AREAS]"
+    echo "Usage: $0 [MODE] [SESSION_ID] [--full] [--max-properties N] [--areas AREAS] [--batch-mode] [--batch-size N] [--batch-number N]"
     echo ""
     echo "Arguments:"
     echo "  MODE                   Scraper mode (default: testing)"
@@ -11,6 +11,9 @@ show_usage() {
     echo "  --full, -f             Enable full load mode (scrapes all properties)"
     echo "  --max-properties N     Limit to N properties (useful for testing full load)"
     echo "  --areas AREAS          Comma-separated list of areas (e.g., 'chofu-city,shibuya-ku')"
+    echo "  --batch-mode           Enable batch processing for full-load mode"
+    echo "  --batch-size N         Number of areas to process per batch (default: 5)"
+    echo "  --batch-number N       Current batch number to process (1-based indexing)"
     echo ""
     echo "Examples:"
     echo "  $0                                        # Run in testing mode"
@@ -21,6 +24,7 @@ show_usage() {
     echo "  $0 --full --max-properties 5              # Full load but limit to 5 properties (single area)"
     echo "  $0 --full --max-properties 5 --areas chofu-city  # Explicit area selection"
     echo "  $0 production --full --max-properties 100 --areas 'chofu-city,shibuya-ku'  # Test with 2 areas"
+    echo "  $0 --full --batch-mode --batch-size 5 --batch-number 1  # Run batch 1 with 5 areas per batch"
 }
 
 # Colors
@@ -43,6 +47,9 @@ SESSION_ID=""
 FULL_MODE=false
 MAX_PROPERTIES=""
 AREAS=""
+BATCH_MODE=false
+BATCH_SIZE="5"
+BATCH_NUMBER="1"
 POSITIONAL_ARGS=()
 
 # Process arguments
@@ -72,6 +79,27 @@ while [[ $i -le $# ]]; do
                 AREAS="${!i}"
             else
                 echo "Error: --areas requires a comma-separated list"
+                exit 1
+            fi
+            ;;
+        --batch-mode)
+            BATCH_MODE=true
+            ;;
+        --batch-size)
+            i=$((i + 1))
+            if [[ $i -le $# ]]; then
+                BATCH_SIZE="${!i}"
+            else
+                echo "Error: --batch-size requires a number"
+                exit 1
+            fi
+            ;;
+        --batch-number)
+            i=$((i + 1))
+            if [[ $i -le $# ]]; then
+                BATCH_NUMBER="${!i}"
+            else
+                echo "Error: --batch-number requires a number"
                 exit 1
             fi
             ;;
@@ -117,6 +145,11 @@ log "  Session ID: ${BLUE}$SESSION_ID${NC}"
 log "  Full Load: ${BLUE}$FULL_MODE${NC}"
 log "  Max Properties: ${BLUE}${MAX_PROPERTIES:-unlimited}${NC}"
 log "  Areas: ${BLUE}${AREAS:-auto-detect}${NC}"
+if [[ "$BATCH_MODE" == "true" ]]; then
+    log "  Batch Mode: ${BLUE}ENABLED${NC}"
+    log "  Batch Size: ${BLUE}$BATCH_SIZE${NC}"
+    log "  Batch Number: ${BLUE}$BATCH_NUMBER${NC}"
+fi
 if [[ "$IS_TESTING_SCENARIO" == "true" ]]; then
     log "  ${YELLOW}⚡ TESTING SCENARIO DETECTED - Will use single area for efficiency${NC}"
 fi
@@ -217,6 +250,10 @@ fi
 
 if [[ -n "$AREAS" ]]; then
     PAYLOAD="$PAYLOAD,\"areas\":\"$AREAS\""
+fi
+
+if [[ "$BATCH_MODE" == "true" ]]; then
+    PAYLOAD="$PAYLOAD,\"batch_mode\":true,\"batch_size\":$BATCH_SIZE,\"batch_number\":$BATCH_NUMBER"
 fi
 
 PAYLOAD="$PAYLOAD}"

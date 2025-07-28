@@ -24,6 +24,7 @@ import argparse
 import logging
 from PIL import Image
 from decimal import Decimal
+import math
 
 # Enhanced browser profiles for stealth mode
 BROWSER_PROFILES = [
@@ -628,7 +629,7 @@ def get_scraper_config(args):
     if full_load_mode and not hasattr(args, 'check_duplicates'):
         enable_deduplication = True
     
-    return {
+    config = {
         'session_id': os.environ.get('SESSION_ID', f'session-{int(time.time())}'),
         'max_properties': args.max_properties,
         'entry_point': os.environ.get('ENTRY_POINT', 'default'),
@@ -642,8 +643,16 @@ def get_scraper_config(args):
         'enable_deduplication': enable_deduplication,
         'track_price_changes': args.track_price_changes if hasattr(args, 'track_price_changes') else True,
         'batch_size': min(args.batch_size, 25) if hasattr(args, 'batch_size') else 25,  # DynamoDB limit
-        'dynamodb_table': args.dynamodb_table if hasattr(args, 'dynamodb_table') else 'tokyo-real-estate-ai-RealEstateAnalysis'
+        'dynamodb_table': args.dynamodb_table if hasattr(args, 'dynamodb_table') else 'tokyo-real-estate-ai-RealEstateAnalysis',
+        # Batch processing settings
+        'batch_mode': args.batch_mode,
+        'batch_area_size': args.batch_size,  # Areas per batch, different from DynamoDB batch_size
+        'batch_number': args.batch_number,
+        'total_batches': args.total_batches,
+        'enable_batching': args.batch_mode and full_load_mode
     }
+    
+    return config
 
 # Backward compatibility alias
 def get_stealth_session_config(args):
@@ -904,6 +913,15 @@ def process_listings_with_existing_check(listings_with_metadata, existing_proper
             # If we can't extract property ID, treat as new
             new_urls.append(url)
             continue
+        
+        # Debug logging for first few properties
+        if logger and len(new_urls) + len(price_changed_urls) + len(price_unchanged_urls) < 5:
+            is_in_existing = raw_property_id in existing_properties
+            logger.info(f"🔍 DEBUG: URL={url[:50]}... | raw_property_id={raw_property_id} | exists_in_db={is_in_existing}")
+            if not is_in_existing and len(existing_properties) > 0:
+                # Show a few examples of what keys are in existing_properties
+                sample_keys = list(existing_properties.keys())[:3]
+                logger.info(f"🔍 DEBUG: First 3 keys in existing_properties: {sample_keys}")
         
         # Check if property exists
         if raw_property_id in existing_properties:
@@ -1218,7 +1236,7 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
                         rate = (idx + 1) / elapsed if elapsed > 0 else 0
                         eta = (len(all_new_urls) - (idx + 1)) / rate if rate > 0 else 0
                         if logger:
-                            logger.info(f"✨ [{progress_pct:.1f}%] Discovery progress: {idx+1}/{len(all_new_urls)} (~{eta/60:.1f}min remaining)")
+                            logger.info(f"💾 [{progress_pct:.1f}%] Saving discovery records: {idx+1}/{len(all_new_urls)} (~{eta/60:.1f}min remaining)")
                     
                     # Use metadata from lookup if available
                     listing_metadata = all_metadata_lookup.get(url, {})
@@ -2103,8 +2121,18 @@ def load_all_existing_properties(table, logger=None):
             items = response.get('Items', [])
             
             for item in items:
-                raw_property_id = item.get('property_id', '').replace(f'_{date_str}', '')
+                # Extract raw property ID from format PROP#YYYYMMDD_12345 -> 12345
+                property_id = item.get('property_id', '')
+                if property_id and '#' in property_id and '_' in property_id:
+                    # Split by # and then by _ to get the actual property ID
+                    raw_property_id = property_id.split('#')[1].split('_')[1] if len(property_id.split('#')) > 1 and len(property_id.split('#')[1].split('_')) > 1 else ''
+                else:
+                    raw_property_id = ''
                 if raw_property_id:
+                    # Debug logging for first few properties
+                    if logger and items_processed < 3:
+                        logger.info(f"🔍 DEBUG: Loaded property_id={item.get('property_id')} -> raw_property_id={raw_property_id}")
+                    
                     # Store with raw property ID as key for easy lookup
                     existing_properties[raw_property_id] = {
                         'property_id': item.get('property_id'),
@@ -2404,6 +2432,100 @@ def validate_full_load_environment(config, logger=None):
             log_structured_message(logger, "INFO", "Full-load environment validation passed")
         return True, []
 
+def calculate_batch_distribution(areas, batch_size, logger=None):
+    """Calculate how areas should be distributed across batches"""
+    total_areas = len(areas)
+    total_batches = math.ceil(total_areas / batch_size)
+    
+    batch_distribution = []
+    for batch_num in range(1, total_batches + 1):
+        start_idx = (batch_num - 1) * batch_size
+        end_idx = min(start_idx + batch_size, total_areas)
+        batch_areas = areas[start_idx:end_idx]
+        
+        batch_info = {
+            'batch_number': batch_num,
+            'areas': batch_areas,
+            'area_count': len(batch_areas),
+            'start_index': start_idx,
+            'end_index': end_idx - 1
+        }
+        batch_distribution.append(batch_info)
+    
+    if logger:
+        log_structured_message(logger, "INFO", "Batch distribution calculated",
+                             total_areas=total_areas,
+                             total_batches=total_batches,
+                             batch_size=batch_size)
+    
+    return batch_distribution, total_batches
+
+def get_batch_areas(all_areas, batch_number, batch_size, logger=None):
+    """Get areas for a specific batch number"""
+    batch_distribution, total_batches = calculate_batch_distribution(all_areas, batch_size, logger)
+    
+    if batch_number < 1 or batch_number > total_batches:
+        raise ValueError(f"Invalid batch number {batch_number}. Valid range: 1-{total_batches}")
+    
+    batch_info = batch_distribution[batch_number - 1]
+    
+    if logger:
+        log_structured_message(logger, "INFO", "Batch areas selected",
+                             batch_number=batch_number,
+                             total_batches=total_batches,
+                             areas=batch_info['areas'],
+                             area_count=batch_info['area_count'])
+    
+    return batch_info['areas'], batch_info, total_batches
+
+def create_batch_summary_file(batch_info, total_batches, areas_processed, logger=None):
+    """Create a summary file for the current batch"""
+    batch_summary = {
+        'batch_number': batch_info['batch_number'],
+        'total_batches': total_batches,
+        'areas_in_batch': batch_info['areas'],
+        'areas_processed': areas_processed,
+        'batch_completion_time': datetime.now().isoformat(),
+        'next_batch': batch_info['batch_number'] + 1 if batch_info['batch_number'] < total_batches else None,
+        'is_final_batch': batch_info['batch_number'] == total_batches
+    }
+    
+    filename = f"batch_{batch_info['batch_number']}_of_{total_batches}_summary.json"
+    try:
+        with open(filename, 'w') as f:
+            json.dump(batch_summary, f, indent=2)
+        if logger:
+            logger.info(f"📋 Batch summary saved: {filename}")
+    except Exception as e:
+        if logger:
+            logger.warning(f"Failed to save batch summary: {e}")
+    
+    return batch_summary
+
+def validate_batch_configuration(config, logger=None):
+    """Validate batch configuration parameters"""
+    if not config.get('enable_batching'):
+        return True, []
+    
+    errors = []
+    
+    batch_number = config.get('batch_number', 0)
+    batch_size = config.get('batch_size', 0)
+    
+    if batch_number < 1:
+        errors.append("Batch number must be >= 1")
+    
+    if batch_size < 1:
+        errors.append("Batch size must be >= 1")
+    
+    if batch_size > 20:
+        errors.append("Batch size should not exceed 20 for optimal performance")
+    
+    if errors and logger:
+        log_structured_message(logger, "ERROR", "Batch configuration validation failed", errors=errors)
+    
+    return len(errors) == 0, errors
+
 def validate_property_data(property_data):
     """Validate and clean property data"""
     if not isinstance(property_data, dict):
@@ -2523,6 +2645,35 @@ def parse_arguments():
         help='DynamoDB table name for deduplication and price tracking'
     )
     
+    # Batch processing arguments
+    parser.add_argument(
+        '--batch-mode',
+        action='store_true',
+        default=os.environ.get('BATCH_MODE', 'false').lower() in ('true', '1', 'yes'),
+        help='Enable batch processing for full-load mode'
+    )
+    
+    parser.add_argument(
+        '--batch-size',
+        type=int,
+        default=int(os.environ.get('BATCH_SIZE', '5')),
+        help='Number of areas to process per batch (default: 5)'
+    )
+    
+    parser.add_argument(
+        '--batch-number',
+        type=int,
+        default=int(os.environ.get('BATCH_NUMBER', '1')),
+        help='Current batch number to process (1-based indexing)'
+    )
+    
+    parser.add_argument(
+        '--total-batches',
+        type=int,
+        default=int(os.environ.get('TOTAL_BATCHES', '0')),
+        help='Total number of batches (auto-calculated if 0)'
+    )
+    
     return parser.parse_args()
 
 def main():
@@ -2633,14 +2784,52 @@ def main():
                     raise Exception(error_msg)
                 
                 logger.info(f"✅ Environment validation passed - Discovering all Tokyo areas...")
-                session_areas = discover_tokyo_areas(stealth_mode=False, logger=logger)
+                all_tokyo_areas = discover_tokyo_areas(stealth_mode=False, logger=logger)
                 
-                if not session_areas:
+                if not all_tokyo_areas:
                     raise Exception("No Tokyo areas discovered for full load")
                 
-                logger.info(f"🏙️ Full load will process {len(session_areas)} Tokyo areas: {session_areas[:5]}{'...' if len(session_areas) > 5 else ''}")
+                # NEW BATCHING LOGIC
+                if config.get('enable_batching', False):
+                    # Validate batch configuration
+                    is_valid, validation_errors = validate_batch_configuration(config, logger)
+                    if not is_valid:
+                        error_msg = f"Batch configuration validation failed: {', '.join(validation_errors)}"
+                        logger.error(error_msg)
+                        raise Exception(error_msg)
+                    
+                    logger.info(f"🔄 BATCH MODE ENABLED - Processing areas in batches...")
+                    
+                    batch_areas, batch_info, total_batches = get_batch_areas(
+                        all_tokyo_areas, 
+                        config['batch_number'], 
+                        config['batch_area_size'], 
+                        logger
+                    )
+                    
+                    session_areas = batch_areas
+                    
+                    logger.info(f"📦 BATCH {batch_info['batch_number']}/{total_batches}: Processing {len(session_areas)} areas")
+                    logger.info(f"🏙️ Areas in this batch: {session_areas}")
+                    
+                    # Update config with batch information
+                    config.update({
+                        'current_batch_info': batch_info,
+                        'total_batches': total_batches,
+                        'all_tokyo_areas': all_tokyo_areas
+                    })
+                    
+                else:
+                    # Original logic - process all areas
+                    session_areas = all_tokyo_areas
+                    logger.info(f"🏙️ Full load will process {len(session_areas)} Tokyo areas: {session_areas[:5]}{'...' if len(session_areas) > 5 else ''}")
+                
                 log_structured_message(logger, "INFO", "Full load area discovery", 
-                                    total_areas=len(session_areas),
+                                    total_areas=len(all_tokyo_areas),
+                                    batch_mode=config.get('enable_batching', False),
+                                    batch_number=config.get('batch_number') if config.get('enable_batching') else None,
+                                    total_batches=config.get('total_batches') if config.get('enable_batching') else None,
+                                    areas_in_batch=len(session_areas),
                                     sample_areas=session_areas[:10])
         elif mode == 'normal':
             # Use specific areas from configuration or default to chofu-city
@@ -2857,7 +3046,11 @@ def main():
         
         # Generate filename based on areas scraped
         date_str = datetime.now().strftime('%Y-%m-%d')
-        if len(session_areas) == 1:
+        if config.get('enable_batching', False):
+            batch_num = config['batch_number']
+            total_batches = config['total_batches']
+            filename = f"tokyo-batch-{batch_num}-of-{total_batches}-{date_str}.csv"
+        elif len(session_areas) == 1:
             area_name = session_areas[0]
             filename = f"{area_name}-listings-{date_str}.csv"
         else:
@@ -2968,7 +3161,13 @@ def main():
             "ai_execution_name": ai_execution_name,
             "ai_execution_arn": ai_execution_arn,
             "ai_workflow_error": str(ai_workflow_error) if ai_workflow_error else None,
-            "status": "SUCCESS" if success_count > 0 else "FAILED"
+            "status": "SUCCESS" if success_count > 0 else "FAILED",
+            # Batch mode information
+            "batch_mode": config.get('enable_batching', False),
+            "batch_number": config.get('batch_number') if config.get('enable_batching') else None,
+            "total_batches": config.get('total_batches') if config.get('enable_batching') else None,
+            "areas_in_batch": len(session_areas) if config.get('enable_batching') else None,
+            "batch_areas": session_areas if config.get('enable_batching') else None
         }
         
         # Add full-load specific information
@@ -2986,6 +3185,16 @@ def main():
             })
         
         write_job_summary(summary_data)
+        
+        # Add batch completion tracking
+        if config.get('enable_batching', False):
+            batch_summary = create_batch_summary_file(
+                config['current_batch_info'], 
+                config['total_batches'], 
+                session_areas, 
+                logger
+            )
+            summary_data['batch_summary'] = batch_summary
         
         # Step 6: Send CloudWatch metrics and final detection check
         if not is_local_testing:
