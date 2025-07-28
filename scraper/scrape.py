@@ -2510,16 +2510,16 @@ def validate_batch_configuration(config, logger=None):
     errors = []
     
     batch_number = config.get('batch_number', 0)
-    batch_size = config.get('batch_size', 0)
+    batch_area_size = config.get('batch_area_size', 0)
     
     if batch_number < 1:
         errors.append("Batch number must be >= 1")
     
-    if batch_size < 1:
-        errors.append("Batch size must be >= 1")
+    if batch_area_size < 1:
+        errors.append("Batch area size must be >= 1")
     
-    if batch_size > 20:
-        errors.append("Batch size should not exceed 20 for optimal performance")
+    if batch_area_size > 20:
+        errors.append("Batch area size should not exceed 20 for optimal performance")
     
     if errors and logger:
         log_structured_message(logger, "ERROR", "Batch configuration validation failed", errors=errors)

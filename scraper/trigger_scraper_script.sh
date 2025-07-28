@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Function to show usage
 show_usage() {
-    echo "Usage: $0 [MODE] [SESSION_ID] [--full] [--max-properties N] [--areas AREAS] [--batch-mode] [--batch-size N] [--batch-number N]"
+    echo "Usage: $0 [MODE] [SESSION_ID] [--full] [--max-properties N] [--areas AREAS] [--batch-mode] [--batch-area-size N] [--batch-number N]"
     echo ""
     echo "Arguments:"
     echo "  MODE                   Scraper mode (default: testing)"
