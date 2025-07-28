@@ -734,6 +734,9 @@ def collect_area_listing_urls_efficient(area_name, existing_properties=None, max
     price_unchanged_urls = []
     existing_properties = existing_properties or {}
     
+    # Create metadata lookup for new URLs
+    metadata_lookup = {}
+    
     if logger:
         log_structured_message(logger, "INFO", "Starting efficient area URL collection", 
                              area=area_name, base_url=base_url, stealth_mode=stealth_mode,
@@ -776,6 +779,10 @@ def collect_area_listing_urls_efficient(area_name, existing_properties=None, max
         # Extract listings with metadata from page 1
         page1_listings = extract_listings_with_metadata_from_html(response.text)
         
+        # Store metadata for all listings from page 1
+        for listing in page1_listings:
+            metadata_lookup[listing['url']] = listing
+        
         # Process page 1 listings
         page1_new, page1_changed, page1_unchanged = process_listings_with_existing_check(
             page1_listings, existing_properties, logger)
@@ -797,7 +804,7 @@ def collect_area_listing_urls_efficient(area_name, existing_properties=None, max
                 logger.info(f"=== Efficiently collecting from {area_name} (page {page_num}) ===")
             
             # Simple respectful delay
-            time.sleep(random.uniform(1, 3))
+            time.sleep(random.uniform(0.1, 0.3))
             page_url = f"{base_url}/?page={page_num}"
             
             try:
@@ -817,6 +824,10 @@ def collect_area_listing_urls_efficient(area_name, existing_properties=None, max
                 
                 # Extract listings with metadata from this page
                 page_listings = extract_listings_with_metadata_from_html(response.text)
+                
+                # Store metadata for all listings from this page
+                for listing in page_listings:
+                    metadata_lookup[listing['url']] = listing
                 
                 # Process listings
                 page_new, page_changed, page_unchanged = process_listings_with_existing_check(
@@ -852,6 +863,7 @@ def collect_area_listing_urls_efficient(area_name, existing_properties=None, max
             'new_urls': new_urls,
             'price_changed_urls': price_changed_urls,
             'price_unchanged_urls': price_unchanged_urls,
+            'metadata_lookup': metadata_lookup,
             'session': session if not should_close_session else None
         }
         
@@ -980,7 +992,7 @@ def collect_area_listing_urls(area_name, max_pages=None, session=None, stealth_c
                 logger.info(f"=== Collecting from {area_name} (page {page_num}) ===")
             
             # Simple respectful delay
-            time.sleep(random.uniform(1, 3))
+            time.sleep(random.uniform(0.1, 0.3))
             page_url = f"{base_url}/?page={page_num}"
             
             try:
@@ -1050,7 +1062,7 @@ def collect_multiple_areas_urls(areas, stealth_config=None, logger=None, max_url
             
             # Simple area transition delay
             if i > 0:
-                time.sleep(random.uniform(1, 3))
+                time.sleep(random.uniform(0.1, 0.3))
             
             # Collect ALL pages from this area (no limit)
             area_start_time = time.time()
@@ -1118,6 +1130,7 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
         all_new_urls = []
         all_price_changed_urls = []
         all_price_unchanged_urls = []
+        all_metadata_lookup = {}
         
         # Simulate search behavior once at the beginning in stealth mode
         
@@ -1128,7 +1141,7 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
             
             # Simple area transition delay
             if i > 0:
-                time.sleep(random.uniform(1, 3))
+                time.sleep(random.uniform(0.1, 0.3))
             
             # Efficiently collect URLs with price checking for this area
             area_start_time = time.time()
@@ -1141,6 +1154,9 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
             all_new_urls.extend(area_result['new_urls'])
             all_price_changed_urls.extend(area_result['price_changed_urls'])
             all_price_unchanged_urls.extend(area_result['price_unchanged_urls'])
+            
+            # Merge metadata lookup
+            all_metadata_lookup.update(area_result['metadata_lookup'])
             
             total_area_listings = len(area_result['new_urls']) + len(area_result['price_changed_urls']) + len(area_result['price_unchanged_urls'])
             if logger:
@@ -1176,7 +1192,7 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
             if logger:
                 logger.info(f"✨ Creating discovery records for {len(all_new_urls)} new listings...")
             
-            # Extract full metadata for new listings and create discovery records
+            # Create discovery records using metadata already extracted from listing pages
             discovery_start = time.time()
             with table.batch_writer() as batch:
                 batch_count = 0
@@ -1191,30 +1207,41 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
                         if logger:
                             logger.info(f"✨ [{progress_pct:.1f}%] Discovery progress: {idx+1}/{len(all_new_urls)} (~{eta/60:.1f}min remaining)")
                     
-                    # Extract full metadata from individual property page
-                    metadata = extract_listing_metadata_from_listing_page(url, session, logger)
-                    if metadata:
-                        record = create_listing_meta_record(metadata)
+                    # Use metadata from lookup if available
+                    listing_metadata = all_metadata_lookup.get(url, {})
+                    
+                    # Extract property ID from URL
+                    raw_property_id = extract_property_id_from_url(url)
+                    if raw_property_id:
+                        property_id = create_property_id_key(raw_property_id)
+                        # Create record with data we already have from listing page
+                        record = {
+                            'property_id': property_id,
+                            'sort_key': 'META',
+                            'listing_url': url,
+                            'listing_status': 'discovered',
+                            'analysis_date': datetime.now().isoformat(),
+                            'price': listing_metadata.get('price', 0),
+                            'price_display': listing_metadata.get('price_display', ''),
+                            'title': listing_metadata.get('title', ''),
+                            'data_source': 'scraper_discovery_fast'
+                        }
+                        
                         # Validate record and required keys before writing to DynamoDB
-                        if record and record.get('property_id') and record.get('sort_key'):
+                        if record.get('property_id') and record.get('sort_key'):
                             batch.put_item(Item=record)
                             batch_count += 1
                         else:
                             if logger:
-                                property_id = record.get('property_id') if record else None
-                                sort_key = record.get('sort_key') if record else None
-                                logger.warning(f"Skipping record with missing keys: property_id={property_id}, sort_key={sort_key}, url={url}")
+                                logger.warning(f"Skipping record with missing keys: property_id={property_id}, url={url}")
                         
-                        # Batch limit and delay management
+                        # Batch limit management
                         if batch_count % 25 == 0:
                             if logger:
                                 logger.info(f"💾 Saved {batch_count} discovery records to DynamoDB")
-                    
-                    # Add delay between extractions
-                    if stealth_mode:
-                        time.sleep(random.uniform(1, 3))
                     else:
-                        time.sleep(random.uniform(0.5, 1.5))
+                        if logger:
+                            logger.warning(f"Could not extract property ID from URL: {url}")
         
         # Step 5: Log summary
         total_processed = len(all_new_urls) + len(all_price_changed_urls) + len(all_price_unchanged_urls)
@@ -1474,6 +1501,13 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
             if logger:
                 logger.info(f"Testing mode: limiting to 5 images per property")
         
+        # Limit to max 10 images per property for performance
+        if len(urls) > 10:
+            original_count = len(urls)
+            urls = urls[:10]
+            if logger:
+                logger.info(f"Limited to first 10 images for performance (found {original_count} total)")
+        
         # Download and process images
         for i, img_url in enumerate(urls):
             try:
@@ -1530,10 +1564,10 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
                                 logger.error(f"Failed to process image {i}: {str(e)}")
                             continue
                         
-                        # Smaller delay between downloads
-                        delay = random.uniform(0.2, 0.8)
+                        # Minimal delay between downloads for performance
+                        delay = 0.1
                         if stealth_mode:
-                            delay += random.uniform(0.5, 1.5)
+                            delay = random.uniform(0.2, 0.5)
                         time.sleep(delay)        
             except Exception as e:
                 if logger:
@@ -1563,7 +1597,7 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
             session.headers['Referer'] = referer_url
             
             # Simple respectful delay
-            time.sleep(random.uniform(0.5, 2.0))
+            time.sleep(random.uniform(0.1, 0.2))
             
             if logger:
                 logger.info(f"Scraping: {property_url}")
@@ -2706,7 +2740,7 @@ def main():
         scraping_start_time = time.time()
         
         # Use configured thread pool size
-        max_threads = config.get('max_threads', 6)
+        max_threads = config.get('max_threads', 8)
         if stealth_enabled and max_threads > 1:
             max_threads = 1  # Force single-threaded for stealth mode
             logger.info("🥷 Using single-threaded extraction for stealth")
