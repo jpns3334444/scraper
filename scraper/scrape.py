@@ -362,106 +362,14 @@ def create_enhanced_session():
 
 # Behavioral mimicry functions for stealth mode
 def simulate_human_reading_time():
-    """Simulate realistic human reading time for property details"""
-    base_reading = random.uniform(15, 45)  # 15-45 seconds base
-    detail_reading = random.uniform(30, 120)  # 30-120 seconds for details
-    decision_time = random.uniform(2, 8)  # 2-8 seconds decision making
-    return base_reading + detail_reading + decision_time
+    """Simple respectful delay for property details"""
+    return random.uniform(0.5, 2.0)
 
 def simulate_navigation_delay():
-    """Simulate realistic navigation delays between pages"""
-    click_delay = random.uniform(0.5, 2.0)  # Time to click
-    page_load_wait = random.uniform(1.0, 3.0)  # Wait for page load
-    return click_delay + page_load_wait
+    """Simple respectful navigation delay"""
+    return random.uniform(0.5, 1.5)
 
-def simulate_search_behavior(session, base_url, stealth_mode=False, logger=None):
-    """Simulate realistic search behavior before scraping"""
-    if not stealth_mode:
-        return  # Skip simulation in normal mode
-    
-    if logger:
-        logger.info(json.dumps({"message": "Simulating search behavior for stealth"}))
-    
-    try:
-        # Simulate search query
-        search_query = random.choice(SEARCH_QUERIES)
-        search_url = f"{base_url.replace('/list/', '/search/')}?q={search_query}"
-        
-        # Add delay before search
-        time.sleep(random.uniform(2, 5))
-        
-        response = session.get(search_url, timeout=15)
-        if response.status_code == 200:
-            if logger:
-                log_structured_message(logger, "INFO", "Search simulation successful", query=search_query)
-            
-            # Simulate reading search results
-            time.sleep(simulate_navigation_delay())
-            
-            # Sometimes navigate back to main listing
-            if random.random() < 0.7:  # 70% chance to go back to listings
-                session.get(base_url, timeout=15)
-                if logger:
-                    log_structured_message(logger, "INFO", "Navigated back to main listings")
-                time.sleep(simulate_navigation_delay())
-        
-    except Exception as e:
-        if logger:
-            log_structured_message(logger, "WARNING", "Search simulation failed", error=str(e))
 
-def simulate_browsing_patterns(session, all_urls, entry_point="default", stealth_mode=False, logger=None):
-    """Simulate realistic browsing patterns based on entry point"""
-    if not stealth_mode:
-        return all_urls  # Return unchanged in normal mode
-    
-    base_url = "https://www.homes.co.jp"
-    entry_path = ENTRY_POINTS.get(entry_point, ENTRY_POINTS["default"])
-    entry_url = f"{base_url}{entry_path}"
-    
-    if logger:
-        log_structured_message(logger, "INFO", "Simulating browsing patterns", 
-                             entry_point=entry_point, entry_url=entry_url)
-    
-    try:
-        # Start from the specified entry point
-        session.headers['Sec-Fetch-Site'] = 'none'  # Direct navigation
-        response = session.get(entry_url, timeout=15)
-        
-        if response.status_code == 200:
-            # Simulate reading the entry page
-            time.sleep(simulate_navigation_delay())
-            
-            # Update referer for subsequent requests
-            session.headers['Referer'] = entry_url
-            session.headers['Sec-Fetch-Site'] = 'same-origin'
-            
-            # Sometimes browse additional pages before starting real scraping
-            if random.random() < 0.4:  # 40% chance to browse more
-                additional_pages = random.randint(1, 2)
-                for i in range(additional_pages):
-                    page_num = random.randint(2, 5)
-                    browse_url = f"{base_url}/mansion/chuko/tokyo/chofu-city/list/?page={page_num}"
-                    
-                    time.sleep(simulate_navigation_delay())
-                    browse_response = session.get(browse_url, timeout=15)
-                    
-                    if browse_response.status_code == 200:
-                        if logger:
-                            log_structured_message(logger, "INFO", "Browsed additional page", page=page_num)
-                        time.sleep(simulate_navigation_delay())
-                        session.headers['Referer'] = browse_url
-            
-            # Randomize the order of URLs for more natural behavior
-            randomized_urls = all_urls.copy()
-            random.shuffle(randomized_urls)
-            
-            return randomized_urls
-            
-    except Exception as e:
-        if logger:
-            log_structured_message(logger, "WARNING", "Browsing simulation failed", error=str(e))
-    
-    return all_urls  # Return original list if simulation fails
 
 def check_detection_indicators(response_times, error_count, total_requests):
     """Check for potential detection indicators"""
@@ -888,13 +796,8 @@ def collect_area_listing_urls_efficient(area_name, existing_properties=None, max
             if logger:
                 logger.info(f"=== Efficiently collecting from {area_name} (page {page_num}) ===")
             
-            # Use human-like delays in stealth mode
-            if stealth_mode:
-                delay = simulate_navigation_delay() + random.uniform(2, 5)
-            else:
-                delay = random.uniform(1, 3)
-            
-            time.sleep(delay)
+            # Simple respectful delay
+            time.sleep(random.uniform(1, 3))
             page_url = f"{base_url}/?page={page_num}"
             
             try:
@@ -1076,13 +979,8 @@ def collect_area_listing_urls(area_name, max_pages=None, session=None, stealth_c
             if logger:
                 logger.info(f"=== Collecting from {area_name} (page {page_num}) ===")
             
-            # Use human-like delays in stealth mode
-            if stealth_mode:
-                delay = simulate_navigation_delay() + random.uniform(2, 5)
-            else:
-                delay = random.uniform(1, 3)
-            
-            time.sleep(delay)
+            # Simple respectful delay
+            time.sleep(random.uniform(1, 3))
             page_url = f"{base_url}/?page={page_num}"
             
             try:
@@ -1144,21 +1042,15 @@ def collect_multiple_areas_urls(areas, stealth_config=None, logger=None, max_url
     
     try:
         # Simulate search behavior once at the beginning in stealth mode
-        if stealth_mode and areas:
-            first_area_url = f"https://www.homes.co.jp/mansion/chuko/tokyo/{areas[0]}/list"
-            simulate_search_behavior(session, first_area_url, stealth_mode, logger)
         
         for i, area in enumerate(areas):
             progress_pct = ((i + 1) / len(areas)) * 100
             if logger:
                 logger.info(f"\n=== [{progress_pct:.1f}%] Processing area {i+1}/{len(areas)}: {area} ===")
             
-            # Add delay between areas in stealth mode
-            if stealth_mode and i > 0:
-                area_transition_delay = simulate_navigation_delay() + random.uniform(5, 15)
-                if logger:
-                    logger.info(f"Stealth mode: Area transition delay {area_transition_delay:.1f}s")
-                time.sleep(area_transition_delay)
+            # Simple area transition delay
+            if i > 0:
+                time.sleep(random.uniform(1, 3))
             
             # Collect ALL pages from this area (no limit)
             area_start_time = time.time()
@@ -1184,9 +1076,6 @@ def collect_multiple_areas_urls(areas, stealth_config=None, logger=None, max_url
                     logger.info(f"📊 Progress: {len(all_urls)} URLs collected, ~{eta_minutes:.1f} minutes remaining")
         
         # Apply browsing patterns in stealth mode
-        if stealth_mode and stealth_config:
-            entry_point = stealth_config.get('entry_point', 'default')
-            all_urls = simulate_browsing_patterns(session, all_urls, entry_point, stealth_mode, logger)
         
         if logger:
             log_structured_message(logger, "INFO", "Multi-area URL collection completed", 
@@ -1231,21 +1120,15 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
         all_price_unchanged_urls = []
         
         # Simulate search behavior once at the beginning in stealth mode
-        if stealth_mode and areas:
-            first_area_url = f"https://www.homes.co.jp/mansion/chuko/tokyo/{areas[0]}/list"
-            simulate_search_behavior(session, first_area_url, stealth_mode, logger)
         
         for i, area in enumerate(areas):
             progress_pct = ((i + 1) / len(areas)) * 100
             if logger:
                 logger.info(f"\n=== [{progress_pct:.1f}%] Efficiently processing area {i+1}/{len(areas)}: {area} ===")
             
-            # Add delay between areas in stealth mode
-            if stealth_mode and i > 0:
-                area_transition_delay = simulate_navigation_delay() + random.uniform(5, 15)
-                if logger:
-                    logger.info(f"Stealth mode: Area transition delay {area_transition_delay:.1f}s")
-                time.sleep(area_transition_delay)
+            # Simple area transition delay
+            if i > 0:
+                time.sleep(random.uniform(1, 3))
             
             # Efficiently collect URLs with price checking for this area
             area_start_time = time.time()
@@ -1274,9 +1157,6 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
                     logger.info(f"📊 Progress: {total_processed} URLs processed, ~{eta_minutes:.1f} minutes remaining")
         
         # Apply browsing patterns in stealth mode for new URLs only
-        if stealth_mode and stealth_config and all_new_urls:
-            entry_point = stealth_config.get('entry_point', 'default')
-            all_new_urls = simulate_browsing_patterns(session, all_new_urls, entry_point, stealth_mode, logger)
         
         # Step 3: Process price changes in DynamoDB if any were found
         if all_price_changed_urls:
@@ -1366,9 +1246,6 @@ def collect_all_listing_urls(base_url, max_pages=10, stealth_config=None, logger
     session = create_stealth_session(stealth_mode=stealth_mode, logger=logger)
     all_links = set()
     
-    # Simulate search behavior in stealth mode
-    if stealth_mode:
-        simulate_search_behavior(session, base_url, stealth_mode, logger)
     
     if logger:
         log_structured_message(logger, "INFO", "Starting listing URL collection", 
@@ -1414,11 +1291,8 @@ def collect_all_listing_urls(base_url, max_pages=10, stealth_config=None, logger
             if logger:
                 logger.info(f"=== Collecting listings from page {page_num} ===")
             
-            # Use human-like delays in stealth mode
-            if stealth_mode:
-                delay = simulate_navigation_delay() + random.uniform(3, 8)
-            else:
-                delay = random.uniform(2, 4)
+            # Simple respectful delay
+            delay = random.uniform(1, 3)
             
             time.sleep(delay)
             page_url = f"{base_url}/?page={page_num}"
@@ -1456,9 +1330,6 @@ def collect_all_listing_urls(base_url, max_pages=10, stealth_config=None, logger
         all_links_list = list(all_links)
         
         # Apply browsing patterns in stealth mode
-        if stealth_mode and stealth_config:
-            entry_point = stealth_config.get('entry_point', 'default')
-            all_links_list = simulate_browsing_patterns(session, all_links_list, entry_point, stealth_mode, logger)
         
         if logger:
             log_structured_message(logger, "INFO", "URL collection completed", 
@@ -1691,15 +1562,8 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
             # Set proper referer and add realistic delay
             session.headers['Referer'] = referer_url
             
-            # Use human-like timing in stealth mode
-            if stealth_mode:
-                delay = simulate_human_reading_time()
-                delay = min(delay, 180)  # Max 3 minutes
-                if logger:
-                    logger.info(f"Stealth mode: Simulating {delay:.1f}s human reading time")
-                time.sleep(delay)
-            else:
-                time.sleep(random.uniform(2, 5))
+            # Simple respectful delay
+            time.sleep(random.uniform(0.5, 2.0))
             
             if logger:
                 logger.info(f"Scraping: {property_url}")
@@ -2842,7 +2706,7 @@ def main():
         scraping_start_time = time.time()
         
         # Use configured thread pool size
-        max_threads = config.get('max_threads', 2)
+        max_threads = config.get('max_threads', 6)
         if stealth_enabled and max_threads > 1:
             max_threads = 1  # Force single-threaded for stealth mode
             logger.info("🥷 Using single-threaded extraction for stealth")
