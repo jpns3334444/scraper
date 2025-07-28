@@ -12,7 +12,7 @@ show_usage() {
     echo "  --max-properties N     Limit to N properties (useful for testing full load)"
     echo "  --areas AREAS          Comma-separated list of areas (e.g., 'chofu-city,shibuya-ku')"
     echo "  --batch-mode           Enable batch processing for full-load mode"
-    echo "  --batch-size N         Number of areas to process per batch (default: 5)"
+    echo "  --batch-area-size N    Number of areas to process per batch (default: 5)"
     echo "  --batch-number N       Current batch number to process (1-based indexing)"
     echo ""
     echo "Examples:"
@@ -24,7 +24,7 @@ show_usage() {
     echo "  $0 --full --max-properties 5              # Full load but limit to 5 properties (single area)"
     echo "  $0 --full --max-properties 5 --areas chofu-city  # Explicit area selection"
     echo "  $0 production --full --max-properties 100 --areas 'chofu-city,shibuya-ku'  # Test with 2 areas"
-    echo "  $0 --full --batch-mode --batch-size 5 --batch-number 1  # Run batch 1 with 5 areas per batch"
+    echo "  $0 --full --batch-mode --batch-area-size 5 --batch-number 1  # Run batch 1 with 5 areas per batch"
 }
 
 # Colors
@@ -48,7 +48,7 @@ FULL_MODE=false
 MAX_PROPERTIES=""
 AREAS=""
 BATCH_MODE=false
-BATCH_SIZE="5"
+BATCH_AREA_SIZE="5"
 BATCH_NUMBER="1"
 POSITIONAL_ARGS=()
 
@@ -85,12 +85,12 @@ while [[ $i -le $# ]]; do
         --batch-mode)
             BATCH_MODE=true
             ;;
-        --batch-size)
+        --batch-area-size)
             i=$((i + 1))
             if [[ $i -le $# ]]; then
-                BATCH_SIZE="${!i}"
+                BATCH_AREA_SIZE="${!i}"
             else
-                echo "Error: --batch-size requires a number"
+                echo "Error: --batch-area-size requires a number"
                 exit 1
             fi
             ;;
@@ -147,7 +147,7 @@ log "  Max Properties: ${BLUE}${MAX_PROPERTIES:-unlimited}${NC}"
 log "  Areas: ${BLUE}${AREAS:-auto-detect}${NC}"
 if [[ "$BATCH_MODE" == "true" ]]; then
     log "  Batch Mode: ${BLUE}ENABLED${NC}"
-    log "  Batch Size: ${BLUE}$BATCH_SIZE${NC}"
+    log "  Batch Area Size: ${BLUE}$BATCH_AREA_SIZE${NC}"
     log "  Batch Number: ${BLUE}$BATCH_NUMBER${NC}"
 fi
 if [[ "$IS_TESTING_SCENARIO" == "true" ]]; then
@@ -253,7 +253,7 @@ if [[ -n "$AREAS" ]]; then
 fi
 
 if [[ "$BATCH_MODE" == "true" ]]; then
-    PAYLOAD="$PAYLOAD,\"batch_mode\":true,\"batch_size\":$BATCH_SIZE,\"batch_number\":$BATCH_NUMBER"
+    PAYLOAD="$PAYLOAD,\"batch_mode\":true,\"batch_area_size\":$BATCH_AREA_SIZE,\"batch_number\":$BATCH_NUMBER"
 fi
 
 PAYLOAD="$PAYLOAD}"

@@ -61,11 +61,11 @@ Resources:
               
               # Batch mode parameters
               batch_mode = event.get('batch_mode', False)
-              batch_size = event.get('batch_size', 5)
+              batch_area_size = event.get('batch_area_size', 5)
               batch_number = event.get('batch_number', 1)
               
               if batch_mode:
-                  print(f"🚀 Starting {mode} scraper - Session: {session_id} - Batch {batch_number} (size: {batch_size})")
+                  print(f"🚀 Starting {mode} scraper - Session: {session_id} - Batch {batch_number} (size: {batch_area_size})")
               else:
                   print(f"🚀 Starting {mode} scraper - Session: {session_id}")
               
@@ -236,7 +236,7 @@ Resources:
                   export AREAS="{areas_env}"
                   export FULL_LOAD={str(full_mode).lower()}
                   export BATCH_MODE={str(batch_mode).lower()}
-                  export BATCH_SIZE={batch_size}
+                  export BATCH_AREA_SIZE={batch_area_size}
                   export BATCH_NUMBER={batch_number}
                   
                   # AI Workflow ARN - will be imported from ai-scraper-dev stack
@@ -246,7 +246,7 @@ Resources:
                   cd /home/ubuntu
                   echo "=== SCRAPER START: $(date) ==="
                   if [ "$BATCH_MODE" = "true" ]; then
-                      echo "Mode: $MODE, Session: $SESSION_ID, Max Properties: $MAX_PROPERTIES, Batch: $BATCH_NUMBER (size: $BATCH_SIZE)"
+                      echo "Mode: $MODE, Session: $SESSION_ID, Max Properties: $MAX_PROPERTIES, Batch: $BATCH_NUMBER (size: $BATCH_AREA_SIZE)"
                   else
                       echo "Mode: $MODE, Session: $SESSION_ID, Max Properties: $MAX_PROPERTIES"
                   fi

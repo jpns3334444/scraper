@@ -646,7 +646,7 @@ def get_scraper_config(args):
         'dynamodb_table': args.dynamodb_table if hasattr(args, 'dynamodb_table') else 'tokyo-real-estate-ai-RealEstateAnalysis',
         # Batch processing settings
         'batch_mode': args.batch_mode,
-        'batch_area_size': args.batch_size,  # Areas per batch, different from DynamoDB batch_size
+        'batch_area_size': args.batch_area_size,  # Areas per batch, different from DynamoDB batch_size
         'batch_number': args.batch_number,
         'total_batches': args.total_batches,
         'enable_batching': args.batch_mode and full_load_mode
@@ -2654,9 +2654,9 @@ def parse_arguments():
     )
     
     parser.add_argument(
-        '--batch-size',
+        '--batch-area-size',
         type=int,
-        default=int(os.environ.get('BATCH_SIZE', '5')),
+        default=int(os.environ.get('BATCH_AREA_SIZE', '5')),
         help='Number of areas to process per batch (default: 5)'
     )
     
