@@ -1194,6 +1194,7 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
             
             # Create discovery records using metadata already extracted from listing pages
             discovery_start = time.time()
+            processed_property_ids = set()  # Prevent duplicate property IDs
             with table.batch_writer() as batch:
                 batch_count = 0
                 for idx, url in enumerate(all_new_urls):
@@ -1229,6 +1230,11 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
                         
                         # Validate record and required keys before writing to DynamoDB
                         if record.get('property_id') and record.get('sort_key'):
+                            # Skip if property_id already processed to prevent duplicates
+                            if property_id in processed_property_ids:
+                                continue
+                            processed_property_ids.add(property_id)
+                            
                             batch.put_item(Item=record)
                             batch_count += 1
                         else:
