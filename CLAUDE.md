@@ -128,3 +128,7 @@ Key data structures are defined in `schemas/models.py`:
 ## Logging and Monitoring Considerations
 
 - **Log Filtering**: We must filter lambda logs for the scraper on sessionID, otherwise we will see logs for multiple runs. We ONLY WANT TO SEE LOGS FOR THE CURRENT EXECUTION.
+
+## Important Coding Guidelines
+
+- **Programming Language Note**: IT IS ALWAYS PYTHON3, NEVER PYTHON

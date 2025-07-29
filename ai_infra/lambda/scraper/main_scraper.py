@@ -9,9 +9,48 @@ import logging
 import sys
 import json
 import random
+import threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import boto3
+
+class RateLimiter:
+    """Thread-safe rate limiter for parallel requests"""
+    
+    def __init__(self, min_delay=1.0, max_delay=3.0):
+        self.min_delay = min_delay
+        self.max_delay = max_delay
+        self.last_request_time = 0
+        self.lock = threading.Lock()
+        self.consecutive_errors = 0
+        self.backoff_multiplier = 1.0
+    
+    def wait(self):
+        """Wait for appropriate delay between requests"""
+        with self.lock:
+            current_time = time.time()
+            base_delay = random.uniform(self.min_delay, self.max_delay)
+            delay = base_delay * self.backoff_multiplier
+            
+            elapsed_since_last = current_time - self.last_request_time
+            if elapsed_since_last < delay:
+                sleep_time = delay - elapsed_since_last
+                time.sleep(sleep_time)
+            
+            self.last_request_time = time.time()
+    
+    def record_error(self, is_rate_limit=False):
+        """Record an error and increase backoff if needed"""
+        with self.lock:
+            self.consecutive_errors += 1
+            if is_rate_limit or self.consecutive_errors > 3:
+                self.backoff_multiplier = min(self.backoff_multiplier * 1.5, 5.0)
+    
+    def record_success(self):
+        """Record successful request and reset backoff"""
+        with self.lock:
+            self.consecutive_errors = 0
+            self.backoff_multiplier = max(self.backoff_multiplier * 0.9, 1.0)
 
 class SessionLogger:
     """Simple logger that automatically includes session_id in all messages"""
@@ -21,12 +60,8 @@ class SessionLogger:
         self._logger = logging.getLogger(__name__)
         
         # Setup logger if not already configured
-        if not self._logger.handlers:
-            handler = logging.StreamHandler(sys.stdout)
-            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-            handler.setFormatter(formatter)
-            self._logger.addHandler(handler)
-            self._logger.setLevel(getattr(logging, log_level.upper()))
+        # Only set level, don't add handler (Lambda provides its own)
+        self._logger.setLevel(getattr(logging, log_level.upper()))
     
     def info(self, message):
         self._logger.info(f"[{self.session_id}] {message}")
@@ -59,6 +94,7 @@ def parse_lambda_event(event):
         'max_properties': event.get('max_properties', int(os.environ.get('MAX_PROPERTIES', '0'))),
         'output_bucket': event.get('output_bucket', os.environ.get('OUTPUT_BUCKET', '')),
         'max_threads': event.get('max_threads', int(os.environ.get('MAX_THREADS', '1'))),
+        'max_concurrent_areas': event.get('max_concurrent_areas', int(os.environ.get('MAX_CONCURRENT_AREAS', '5'))),
         'areas': event.get('areas', os.environ.get('AREAS', '')),
         'dynamodb_table': event.get('dynamodb_table', os.environ.get('DYNAMODB_TABLE', 'tokyo-real-estate-ai-analysis-db')),
         'log_level': event.get('log_level', os.environ.get('LOG_LEVEL', 'INFO'))
@@ -73,6 +109,7 @@ def get_scraper_config(args):
         'max_properties': args['max_properties'],
         'areas': areas,
         'max_threads': args['max_threads'],
+        'max_concurrent_areas': args['max_concurrent_areas'],
         'output_bucket': args['output_bucket'],
         'enable_deduplication': True,
         'dynamodb_table': args['dynamodb_table']
@@ -80,54 +117,173 @@ def get_scraper_config(args):
     
     return config
 
-def collect_urls_with_deduplication(areas, config, logger=None):
-    """Collect URLs with deduplication"""
-    if logger:
-        logger.info(f"Starting URL collection for {len(areas)} areas")
-    
+def collect_area_urls_parallel_worker(area, existing_properties, rate_limiter, logger=None):
+    """Worker function for parallel area URL collection"""
     try:
-        # Load existing properties
-        dynamodb, table = setup_dynamodb_client(logger)
-        existing_properties = load_all_existing_properties(table, logger)
+        if logger:
+            logger.info(f"Starting area processing: {area}")
         
-        # Create session
+        # Apply rate limiting
+        rate_limiter.wait()
+        
+        # Create session for this thread
         session = create_session(logger)
         
-        all_new_urls = []
-        all_price_unchanged_urls = []
-        
-        for i, area in enumerate(areas):
-            if logger:
-                logger.info(f"Processing area {i+1}/{len(areas)}: {area}")
-            
+        try:
             # Collect URLs from area
             area_urls = collect_area_listing_urls(area, max_pages=None, session=session, logger=logger)
             
-            # Check against existing
+            if not area_urls:
+                if logger:
+                    logger.warning(f"No URLs found for area: {area}")
+                return {
+                    'area': area,
+                    'success': True,
+                    'new_urls': [],
+                    'unchanged_urls': [],
+                    'error': None
+                }
+            
+            # Check against existing properties (thread-safe read access)
             new_urls, _, unchanged_urls = process_listings_with_existing_check(
                 area_urls, existing_properties, logger
             )
             
-            all_new_urls.extend(new_urls)
-            all_price_unchanged_urls.extend(unchanged_urls)
+            rate_limiter.record_success()
             
             if logger:
-                logger.info(f"Area {area}: {len(new_urls)} new, {len(unchanged_urls)} existing")
+                logger.info(f"Area {area} completed: {len(new_urls)} new, {len(unchanged_urls)} existing")
+            
+            return {
+                'area': area,
+                'success': True,
+                'new_urls': new_urls,
+                'unchanged_urls': unchanged_urls,
+                'error': None
+            }
+            
+        except Exception as e:
+            # Check if it's a rate limiting or anti-bot error
+            error_msg = str(e).lower()
+            is_rate_limit = any(code in error_msg for code in ['429', '403', 'rate limit', 'anti-bot'])
+            
+            rate_limiter.record_error(is_rate_limit)
+            
+            if logger:
+                logger.error(f"Error processing area {area}: {str(e)}")
+            
+            return {
+                'area': area,
+                'success': False,
+                'new_urls': [],
+                'unchanged_urls': [],
+                'error': str(e)
+            }
+        
+        finally:
+            session.close()
+            
+    except Exception as e:
+        if logger:
+            logger.error(f"Critical error in worker for area {area}: {str(e)}")
+        
+        return {
+            'area': area,
+            'success': False,
+            'new_urls': [],
+            'unchanged_urls': [],
+            'error': f"Critical error: {str(e)}"
+        }
+
+def collect_urls_with_deduplication(areas, config, logger=None):
+    """Collect URLs with deduplication using parallel processing"""
+    if logger:
+        logger.info(f"Starting parallel URL collection for {len(areas)} areas")
+    
+    try:
+        # Load existing properties (thread-safe read-only access)
+        dynamodb, table = setup_dynamodb_client(logger)
+        existing_properties = load_all_existing_properties(table, logger)
+        
+        # Get parallel processing configuration
+        max_concurrent = config.get('max_concurrent_areas', 5)
+        if logger:
+            logger.info(f"Using {max_concurrent} concurrent workers for area processing")
+        
+        # Create shared rate limiter
+        rate_limiter = RateLimiter(min_delay=1.0, max_delay=3.0)
+        
+        # Collect results
+        all_new_urls = []
+        all_price_unchanged_urls = []
+        failed_areas = []
+        
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
+            # Submit all areas for processing
+            future_to_area = {
+                executor.submit(
+                    collect_area_urls_parallel_worker, 
+                    area, 
+                    existing_properties, 
+                    rate_limiter, 
+                    logger
+                ): area for area in areas
+            }
+            
+            # Process results as they complete
+            completed_count = 0
+            for future in as_completed(future_to_area):
+                area = future_to_area[future]
+                completed_count += 1
+                
+                try:
+                    result = future.result()
+                    
+                    if result['success']:
+                        all_new_urls.extend(result['new_urls'])
+                        all_price_unchanged_urls.extend(result['unchanged_urls'])
+                        
+                        if logger:
+                            progress_pct = (completed_count / len(areas)) * 100
+                            logger.info(f"Progress: {completed_count}/{len(areas)} ({progress_pct:.1f}%) - {area}: {len(result['new_urls'])} new, {len(result['unchanged_urls'])} existing")
+                    else:
+                        failed_areas.append({'area': area, 'error': result['error']})
+                        if logger:
+                            logger.error(f"Area {area} failed: {result['error']}")
+                
+                except Exception as e:
+                    failed_areas.append({'area': area, 'error': str(e)})
+                    if logger:
+                        logger.error(f"Exception processing result for area {area}: {str(e)}")
+        
+        # Report results
+        success_count = len(areas) - len(failed_areas)
+        if logger:
+            logger.info(f"Parallel processing complete: {success_count}/{len(areas)} areas successful")
+            if failed_areas:
+                logger.warning(f"Failed areas: {[f['area'] for f in failed_areas]}")
+        
+        # Create a dummy session for compatibility (won't be used for area collection)
+        session = create_session(logger)
         
         summary = {
             'total_urls_found': len(all_new_urls) + len(all_price_unchanged_urls),
             'new_listings': len(all_new_urls),
-            'existing_listings': len(all_price_unchanged_urls)
+            'existing_listings': len(all_price_unchanged_urls),
+            'successful_areas': success_count,
+            'failed_areas': len(failed_areas),
+            'failed_area_details': failed_areas
         }
         
         if logger:
-            logger.info(f"Deduplication complete: {summary['new_listings']} new URLs to process")
+            logger.info(f"URL collection complete: {summary['new_listings']} new URLs to process")
         
         return all_new_urls, session, summary
         
     except Exception as e:
         if logger:
-            logger.error(f"Error in URL collection: {str(e)}")
+            logger.error(f"Error in parallel URL collection: {str(e)}")
         raise
 
 def validate_property_data(property_data):
