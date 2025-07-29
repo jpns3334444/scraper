@@ -64,6 +64,34 @@ def create_session(logger=None):
     
     return session
 
+def parse_price_from_text(price_text):
+    """Parse price text like '1,980万円' to numeric value in man-yen"""
+    if not price_text:
+        return 0
+    
+    try:
+        # Remove common patterns and extract number
+        price_clean = re.sub(r'[^\d,万円.]', '', str(price_text))
+        
+        # Handle different formats
+        if '万円' in price_clean:
+            # Format: "1,980万円" -> 1980
+            number_part = price_clean.replace('万円', '').replace(',', '')
+            return int(float(number_part))
+        elif '円' in price_clean:
+            # Format: "19,800,000円" -> 1980
+            number_part = price_clean.replace('円', '').replace(',', '')
+            return int(float(number_part) / 10000)  # Convert to man-yen
+        else:
+            # Try to extract just numbers
+            number_part = price_clean.replace(',', '')
+            if number_part.isdigit():
+                return int(number_part)
+    except (ValueError, AttributeError):
+        pass
+    
+    return 0
+
 def extract_listing_urls_from_html(html_content):
     """Extract unique listing URLs from HTML content"""
     relative_urls = re.findall(r'/mansion/b-\d+/?', html_content)
@@ -75,8 +103,94 @@ def extract_listing_urls_from_html(html_content):
     
     return list(unique_listings)
 
+def extract_listings_with_prices_from_html(html_content):
+    """Extract listing URLs with prices from HTML content"""
+    from bs4 import BeautifulSoup
+    
+    soup = BeautifulSoup(html_content, 'html.parser')
+    listings = []
+    
+    # Look for listing containers - these may vary, so we'll try multiple selectors
+    listing_selectors = [
+        '.mod-mergeTable tr',  # Common table row format
+        '.property-item',      # Property item containers
+        '.listing-item',       # Alternative listing format
+        '.searchResult-item',  # Search result items
+        'tr[class*="item"]',   # Table rows with "item" in class
+        '.bukken-item'         # Property (bukken) items
+    ]
+    
+    for selector in listing_selectors:
+        items = soup.select(selector)
+        if items:
+            for item in items:
+                # Find URL
+                url_link = item.find('a', href=re.compile(r'/mansion/b-\d+/?'))
+                if not url_link:
+                    continue
+                
+                relative_url = url_link.get('href')
+                if not relative_url:
+                    continue
+                
+                absolute_url = f"https://www.homes.co.jp{relative_url.rstrip('/')}"
+                
+                # Find price - try multiple approaches
+                price = 0
+                price_text = ""
+                
+                # Try different price selectors
+                price_selectors = [
+                    '.price',
+                    '.price-value', 
+                    '.bukken-price',
+                    '.mod-price',
+                    '[class*="price"]',
+                    'td[class*="price"]',
+                    '.searchResult-price'
+                ]
+                
+                for price_sel in price_selectors:
+                    price_elem = item.select_one(price_sel)
+                    if price_elem:
+                        price_text = price_elem.get_text(strip=True)
+                        break
+                
+                # If no dedicated price element, search for price patterns in text
+                if not price_text:
+                    item_text = item.get_text()
+                    price_match = re.search(r'(\d{1,4}(?:,\d{3})*万円)', item_text)
+                    if price_match:
+                        price_text = price_match.group(1)
+                
+                # Parse the price
+                if price_text:
+                    price = parse_price_from_text(price_text)
+                
+                listings.append({
+                    'url': absolute_url,
+                    'price': price,
+                    'price_text': price_text
+                })
+            
+            # If we found listings with this selector, use them
+            if listings:
+                break
+    
+    # Fallback to URL-only extraction if no prices found
+    if not listings:
+        urls = extract_listing_urls_from_html(html_content)
+        listings = [{'url': url, 'price': 0, 'price_text': ''} for url in urls]
+    
+    return listings
+
 def collect_area_listing_urls(area_name, max_pages=None, session=None, logger=None):
-    """Collect listing URLs from a specific Tokyo area"""
+    """Collect listing URLs from a specific Tokyo area (legacy function for compatibility)"""
+    listings_with_prices = collect_area_listings_with_prices(area_name, max_pages, session, logger)
+    return [listing['url'] for listing in listings_with_prices]
+
+def collect_area_listings_with_prices(area_name, max_pages=None, session=None, logger=None):
+    """Collect listing URLs with prices from a specific Tokyo area"""
     base_url = f"https://www.homes.co.jp/mansion/chuko/tokyo/{area_name}/list"
     
     if session is None:
@@ -85,10 +199,10 @@ def collect_area_listing_urls(area_name, max_pages=None, session=None, logger=No
     else:
         should_close_session = False
     
-    all_links = set()
+    all_listings = {}  # Use dict to deduplicate by URL while keeping price info
     
     if logger:
-        logger.info(f"Collecting from {area_name}")
+        logger.info(f"Collecting listings with prices from {area_name}")
     
     try:
         # Get page 1
@@ -111,9 +225,10 @@ def collect_area_listing_urls(area_name, max_pages=None, session=None, logger=No
         if max_pages:
             total_pages = min(total_pages, max_pages)
         
-        # Extract listings from page 1
-        page1_listings = extract_listing_urls_from_html(response.text)
-        all_links.update(page1_listings)
+        # Extract listings with prices from page 1
+        page1_listings = extract_listings_with_prices_from_html(response.text)
+        for listing in page1_listings:
+            all_listings[listing['url']] = listing
         
         # Set referer for subsequent requests
         session.headers['Referer'] = base_url
@@ -137,8 +252,9 @@ def collect_area_listing_urls(area_name, max_pages=None, session=None, logger=No
                         logger.error(f"Anti-bot triggered on page {page_num}")
                     break
                 
-                page_listings = extract_listing_urls_from_html(response.text)
-                all_links.update(page_listings)
+                page_listings = extract_listings_with_prices_from_html(response.text)
+                for listing in page_listings:
+                    all_listings[listing['url']] = listing
                 
                 session.headers['Referer'] = page_url
                 
@@ -147,11 +263,11 @@ def collect_area_listing_urls(area_name, max_pages=None, session=None, logger=No
                     logger.error(f"Error on page {page_num}: {str(e)}")
                 continue
         
-        area_links_list = list(all_links)
+        area_listings_list = list(all_listings.values())
         if logger:
-            logger.debug(f"Found {len(area_links_list)} listings in {area_name}")
+            logger.debug(f"Found {len(area_listings_list)} listings with prices in {area_name}")
         
-        return area_links_list
+        return area_listings_list
         
     except Exception as e:
         if logger:

@@ -72,7 +72,7 @@ class SessionLogger:
 
 # Import from other modules
 from core_scraper import (
-    create_session, collect_area_listing_urls, discover_tokyo_areas
+    create_session, collect_area_listing_urls, collect_area_listings_with_prices, discover_tokyo_areas
 )
 from dynamodb_utils import (
     setup_dynamodb_client, load_all_existing_properties,
@@ -106,7 +106,7 @@ def get_collector_config(args):
     return config
 
 def collect_area_urls_parallel_worker(area, existing_properties, url_tracking_table, rate_limiter, logger=None):
-    """Worker function for parallel area URL collection"""
+    """Worker function for parallel area URL collection with price change detection"""
     try:
         if logger:
             logger.info(f"Starting area processing: {area}")
@@ -118,12 +118,12 @@ def collect_area_urls_parallel_worker(area, existing_properties, url_tracking_ta
         session = create_session(logger)
         
         try:
-            # Collect URLs from area
-            area_urls = collect_area_listing_urls(area, max_pages=None, session=session, logger=logger)
+            # Collect URLs with prices from area
+            area_listings = collect_area_listings_with_prices(area, max_pages=None, session=session, logger=logger)
             
-            if not area_urls:
+            if not area_listings:
                 if logger:
-                    logger.warning(f"No URLs found for area: {area}")
+                    logger.warning(f"No listings found for area: {area}")
                 return {
                     'area': area,
                     'success': True,
@@ -138,17 +138,44 @@ def collect_area_urls_parallel_worker(area, existing_properties, url_tracking_ta
             price_changed_urls = []
             unchanged_urls = []
             
-            for url in area_urls:
+            # Setup DynamoDB for price updates
+            dynamodb, table = setup_dynamodb_client(logger)
+            
+            for listing in area_listings:
+                url = listing['url']
+                list_page_price = listing['price']
+                
                 raw_property_id = extract_property_id_from_url(url)
                 if not raw_property_id:
                     new_urls.append(url)
                     continue
                 
                 if raw_property_id in existing_properties:
-                    # For existing properties, treat as unchanged for now
-                    # Could implement price checking here in the future if needed
-                    unchanged_urls.append(url)
+                    existing_property = existing_properties[raw_property_id]
+                    stored_price = existing_property.get('price', 0)
+                    
+                    # Compare prices - only if we extracted a valid price from list page
+                    if list_page_price > 0 and stored_price > 0 and list_page_price != stored_price:
+                        # Price changed - update DYDB1
+                        try:
+                            success = update_listing_with_price_change(
+                                existing_property, list_page_price, table, logger
+                            )
+                            if success:
+                                price_changed_urls.append(url)
+                                if logger:
+                                    logger.debug(f"Updated price for {raw_property_id}: {stored_price} -> {list_page_price}")
+                            else:
+                                unchanged_urls.append(url)  # Failed to update, treat as unchanged
+                        except Exception as e:
+                            if logger:
+                                logger.error(f"Failed to update price for {raw_property_id}: {str(e)}")
+                            unchanged_urls.append(url)
+                    else:
+                        # Price unchanged or couldn't determine price
+                        unchanged_urls.append(url)
                 else:
+                    # New property
                     new_urls.append(url)
             
             # Add new URLs to tracking table
@@ -160,7 +187,7 @@ def collect_area_urls_parallel_worker(area, existing_properties, url_tracking_ta
             rate_limiter.record_success()
             
             if logger:
-                logger.info(f"Area {area} completed: {len(new_urls)} new, {len(unchanged_urls)} existing")
+                logger.info(f"Area {area} completed: {len(new_urls)} new, {len(price_changed_urls)} price changes, {len(unchanged_urls)} unchanged")
             
             return {
                 'area': area,
@@ -263,7 +290,7 @@ def collect_urls_and_track_new(areas, config, logger=None):
                         
                         if logger:
                             progress_pct = (completed_count / len(areas)) * 100
-                            logger.info(f"Progress: {completed_count}/{len(areas)} ({progress_pct:.1f}%) - {area}: {len(result['new_urls'])} new, {len(result['unchanged_urls'])} existing")
+                            logger.info(f"Progress: {completed_count}/{len(areas)} ({progress_pct:.1f}%) - {area}: {len(result['new_urls'])} new, {len(result['price_changed_urls'])} price changes, {len(result['unchanged_urls'])} unchanged")
                     else:
                         failed_areas.append({'area': area, 'error': result['error']})
                         if logger:
@@ -282,7 +309,7 @@ def collect_urls_and_track_new(areas, config, logger=None):
                 logger.warning(f"Failed areas: {[f['area'] for f in failed_areas]}")
         
         summary = {
-            'total_urls_found': len(all_new_urls) + len(all_unchanged_urls),
+            'total_urls_found': len(all_new_urls) + len(all_price_changed_urls) + len(all_unchanged_urls),
             'new_urls_tracked': len(all_new_urls),
             'existing_listings': len(all_unchanged_urls),
             'price_changed_listings': len(all_price_changed_urls),
@@ -292,7 +319,7 @@ def collect_urls_and_track_new(areas, config, logger=None):
         }
         
         if logger:
-            logger.info(f"URL collection complete: {summary['new_urls_tracked']} new URLs added to tracking table")
+            logger.info(f"URL collection complete: {summary['new_urls_tracked']} new URLs added to tracking table, {summary['price_changed_listings']} price changes detected")
         
         return summary
         
@@ -359,13 +386,14 @@ def main(event=None):
             "total_urls_found": collection_summary.get('total_urls_found', 0),
             "new_urls_tracked": collection_summary.get('new_urls_tracked', 0),
             "existing_listings": collection_summary.get('existing_listings', 0),
+            "price_changed_listings": collection_summary.get('price_changed_listings', 0),
             "status": "SUCCESS" if collection_summary.get('new_urls_tracked', 0) >= 0 else "FAILED"
         }
         
         write_job_summary(summary_data)
         
         logger.info(f"URL collection completed!")
-        logger.info(f"Results: {summary_data['new_urls_tracked']} new URLs tracked, {summary_data['existing_listings']} existing")
+        logger.info(f"Results: {summary_data['new_urls_tracked']} new URLs tracked, {summary_data['price_changed_listings']} price changes, {summary_data['existing_listings']} unchanged")
         logger.info(f"Duration: {duration:.1f} seconds")
         
         return summary_data
@@ -400,6 +428,7 @@ def lambda_handler(event, context):
                 'session_id': session_id,
                 'new_urls_tracked': result.get('new_urls_tracked', 0),
                 'existing_listings': result.get('existing_listings', 0),
+                'price_changed_listings': result.get('price_changed_listings', 0),
                 'timestamp': datetime.now().isoformat()
             })
         }
