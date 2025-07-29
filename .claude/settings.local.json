@@ -21,7 +21,8 @@
       "Bash(./deploy-compute.sh:*)",
       "Bash(./trigger_ai_workflow.sh:*)",
       "Bash(sudo docker:*)",
-      "Bash(aws cloudformation:*)"
+      "Bash(aws cloudformation:*)",
+      "Bash(aws dynamodb wait:*)"
     ],
     "deny": []
   }

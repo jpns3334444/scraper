@@ -2,122 +2,129 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
+## Project Architecture
 
-Tokyo Real Estate Lean Analysis System - An automated AWS-based pipeline for analyzing Tokyo real estate investments using deterministic scoring (Lean v1.3).
+This is a Tokyo Real Estate Analysis System that scrapes, analyzes, and reports on property listings. The system consists of:
 
-## Core Architecture
+### Core Components
 
-### Processing Pipeline (Lean v1.3)
-1. **EC2 Scraper** → Scrapes homes.co.jp listings and images → Stores in S3
-2. **ETL Lambda** → Normalizes data and applies deterministic scoring
-3. **Candidate Gating** → Filters top ~20% properties by score/discount
-4. **LLM Analysis** → Generates qualitative insights for candidates only
-5. **Daily Digest** → Single email summarizing all candidates
+1. **AI Infrastructure (`ai_infra/`)** - AWS Lambda-based serverless pipeline
+   - Lambda functions for ETL, prompt building, LLM batch processing, reporting
+   - Step Functions orchestration for the full AI workflow
+   - DynamoDB for data storage and dashboard API
 
-### Key Design Principles
-- **99% LLM token reduction**: Only top candidates analyzed by LLM
-- **Deterministic scoring**: All filtering/scoring logic in Python (not LLM)
-- **Schema validation**: LLM outputs validated against `schemas/evaluation_min.json`
-- **No traditional package management**: Dependencies installed directly in scripts
+2. **Analysis Engine** - Python modules for property evaluation
+   - `analysis/lean_scoring.py` - Deterministic scoring algorithm (Lean v1.3)
+   - `analysis/comparables.py` - Market comparison analysis
+   - `analysis/analyzer.py` - Main analysis coordinator
+
+3. **Data Models (`schemas/`)** - Type definitions and validation
+   - `models.py` - Property, analysis, and snapshot data classes
+   - JSON schema validation for LLM outputs
+
+4. **Dashboard (`dashboard/`)** - Web interface for viewing analyzed properties
+   - Single-page HTML app with AWS Lambda API backend
+   - Real-time filtering and sorting of property data
+
+### Data Flow Architecture
+
+```
+Raw Scraping → ETL Processing → Lean Scoring → LLM Analysis → Daily Digest
+     ↓              ↓              ↓             ↓             ↓
+S3 Storage → DynamoDB Storage → Candidate Filtering → Email Reports → Dashboard
+```
+
+The system implements "Lean v1.3" - an efficiency-focused approach that uses deterministic scoring to filter candidates before expensive LLM analysis, achieving ~99% token reduction.
 
 ## Development Commands
 
-### Testing
+### Deployment Commands
 ```bash
-# Install dependencies
-pip install boto3 pandas requests responses moto==4.2.14 openai jsonschema
+# Deploy AI infrastructure (main pipeline)
+cd ai_infra && ./deploy-ai.sh
 
-# Run all tests
-pytest -q
+# Deploy dashboard
+cd dashboard && ./deploy-dashboard.sh
 
-# Run specific test file
-pytest tests/test_lean_scoring.py
-
-# Run with coverage
-pytest --cov=scraper --cov-report=html
+# Update scraper Lambda function only
+cd ai_infra && ./update-scraper-lambda.sh
 ```
 
-### Local Testing of Lambda Functions
+### Testing Commands
 ```bash
-cd scraper/ai_infra
-./test-local.sh <function_name> <event_file>
-# Example: ./test-local.sh etl test-events/etl-event.json
+# Run Python tests
+pytest tests/ -v
+
+# Test individual Lambda functions locally
+cd ai_infra && ./test-local.sh etl test-events/etl-event.json
+cd ai_infra && ./test-local.sh prompt_builder test-events/prompt-builder-event.json
+cd ai_infra && ./test-local.sh llm_batch test-events/llm-batch-event.json
+
+# Test full AI workflow
+cd ai_infra && ./trigger_ai_workflow.sh [YYYY-MM-DD] [region]
 ```
 
-### Deployment
+### Operational Commands
 ```bash
-# Deploy full stack
-cd scraper/scraper
-./deploy-all.sh
+# Trigger scraper manually
+cd ai_infra && ./trigger_lambda_scraper.sh --max-properties 10 --sync
 
-# Deploy AI infrastructure only
-cd scraper/ai_infra
-./deploy-ai.sh
-
-# Deploy compute (EC2) only
-cd scraper/scraper
-./deploy-compute.sh
-
-# Recreate compute (EC2) instance from scratch
-cd scraper/scraper
-./deploy-compute.sh --recreate
+# Monitor AI workflow execution
+cd ai_infra && ./trigger_ai_workflow.sh 2025-01-25 ap-northeast-1 --all
 ```
 
-### Manual Triggers
-```bash
-# Trigger scraper on EC2
-./trigger_scraper_script.sh <instance-id>
+## Key Implementation Details
 
-# Trigger AI workflow
-cd scraper/ai_infra
-./trigger_ai_workflow.sh <date>
-# Example: ./trigger_ai_workflow.sh 2025-07-07
-```
+### Lean v1.3 Pipeline
+- **Deterministic Scoring**: Properties scored using market data, location factors, and building characteristics
+- **Candidate Gating**: Only high-scoring properties (typically 2-5% of total) proceed to LLM analysis
+- **Token Efficiency**: ~1200 tokens per property vs ~2000+ in legacy mode
+- **Schema Validation**: LLM outputs validated against strict JSON schemas
 
-## Key Environment Variables
-```bash
-LEAN_MODE=1                    # Enable Lean pipeline
-LEAN_SCORING=1                 # Use deterministic scoring
-LEAN_PROMPT=1                  # Use lean prompt structure
-LEAN_SCHEMA_ENFORCE=1          # Enforce JSON schema on LLM output
-MAX_CANDIDATES_PER_DAY=120     # Safety limit on daily candidates
-OUTPUT_BUCKET=<s3-bucket>      # Destination for processed data
-AWS_REGION=ap-northeast-1      # Tokyo region only
-```
+### Testing Strategy
+- Uses `pytest` with moto for AWS service mocking
+- Test fixtures in `tests/conftest.py` provide sample data
+- Local Lambda testing via `ai_infra/test_runner.py`
+- Integration tests validate end-to-end pipeline behavior
 
-## Code Organization
+### Configuration
+- Environment variables managed via `.env.json` (not in repo)
+- AWS resources managed via CloudFormation templates
+- OpenAI API key stored in AWS Secrets Manager
+- Email configuration in deployment scripts
 
-### Core Modules
-- `analysis/lean_scoring.py` - Deterministic property scoring algorithm
-- `analysis/comparables.py` - Similar property matching
-- `notifications/daily_digest.py` - Email digest generation
-- `schemas/models.py` - Data models (Property, Candidate, etc.)
+### AWS Resources
+- **Lambda Functions**: ETL, prompt builder, LLM batch, report sender, scraper, dashboard API
+- **Step Functions**: Orchestrates the full AI analysis workflow
+- **DynamoDB**: Stores processed property data for dashboard queries
+- **S3**: Raw data, processed outputs, and static dashboard hosting
+- **SES**: Email delivery for daily digest reports
 
-### Lambda Functions
-- `ai_infra/lambda/etl/` - Data normalization and scoring
-- `ai_infra/lambda/prompt_builder/` - Candidate prompt preparation
-- `ai_infra/lambda/llm_batch/` - LLM API interaction
-- `ai_infra/lambda/report_sender/` - Email digest generation
-- `ai_infra/lambda/dynamodb_writer/` - Result persistence
+## Data Models
 
-### Infrastructure
-- `scraper/scraper/infra-stack.yaml` - Core AWS resources
-- `scraper/ai_infra/ai-stack.yaml` - Lambda and Step Functions
-- `scraper/scraper/compute-stack.yaml` - EC2 instances
+Key data structures are defined in `schemas/models.py`:
+- `PropertyListing` - Raw property data
+- `PropertyAnalysis` - Scored and analyzed property results
+- `GlobalSnapshot`/`WardSnapshot` - Market statistics
+- `DailyDigestData` - Email report structure
 
-## Important Notes
+## Important Patterns
 
-- **No linting tools configured** - Maintain consistent Python style manually
-- **No CI/CD** - Manual deployment via shell scripts
-- **Lambda deployment** - Uses zip packages, not containers
-- **Testing focus** - Always add tests when modifying pipeline components
-- **Tokyo-specific** - System designed for Tokyo real estate market only
+### Error Handling
+- Lambda functions return structured error responses
+- CloudWatch logs capture detailed execution information
+- Step Functions handle retry logic for transient failures
 
-## Scraping Guidelines
-- Do not run the scraper script locally as we do not want our IP to be attached to the scraping
+### Data Validation
+- JSON schema validation for all external data inputs
+- Type hints throughout Python codebase using dataclasses
+- Schema compliance checking for LLM outputs
 
-## Critical Infrastructure Warnings
+### Performance Optimization
+- Batch processing for DynamoDB operations
+- S3 object versioning for deployment artifacts
+- Cached OpenAI layer to reduce deployment times
 
-### EC2 Logging Configuration
-- NEVER, EVER FUCKING CHANGE THE EC2 LOG CONFIGURATION WITHOUT CONSULTING ME. IT GOES EC2 > OUTPUT FILE > AND THEN AGENT SENDS THEM TO CLOUDWATCH. DO NOT FUCK WITH IT, DO U FUCKING UNDERSTAND?
+## Logging and Monitoring Considerations
+
+- **Log Filtering**: We must filter lambda logs for the scraper on sessionID, otherwise we will see logs for multiple runs. We ONLY WANT TO SEE LOGS FOR THE CURRENT EXECUTION.

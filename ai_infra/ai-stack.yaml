@@ -140,6 +140,56 @@ Resources:
                   - !GetAtt DailyDigestDeadLetterQueue.Arn
                   - !GetAtt ScraperDeadLetterQueue.Arn
 
+  # Simplified IAM Role for Scraper (removed CloudWatch metrics and Step Functions permissions)
+  ScraperExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::${OutputBucket}/*'
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:BatchWriteItem
+                  - dynamodb:GetItem
+                  - dynamodb:BatchGetItem
+                  - dynamodb:Scan
+                  - dynamodb:Query
+                  - dynamodb:DescribeTable
+                Resource: 
+                  - !GetAtt RealEstateAnalysisDB.Arn
+        - PolicyName: SQSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource:
+                  - !GetAtt ScraperDeadLetterQueue.Arn
+
   # DynamoDB Table for Real Estate Analysis
   RealEstateAnalysisDB:
     Type: AWS::DynamoDB::Table
@@ -401,13 +451,14 @@ Resources:
           EMAIL_TO: !Ref EmailTo
           LEAN_MODE: !Ref LeanMode
 
+  # Simplified Scraper Function
   ScraperFunction:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub '${AWS::StackName}-scraper'
       Runtime: python3.12
-      Handler: app.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: main_scraper.lambda_handler  # Updated handler path
+      Role: !GetAtt ScraperExecutionRole.Arn  # Use simplified role
       Code:
         S3Bucket: !Ref DeploymentBucket
         S3Key: functions/scraper.zip
@@ -423,9 +474,9 @@ Resources:
           OUTPUT_BUCKET: !Ref OutputBucket
           DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
           MAX_PROPERTIES: '0'  # 0 = unlimited
-          MAX_THREADS: '2'
-          BATCH_SIZE: '25'
-          AREAS: ''  # Empty = auto-detect all areas
+          MAX_THREADS: '1'     # Single-threaded for anti-bot protection
+          AREAS: ''            # Empty = auto-detect all areas
+          # Removed: BATCH_SIZE, AI_WORKFLOW_ARN, and other unnecessary variables
 
   # Step Functions
   StepFunctionsExecutionRole:
@@ -739,6 +790,27 @@ Resources:
             {
               "date": "$$.State.EnteredTime"
             }
+
+  # Daily scraper rule (separate from AI analysis)
+  DailyScraperRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${AWS::StackName}-daily-scraper'
+      Description: 'Run scraper daily at 17:00 UTC (02:00 JST)'
+      ScheduleExpression: 'cron(0 17 * * ? *)'
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt ScraperFunction.Arn
+          Id: 'ScraperTarget'
+
+  # Lambda permission for EventBridge to invoke scraper
+  ScraperEventPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ScraperFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailyScraperRule.Arn
 
   # Daily snapshot generation rule (08:55 JST = 23:55 UTC)
   DailySnapshotRule:
