@@ -133,14 +133,16 @@ DYNAMODB_WRITER_VERSION="latest"
 SNAPSHOT_GENERATOR_VERSION="latest"
 DAILY_DIGEST_VERSION="latest"
 SCRAPER_VERSION="latest"
+URL_COLLECTOR_VERSION="latest"
+PROPERTY_PROCESSOR_VERSION="latest"
 
-for func in etl prompt_builder llm_batch report_sender dynamodb_writer snapshot_generator daily_digest scraper; do
+for func in etl prompt_builder llm_batch report_sender dynamodb_writer snapshot_generator daily_digest scraper url_collector property_processor; do
     [ -d "lambda/$func" ] || error "Function directory lambda/$func not found"
     
     info "Packaging $func..."
     
-    # Handle scraper-specific dependencies
-    if [ "$func" = "scraper" ]; then
+    # Handle scraper-specific dependencies (and new scraper functions)
+    if [ "$func" = "scraper" ] || [ "$func" = "url_collector" ] || [ "$func" = "property_processor" ]; then
         info "Installing scraper dependencies..."
         
         # Create temporary directory for dependencies
@@ -328,14 +330,20 @@ print('Created $func.zip with shared modules')
         scraper)
             SCRAPER_VERSION="$OBJECT_VERSION"
             ;;
+        url_collector)
+            URL_COLLECTOR_VERSION="$OBJECT_VERSION"
+            ;;
+        property_processor)
+            PROPERTY_PROCESSOR_VERSION="$OBJECT_VERSION"
+            ;;
     esac
     
     rm $func.zip
     
     # Clean up scraper dependencies
-    if [ "$func" = "scraper" ]; then
+    if [ "$func" = "scraper" ] || [ "$func" = "url_collector" ] || [ "$func" = "property_processor" ]; then
         rm -rf "lambda/$func/deps"
-        info "Cleaned up scraper dependencies"
+        info "Cleaned up $func dependencies"
     fi
     
     status "✅ $func packaged and uploaded (version: $OBJECT_VERSION)"
@@ -399,6 +407,8 @@ aws cloudformation deploy \
       SnapshotGeneratorCodeVersion=$SNAPSHOT_GENERATOR_VERSION \
       DailyDigestCodeVersion=$DAILY_DIGEST_VERSION \
       ScraperCodeVersion=$SCRAPER_VERSION \
+      URLCollectorCodeVersion=$URL_COLLECTOR_VERSION \
+      PropertyProcessorCodeVersion=$PROPERTY_PROCESSOR_VERSION \
       OpenAILayerObjectVersion=$LAYER_OBJECT_VERSION
 
 status "✅ CloudFormation stack deployed"
@@ -423,6 +433,18 @@ SCRAPER_FUNCTION_ARN=$(aws cloudformation describe-stacks \
     --query 'Stacks[0].Outputs[?OutputKey==`ScraperFunctionArn`].OutputValue' \
     --output text 2>/dev/null)
 
+URL_COLLECTOR_FUNCTION_ARN=$(aws cloudformation describe-stacks \
+    --stack-name $STACK_NAME \
+    --region $REGION \
+    --query 'Stacks[0].Outputs[?OutputKey==`URLCollectorFunctionArn`].OutputValue' \
+    --output text 2>/dev/null)
+
+PROPERTY_PROCESSOR_FUNCTION_ARN=$(aws cloudformation describe-stacks \
+    --stack-name $STACK_NAME \
+    --region $REGION \
+    --query 'Stacks[0].Outputs[?OutputKey==`PropertyProcessorFunctionArn`].OutputValue' \
+    --output text 2>/dev/null)
+
 # Success summary
 echo ""
 status "🎉 Deployment completed successfully!"
@@ -437,6 +459,8 @@ echo "🔧 Stack Resources:"
 echo "  State Machine: $STATE_MACHINE_ARN"
 echo "  ETL Function: $ETL_FUNCTION_ARN"
 echo "  Scraper Function: $SCRAPER_FUNCTION_ARN"
+echo "  URL Collector Function: $URL_COLLECTOR_FUNCTION_ARN"
+echo "  Property Processor Function: $PROPERTY_PROCESSOR_FUNCTION_ARN"
 echo ""
 echo "🧪 Test Commands:"
 echo "  # Test ETL function"
@@ -444,6 +468,12 @@ echo "  aws lambda invoke --function-name $STACK_NAME-etl --payload '{\"date\":\
 echo ""
 echo "  # Test Scraper function"
 echo "  aws lambda invoke --function-name $STACK_NAME-scraper --payload '{\"max_properties\":5}' scraper-response.json --region $REGION"
+echo ""
+echo "  # Test URL Collector function"
+echo "  aws lambda invoke --function-name $STACK_NAME-url-collector --payload '{\"areas\":\"chofu-city\"}' url-collector-response.json --region $REGION"
+echo ""
+echo "  # Test Property Processor function"  
+echo "  aws lambda invoke --function-name $STACK_NAME-property-processor --payload '{\"max_properties\":5}' property-processor-response.json --region $REGION"
 echo ""
 echo "  # Run scraper with trigger script"
 echo "  cd $SCRIPT_DIR && ./trigger_lambda_scraper.sh --max-properties 5 --sync"

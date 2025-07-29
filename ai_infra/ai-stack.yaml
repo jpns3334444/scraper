@@ -35,6 +35,12 @@ Parameters:
   ScraperCodeVersion:
     Type: String
     Default: latest
+  URLCollectorCodeVersion:
+    Type: String
+    Default: latest
+  PropertyProcessorCodeVersion:
+    Type: String
+    Default: latest
   OpenAILayerObjectVersion:
     Type: String
     Description: S3 object version ID for openai-layer.zip
@@ -180,6 +186,7 @@ Resources:
                   - dynamodb:DescribeTable
                 Resource: 
                   - !GetAtt RealEstateAnalysisDB.Arn
+                  - !GetAtt URLTrackingDB.Arn
         - PolicyName: SQSAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -189,6 +196,8 @@ Resources:
                   - sqs:SendMessage
                 Resource:
                   - !GetAtt ScraperDeadLetterQueue.Arn
+                  - !GetAtt URLCollectorDeadLetterQueue.Arn
+                  - !GetAtt PropertyProcessorDeadLetterQueue.Arn
 
   # DynamoDB Table for Real Estate Analysis
   RealEstateAnalysisDB:
@@ -275,6 +284,21 @@ Resources:
           ProvisionedThroughput:
             ReadCapacityUnits: 5
             WriteCapacityUnits: 5
+
+  # DynamoDB Table for URL Tracking (DYDB2)
+  URLTrackingDB:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-urls'
+      AttributeDefinitions:
+        - AttributeName: url
+          AttributeType: S
+      KeySchema:
+        - AttributeName: url
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 10
 
   # Lambda Functions (using AWS prebuilt layers + our OpenAI layer)
   ETLFunction:
@@ -478,6 +502,57 @@ Resources:
           AREAS: ''            # Empty = auto-detect all areas
           # Removed: BATCH_SIZE, AI_WORKFLOW_ARN, and other unnecessary variables
 
+  # URL Collector Lambda Function
+  URLCollectorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-url-collector'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt ScraperExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/url_collector.zip
+        S3ObjectVersion: !Ref URLCollectorCodeVersion
+      Timeout: 900  # 15 minutes for URL collection
+      MemorySize: 1024
+      Layers:
+        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
+      DeadLetterConfig:
+        TargetArn: !GetAtt URLCollectorDeadLetterQueue.Arn
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
+          URL_TRACKING_TABLE: !Ref URLTrackingDB
+          MAX_CONCURRENT_AREAS: '5'
+          AREAS: ''  # Empty = auto-detect all areas
+
+  # Property Processor Lambda Function
+  PropertyProcessorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-property-processor'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt ScraperExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/property_processor.zip
+        S3ObjectVersion: !Ref PropertyProcessorCodeVersion
+      Timeout: 900  # 15 minutes for property processing
+      MemorySize: 2048
+      Layers:
+        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
+      DeadLetterConfig:
+        TargetArn: !GetAtt PropertyProcessorDeadLetterQueue.Arn
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref OutputBucket
+          DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
+          URL_TRACKING_TABLE: !Ref URLTrackingDB
+          MAX_PROPERTIES: '0'  # 0 = unlimited
+          MAX_RUNTIME_MINUTES: '14'  # Stop before Lambda timeout
+
   # Step Functions
   StepFunctionsExecutionRole:
     Type: AWS::IAM::Role
@@ -503,6 +578,8 @@ Resources:
                   - !GetAtt LLMBatchFunction.Arn
                   - !GetAtt ReportSenderFunction.Arn
                   - !GetAtt DynamoDBWriterFunction.Arn
+                  - !GetAtt URLCollectorFunction.Arn
+                  - !GetAtt PropertyProcessorFunction.Arn
                   - !If 
                     - IsLeanModeEnabled
                     - !GetAtt SnapshotGeneratorFunction.Arn
@@ -518,6 +595,8 @@ Resources:
       StateMachineName: !Sub '${AWS::StackName}-ai-analysis'
       RoleArn: !GetAtt StepFunctionsExecutionRole.Arn
       DefinitionSubstitutions:
+        URLCollectorFunctionArn: !GetAtt URLCollectorFunction.Arn
+        PropertyProcessorFunctionArn: !GetAtt PropertyProcessorFunction.Arn
         ETLFunctionArn: !GetAtt ETLFunction.Arn
         PromptBuilderFunctionArn: !GetAtt PromptBuilderFunction.Arn
         LLMBatchFunctionArn: !GetAtt LLMBatchFunction.Arn
@@ -525,9 +604,119 @@ Resources:
         ReportSenderFunctionArn: !GetAtt ReportSenderFunction.Arn
       DefinitionString: |
         {
-          "Comment": "AI analysis workflow for real estate listings - ETL → PromptBuilder → LLMBatch → DynamoDBWriter → ReportSender",
-          "StartAt": "ETL",
+          "Comment": "AI analysis workflow for real estate listings - URLCollector → PropertyProcessor → ETL → PromptBuilder → LLMBatch → DynamoDBWriter → ReportSender",
+          "StartAt": "URLCollector",
           "States": {
+              "URLCollector": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::lambda:invoke",
+                  "Parameters": {
+                      "FunctionName": "${URLCollectorFunctionArn}",
+                      "Payload": {
+                          "session_id.$": "$$.Execution.Name",
+                          "areas": "",
+                          "max_concurrent_areas": 5
+                      }
+                  },
+                  "ResultPath": "$.url_collector_result",
+                  "ResultSelector": {
+                      "new_urls_tracked.$": "$.Payload.new_urls_tracked",
+                      "existing_listings.$": "$.Payload.existing_listings",
+                      "successful_areas.$": "$.Payload.successful_areas"
+                  },
+                  "Retry": [
+                      {
+                          "ErrorEquals": [
+                              "States.TaskFailed",
+                              "States.ExecutionLimitExceeded",
+                              "States.Runtime"
+                          ],
+                          "IntervalSeconds": 30,
+                          "MaxAttempts": 3,
+                          "BackoffRate": 2
+                      }
+                  ],
+                  "Catch": [
+                      {
+                          "ErrorEquals": [
+                              "States.ALL"
+                          ],
+                          "Next": "URLCollectorFailed",
+                          "ResultPath": "$.error"
+                      }
+                  ],
+                  "Next": "CheckNewURLs"
+              },
+              "CheckNewURLs": {
+                  "Type": "Choice",
+                  "Choices": [
+                      {
+                          "Variable": "$.url_collector_result.new_urls_tracked",
+                          "NumericGreaterThan": 0,
+                          "Next": "PropertyProcessor"
+                      }
+                  ],
+                  "Default": "NoNewURLsFound"
+              },
+              "NoNewURLsFound": {
+                  "Type": "Succeed",
+                  "Comment": "No new URLs found, skipping property processing and AI analysis"
+              },
+              "PropertyProcessor": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::lambda:invoke",
+                  "Parameters": {
+                      "FunctionName": "${PropertyProcessorFunctionArn}",
+                      "Payload": {
+                          "session_id.$": "$$.Execution.Name",
+                          "max_properties": 0,
+                          "max_runtime_minutes": 14
+                      }
+                  },
+                  "ResultPath": "$.property_processor_result",
+                  "ResultSelector": {
+                      "successful_extractions.$": "$.Payload.successful_extractions",
+                      "failed_extractions.$": "$.Payload.failed_extractions",
+                      "urls_marked_processed.$": "$.Payload.urls_marked_processed"
+                  },
+                  "Retry": [
+                      {
+                          "ErrorEquals": [
+                              "States.TaskFailed",
+                              "States.ExecutionLimitExceeded",
+                              "States.Runtime"
+                          ],
+                          "IntervalSeconds": 30,
+                          "MaxAttempts": 3,
+                          "BackoffRate": 2
+                      }
+                  ],
+                  "Catch": [
+                      {
+                          "ErrorEquals": [
+                              "States.ALL"
+                          ],
+                          "Next": "PropertyProcessorFailed",
+                          "ResultPath": "$.error"
+                      }
+                  ],
+                  "Next": "CheckProcessedProperties"
+              },
+              "CheckProcessedProperties": {
+                  "Type": "Choice",
+                  "Choices": [
+                      {
+                          "Variable": "$.property_processor_result.successful_extractions",
+                          "NumericGreaterThan": 0,
+                          "Next": "ETL"
+                      }
+                  ],
+                  "Default": "NoPropertiesProcessed"
+              },
+              "NoPropertiesProcessed": {
+                  "Type": "Succeed",
+                  "Comment": "No properties successfully processed, skipping AI analysis"
+              },
               "ETL": {
                   "Type": "Task",
                   "Resource": "arn:aws:states:::lambda:invoke",
@@ -746,6 +935,16 @@ Resources:
                   "Type": "Succeed",
                   "Comment": "AI analysis workflow completed successfully"
               },
+              "URLCollectorFailed": {
+                  "Type": "Fail",
+                  "Cause": "URL collector step failed",
+                  "Error": "URLCollectorError"
+              },
+              "PropertyProcessorFailed": {
+                  "Type": "Fail",
+                  "Cause": "Property processor step failed",
+                  "Error": "PropertyProcessorError"
+              },
               "ETLFailed": {
                   "Type": "Fail",
                   "Cause": "ETL step failed",
@@ -937,6 +1136,18 @@ Resources:
       QueueName: !Sub '${AWS::StackName}-scraper-dlq'
       MessageRetentionPeriod: 1209600  # 14 days
 
+  URLCollectorDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-url-collector-dlq'
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  PropertyProcessorDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-property-processor-dlq'
+      MessageRetentionPeriod: 1209600  # 14 days
+
 Outputs:
   StateMachineArn:
     Description: 'ARN of the Step Functions state machine'
@@ -993,3 +1204,27 @@ Outputs:
     Value: !GetAtt ScraperFunction.Arn
     Export:
       Name: !Sub '${AWS::StackName}-ScraperFunctionArn'
+
+  URLCollectorFunctionArn:
+    Description: 'ARN of the URL Collector Lambda function'
+    Value: !GetAtt URLCollectorFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-URLCollectorFunctionArn'
+
+  PropertyProcessorFunctionArn:
+    Description: 'ARN of the Property Processor Lambda function'
+    Value: !GetAtt PropertyProcessorFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-PropertyProcessorFunctionArn'
+  
+  URLTrackingDBArn:
+    Description: 'ARN of the URL Tracking DynamoDB table'
+    Value: !GetAtt URLTrackingDB.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-URLTrackingDBArn'
+
+  URLTrackingDBName:
+    Description: 'Name of the URL Tracking DynamoDB table'
+    Value: !Ref URLTrackingDB
+    Export:
+      Name: !Sub '${AWS::StackName}-URLTrackingDBName'
