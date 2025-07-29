@@ -144,7 +144,7 @@ Resources:
   RealEstateAnalysisDB:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub '${AWS::StackName}-RealEstateAnalysis'
+      TableName: !Sub '${AWS::StackName}-analysis-db'
       AttributeDefinitions:
         - AttributeName: property_id
           AttributeType: S

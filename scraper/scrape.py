@@ -2,6 +2,35 @@
 """
 HTTP-based scraper for homes.co.jp with session management and complete data extraction
 Replaces Chrome/Selenium with fast, reliable HTTP requests + session flow
+
+LOGGING SYSTEM:
+This scraper implements a three-tier logging system:
+
+1. NORMAL Mode (Default Production) - Clean, executive-level progress:
+   - Job start/completion with summary stats
+   - Major phase transitions (URL collection → Property scraping → S3 upload)
+   - Area-level progress (e.g., "Area chofu-city: 45 properties found")
+   - Milestone progress (every 25% completion)
+   - Final statistics and performance metrics
+   - Errors and warnings
+
+2. VERBOSE Mode - Detailed operational visibility:
+   - All NORMAL mode logging
+   - Property-level progress
+   - S3 upload confirmations
+   - DynamoDB batch operation results
+   - Session management details
+
+3. DEBUG Mode - Complete diagnostics:
+   - All VERBOSE mode logging
+   - Individual URL scraping messages
+   - Complete HTTP request/response details
+   - Individual property extraction details
+   - Session state management
+
+Usage:
+- Set LOG_LEVEL environment variable: NORMAL, VERBOSE, or DEBUG
+- Or pass log_level in configuration
 """
 import time
 import pandas as pd
@@ -625,6 +654,8 @@ def get_scraper_config(args):
         'stealth_mode': True,  # Always use stealth mode
         'areas': areas,
         'max_threads': args.max_threads,
+        'log_level': getattr(args, 'log_level', 'NORMAL'),
+        'enable_progress_dots': True,
         'output_bucket': args.output_bucket,
         # Always enable deduplication and price tracking
         'enable_deduplication': True,
@@ -724,10 +755,12 @@ def extract_listings_with_metadata_from_html(html_content):
         return [{'url': url, 'price': None, 'price_display': None, 'title': None} 
                 for url in extract_listing_urls_from_html(html_content)]
 
-def collect_area_listing_urls_efficient(area_name, existing_properties=None, max_pages=None, session=None, stealth_config=None, logger=None):
+def collect_area_listing_urls_efficient(area_name, existing_properties=None, max_pages=None, session=None, stealth_config=None, logger=None, config=None):
     """Efficiently collect listing URLs from a specific Tokyo area with price checking during collection"""
     base_url = f"https://www.homes.co.jp/mansion/chuko/tokyo/{area_name}/list"
     stealth_mode = stealth_config and stealth_config.get('stealth_mode', False)
+    if not config and stealth_config:
+        config = stealth_config
     
     # Use provided session or create new one
     if session is None:
@@ -745,15 +778,13 @@ def collect_area_listing_urls_efficient(area_name, existing_properties=None, max
     # Create metadata lookup for new URLs
     metadata_lookup = {}
     
-    if logger:
-        log_structured_message(logger, "INFO", "Starting efficient area URL collection", 
-                             area=area_name, base_url=base_url, stealth_mode=stealth_mode,
-                             existing_properties_count=len(existing_properties))
+    log_major_milestone(logger, "Starting efficient area URL collection", config,
+                        area=area_name, base_url=base_url, stealth_mode=stealth_mode,
+                        existing_properties_count=len(existing_properties))
     
     try:
         # Step 1: Get page 1 to establish session
-        if logger:
-            logger.info(f"=== Efficiently collecting from {area_name} (page 1) ===")
+        log_detail(logger, f"=== Efficiently collecting from {area_name} (page 1) ===", config)
         response = session.get(base_url, timeout=15)
         
         if response.status_code != 200:
@@ -775,14 +806,12 @@ def collect_area_listing_urls_efficient(area_name, existing_properties=None, max
         
         # Log if we're limiting pages
         if max_pages and total_pages > max_pages:
-            if logger:
-                log_structured_message(logger, "INFO", "Page limit applied", 
-                                     area=area_name, total_pages=total_pages, max_pages=max_pages)
+            log_progress(logger, "Page limit applied", config,
+                        area=area_name, total_pages=total_pages, max_pages=max_pages)
         
-        if logger:
-            log_structured_message(logger, "INFO", "Area pagination info parsed", 
-                                 area=area_name, total_listings=total_count, 
-                                 total_pages=total_pages, max_page=max_page)
+        log_progress(logger, "Area pagination info parsed", config,
+                    area=area_name, total_listings=total_count, 
+                    total_pages=total_pages, max_page=max_page)
         
         # Extract listings with metadata from page 1
         page1_listings = extract_listings_with_metadata_from_html(response.text)
@@ -799,17 +828,15 @@ def collect_area_listing_urls_efficient(area_name, existing_properties=None, max
         price_changed_urls.extend(page1_changed)
         price_unchanged_urls.extend(page1_unchanged)
         
-        if logger:
-            logger.info(f"{area_name} page 1: Found {len(page1_listings)} listings "
-                       f"(new: {len(page1_new)}, changed: {len(page1_changed)}, unchanged: {len(page1_unchanged)})")
+        log_detail(logger, f"{area_name} page 1: Found {len(page1_listings)} listings "
+                   f"(new: {len(page1_new)}, changed: {len(page1_changed)}, unchanged: {len(page1_unchanged)})", config)
         
         # Set referer for subsequent requests
         session.headers['Referer'] = base_url
         
         # Step 2: Get remaining pages with stealth timing
         for page_num in range(2, max_page + 1):
-            if logger:
-                logger.info(f"=== Efficiently collecting from {area_name} (page {page_num}) ===")
+            log_detail(logger, f"=== Efficiently collecting from {area_name} (page {page_num}) ===", config)
             
             # Simple respectful delay
             time.sleep(random.uniform(0.1, 0.3))
@@ -845,14 +872,12 @@ def collect_area_listing_urls_efficient(area_name, existing_properties=None, max
                 price_changed_urls.extend(page_changed)
                 price_unchanged_urls.extend(page_unchanged)
                 
-                if logger:
-                    logger.info(f"{area_name} page {page_num}: Found {len(page_listings)} listings "
-                               f"(new: {len(page_new)}, changed: {len(page_changed)}, unchanged: {len(page_unchanged)})")
+                log_detail(logger, f"{area_name} page {page_num}: Found {len(page_listings)} listings "
+                           f"(new: {len(page_new)}, changed: {len(page_changed)}, unchanged: {len(page_unchanged)})", config)
                 
                 session.headers['Referer'] = page_url
-                if logger:
-                    log_structured_message(logger, "INFO", "Area page scraped successfully", 
-                                         area=area_name, page=page_num, listings_found=len(page_listings))
+                log_detail(logger, "Area page scraped successfully", config,
+                          area=area_name, page=page_num, listings_found=len(page_listings))
                 
             except Exception as e:
                 if logger:
@@ -861,11 +886,9 @@ def collect_area_listing_urls_efficient(area_name, existing_properties=None, max
                 continue
         
         total_listings = len(new_urls) + len(price_changed_urls) + len(price_unchanged_urls)
-        if logger:
-            log_structured_message(logger, "INFO", "Efficient area URL collection completed", 
-                                 area=area_name, total_listings=total_listings,
-                                 new_urls=len(new_urls), price_changed=len(price_changed_urls),
-                                 price_unchanged=len(price_unchanged_urls))
+        log_major_milestone(logger, f"Area {area_name}: {total_listings} properties found", config,
+                           new=len(new_urls), price_changed=len(price_changed_urls),
+                           unchanged=len(price_unchanged_urls))
         
         return {
             'new_urls': new_urls,
@@ -985,20 +1008,17 @@ def collect_area_listing_urls(area_name, max_pages=None, session=None, stealth_c
         
         # Log if we're limiting pages
         if max_pages and total_pages > max_pages:
-            if logger:
-                log_structured_message(logger, "INFO", "Page limit applied", 
-                                     area=area_name, total_pages=total_pages, max_pages=max_pages)
+            log_progress(logger, "Page limit applied", config,
+                        area=area_name, total_pages=total_pages, max_pages=max_pages)
         
-        if logger:
-            log_structured_message(logger, "INFO", "Area pagination info parsed", 
-                                 area=area_name, total_listings=total_count, 
-                                 total_pages=total_pages, max_page=max_page)
+        log_progress(logger, "Area pagination info parsed", config,
+                    area=area_name, total_listings=total_count, 
+                    total_pages=total_pages, max_page=max_page)
         
         # Extract listings from page 1
         page1_listings = extract_listing_urls_from_html(response.text)
         all_links.update(page1_listings)
-        if logger:
-            logger.info(f"{area_name} page 1: Found {len(page1_listings)} listings")
+        log_detail(logger, f"{area_name} page 1: Found {len(page1_listings)} listings", config)
         
         # Set referer for subsequent requests
         session.headers['Referer'] = base_url
@@ -1029,13 +1049,11 @@ def collect_area_listing_urls(area_name, max_pages=None, session=None, stealth_c
                 
                 page_listings = extract_listing_urls_from_html(response.text)
                 all_links.update(page_listings)
-                if logger:
-                    logger.info(f"{area_name} page {page_num}: Found {len(page_listings)} listings")
+                log_detail(logger, f"{area_name} page {page_num}: Found {len(page_listings)} listings", config)
                 
                 session.headers['Referer'] = page_url
-                if logger:
-                    log_structured_message(logger, "INFO", "Area page scraped successfully", 
-                                         area=area_name, page=page_num, listings_found=len(page_listings))
+                log_detail(logger, "Area page scraped successfully", config,
+                          area=area_name, page=page_num, listings_found=len(page_listings))
                 
             except Exception as e:
                 if logger:
@@ -1131,8 +1149,8 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
     # Enhanced collection with deduplication using new efficient flow
     stealth_mode = stealth_config and stealth_config.get('stealth_mode', False)
     
-    if logger:
-        logger.info(f"🚀 Starting efficient URL collection with deduplication for {len(areas)} areas")
+    config = stealth_config if stealth_config else {}
+    log_major_milestone(logger, f"Starting URL collection from {len(areas)} Tokyo areas", config)
     
     try:
         # Setup DynamoDB connection
@@ -1153,8 +1171,10 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
         
         for i, area in enumerate(areas):
             progress_pct = ((i + 1) / len(areas)) * 100
-            if logger:
-                logger.info(f"\n=== [{progress_pct:.1f}%] Efficiently processing area {i+1}/{len(areas)}: {area} ===")
+            if logger and should_log_level(config, 'PROGRESS'):
+                # For progress tracking, show every 25% or every 5 areas, whichever is less
+                if (i == 0 or progress_pct >= 25 * ((i * 4) // len(areas) + 1) or (i + 1) % 5 == 0 or i == len(areas) - 1):
+                    log_progress(logger, f"[{progress_pct:.1f}%] Processing area {i+1}/{len(areas)}: {area}", config)
             
             # Simple area transition delay
             if i > 0:
@@ -1164,7 +1184,7 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
             area_start_time = time.time()
             area_result = collect_area_listing_urls_efficient(
                 area, existing_properties, max_pages=None, session=session, 
-                stealth_config=stealth_config, logger=logger)
+                stealth_config=stealth_config, logger=logger, config=stealth_config)
             area_duration = time.time() - area_start_time
             
             # Aggregate results
@@ -1176,9 +1196,8 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
             all_metadata_lookup.update(area_result['metadata_lookup'])
             
             total_area_listings = len(area_result['new_urls']) + len(area_result['price_changed_urls']) + len(area_result['price_unchanged_urls'])
-            if logger:
-                logger.info(f"✅ Area {area}: {total_area_listings} URLs in {area_duration:.1f}s "
-                           f"(new: {len(area_result['new_urls'])}, changed: {len(area_result['price_changed_urls'])}, unchanged: {len(area_result['price_unchanged_urls'])})")
+            log_detail(logger, f"Area {area}: {total_area_listings} URLs in {area_duration:.1f}s "
+                      f"(new: {len(area_result['new_urls'])}, changed: {len(area_result['price_changed_urls'])}, unchanged: {len(area_result['price_unchanged_urls'])})", config)
                 
                 # Show ETA for remaining areas
                 if i < len(areas) - 1:
@@ -1187,14 +1206,13 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
                     eta_seconds = remaining_areas * avg_time_per_area
                     eta_minutes = eta_seconds / 60
                     total_processed = len(all_new_urls) + len(all_price_changed_urls) + len(all_price_unchanged_urls)
-                    logger.info(f"📊 Progress: {total_processed} URLs processed, ~{eta_minutes:.1f} minutes remaining")
+                    log_progress(logger, f"Progress: {total_processed} URLs processed, ~{eta_minutes:.1f} minutes remaining", config)
         
         # Apply browsing patterns in stealth mode for new URLs only
         
         # Step 3: Process price changes in DynamoDB if any were found
         if all_price_changed_urls:
-            if logger:
-                logger.info(f"💰 Updating {len(all_price_changed_urls)} listings with price changes...")
+            log_major_milestone(logger, f"Updating {len(all_price_changed_urls)} listings with price changes", config)
             
             for item in all_price_changed_urls:
                 update_listing_with_price_change(
@@ -1206,8 +1224,7 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
         
         # Step 4: Create discovery records for truly new listings
         if all_new_urls:
-            if logger:
-                logger.info(f"✨ Creating discovery records for {len(all_new_urls)} new listings...")
+            log_major_milestone(logger, f"Creating discovery records for {len(all_new_urls)} new listings", config)
             
             # Create discovery records using metadata already extracted from listing pages
             discovery_start = time.time()
@@ -1222,8 +1239,7 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
                         elapsed = time.time() - discovery_start
                         rate = (idx + 1) / elapsed if elapsed > 0 else 0
                         eta = (len(all_new_urls) - (idx + 1)) / rate if rate > 0 else 0
-                        if logger:
-                            logger.info(f"💾 [{progress_pct:.1f}%] Saving discovery records: {idx+1}/{len(all_new_urls)} (~{eta/60:.1f}min remaining)")
+                        log_progress(logger, f"[{progress_pct:.1f}%] Saving discovery records: {idx+1}/{len(all_new_urls)} (~{eta/60:.1f}min remaining)", config)
                     
                     # Use metadata from lookup if available
                     listing_metadata = all_metadata_lookup.get(url, {})
@@ -1260,8 +1276,7 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
                         
                         # Batch limit management
                         if batch_count % 25 == 0:
-                            if logger:
-                                logger.info(f"💾 Saved {batch_count} discovery records to DynamoDB")
+                            log_detail(logger, f"Saved {batch_count} discovery records to DynamoDB", config)
                     else:
                         if logger:
                             logger.warning(f"Could not extract property ID from URL: {url}")
@@ -1277,10 +1292,7 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
             'processed_for_full_scraping': len(all_new_urls)  # Only new URLs need full scraping
         }
         
-        if logger:
-            log_structured_message(logger, "INFO", "Efficient deduplication summary", **summary)
-            logger.info(f"🚀 Efficient Summary: {summary['total_urls_found']} total, {summary['new_listings']} new, "
-                       f"{summary['price_changed']} price changes, {summary['existing_listings']} existing")
+        log_major_milestone(logger, "URL collection completed", config, **summary)
         
         # Return only new URLs for full scraping
         return all_new_urls, session, summary
@@ -1295,16 +1307,14 @@ def collect_all_listing_urls(base_url, max_pages=10, stealth_config=None, logger
     stealth_mode = stealth_config and stealth_config.get('stealth_mode', False)
     session = create_stealth_session(stealth_mode=stealth_mode, logger=logger)
     all_links = set()
+    config = stealth_config if stealth_config else {}
     
-    
-    if logger:
-        log_structured_message(logger, "INFO", "Starting listing URL collection", 
-                             base_url=base_url, stealth_mode=stealth_mode)
+    log_major_milestone(logger, "Starting listing URL collection", config,
+                       base_url=base_url, stealth_mode=stealth_mode)
     
     try:
         # Step 1: Get page 1 to establish session
-        if logger:
-            logger.info(f"=== Collecting listing URLs from page 1 ===")
+        log_detail(logger, f"=== Collecting listing URLs from page 1 ===", config)
         response = session.get(base_url, timeout=15)
         
         if response.status_code != 200:
@@ -1803,17 +1813,19 @@ def upload_image_to_s3(image_content, bucket, property_id, image_index, content_
                                  error=str(e))
         return None
 
-def upload_to_s3(file_path, bucket, s3_key, logger=None):
+def upload_to_s3(file_path, bucket, s3_key, logger=None, config=None):
     """Upload file to S3"""
     try:
         s3 = boto3.client("s3")
         s3.upload_file(file_path, bucket, s3_key)
         if logger:
-            logger.info(f"📤 Uploaded to s3://{bucket}/{s3_key}")
+            # Always log S3 uploads as major milestones
+            log_major_milestone(logger, f"Uploaded to S3", config or {}, 
+                               s3_location=f"s3://{bucket}/{s3_key}")
         return True
     except Exception as e:
         if logger:
-            logger.error(f"❌ S3 upload failed: {e}")
+            logger.error(f"S3 upload failed: {e}")
         return False
 
 def send_cloudwatch_metrics(success_count, error_count, duration_seconds, total_properties, stealth_config=None):
@@ -1958,9 +1970,17 @@ def setup_logging():
     
     return logging.getLogger(__name__)
 
-def log_structured_message(logger, level, message, **kwargs):
-    """Log message with simple text formatting"""
+def log_structured_message(logger, level, message, config=None, **kwargs):
+    """Log message with simple text formatting, respecting log levels"""
     if not logger:
+        return
+    
+    # Always log ERROR and WARNING messages regardless of config
+    if level in ["ERROR", "WARNING"]:
+        pass  # Always log these
+    elif config and not should_log_level(config, 'DEBUG'):
+        # In non-DEBUG mode, only log structured messages for errors/warnings
+        # Other structured messages are handled by the specific helper functions
         return
     
     # Format additional fields as simple key=value pairs
@@ -1978,6 +1998,59 @@ def log_structured_message(logger, level, message, **kwargs):
         logger.error(full_message)
     elif level == "DEBUG":
         logger.debug(full_message)
+
+def should_log_level(config, level):
+    """Check if a log level should be logged based on current configuration"""
+    log_level = config.get('log_level', 'NORMAL').upper()
+    
+    if log_level == 'DEBUG':
+        return True  # Log everything in DEBUG mode
+    elif log_level == 'VERBOSE':
+        return level in ['MAJOR', 'PROGRESS', 'WARNING', 'ERROR']
+    else:  # NORMAL mode
+        return level in ['MAJOR', 'WARNING', 'ERROR']
+
+def log_major_milestone(logger, message, config=None, **kwargs):
+    """Always logs major events (regardless of log level)"""
+    if not logger:
+        return
+    log_structured_message(logger, "INFO", message, **kwargs)
+
+def log_progress(logger, message, config=None, **kwargs):
+    """Logs progress in VERBOSE/DEBUG only"""
+    if not logger or not config:
+        return
+    if should_log_level(config, 'PROGRESS'):
+        log_structured_message(logger, "INFO", message, **kwargs)
+
+def log_detail(logger, message, config=None, **kwargs):
+    """Logs details in DEBUG only"""
+    if not logger or not config:
+        return
+    if should_log_level(config, 'DEBUG'):
+        log_structured_message(logger, "INFO", message, **kwargs)
+
+def show_progress_dots(logger, current, total, config=None, prefix="Progress"):
+    """Show progress dots for repetitive operations in NORMAL mode"""
+    if not logger or not config:
+        return
+    
+    # Only show in NORMAL mode for clean progress indication
+    if config.get('log_level', 'NORMAL').upper() == 'NORMAL' and config.get('enable_progress_dots', True):
+        if current == 1:
+            print(f"{prefix}: ", end="", flush=True)
+        
+        # Show dot every 10 items or at major milestones
+        if current % 10 == 0 or current == total:
+            print(".", end="", flush=True)
+            
+        # Show percentage at major milestones
+        progress_pct = (current / total) * 100
+        if current == total or progress_pct in [25, 50, 75]:
+            print(f" {progress_pct:.0f}%", end="", flush=True)
+            
+        if current == total:
+            print()  # New line when complete
 
 # =============================================================================
 # DynamoDB Helper Functions for Full Load and Duplicate Detection
@@ -2584,6 +2657,14 @@ def parse_arguments():
         help='Comma-separated list of Tokyo areas to scrape'
     )
     
+    parser.add_argument(
+        '--log-level',
+        type=str,
+        default=os.environ.get('LOG_LEVEL', 'NORMAL'),
+        choices=['NORMAL', 'VERBOSE', 'DEBUG'],
+        help='Logging level: NORMAL (clean production), VERBOSE (detailed ops), DEBUG (full diagnostics)'
+    )
+    
     
     
     
@@ -2687,7 +2768,7 @@ def main():
             logger.info(f"🧪 Local testing - Using single area: {session_areas}")
         else:
             # Full Tokyo coverage - discover all areas
-            logger.info(f"\n🌍 Discovering all Tokyo areas...")
+            log_major_milestone(logger, "Discovering Tokyo areas", config)
             
             # Validate environment for full coverage
             is_valid, validation_errors = validate_full_load_environment(config, logger)
@@ -2696,7 +2777,7 @@ def main():
                 logger.error(error_msg)
                 raise Exception(error_msg)
             
-            logger.info(f"✅ Environment validation passed - Discovering Tokyo areas...")
+            log_progress(logger, "Environment validation passed - Discovering Tokyo areas", config)
             all_tokyo_areas = discover_tokyo_areas(stealth_mode=stealth_enabled, logger=logger)
             
             if not all_tokyo_areas:
@@ -2746,12 +2827,12 @@ def main():
                                 sample_areas=session_areas[:10])
         
         # Step 2: Collect all listing URLs with deduplication
-        logger.info(f"\n🔗 Collecting listing URLs from {len(session_areas)} areas...")
+        log_major_milestone(logger, f"Collecting URLs from {len(session_areas)} areas", config)
         
         # Always use enhanced collection with deduplication
         if len(session_areas) > 1:
-            logger.info(f"🔍 Starting multi-area collection with {len(session_areas)} Tokyo areas...")
-            logger.info(f"📊 Process overview: Area scanning → Duplicate check → Price comparison → New property scraping")
+            log_progress(logger, f"Starting multi-area collection with {len(session_areas)} areas", config)
+            log_progress(logger, "Process: Area scanning → Duplicate check → Price comparison → New property scraping", config)
             all_urls, session, dedup_summary = collect_urls_with_deduplication(
                 session_areas, 
                 config, 
@@ -2762,10 +2843,8 @@ def main():
             
             # Log deduplication results
             if dedup_summary:
-                logger.info(f"📊 Deduplication Results: {dedup_summary['new_listings']} new URLs to process "
-                           f"(from {dedup_summary['total_urls_found']} total found)")
-                if dedup_summary['price_changed'] > 0:
-                    logger.info(f"💰 {dedup_summary['price_changed']} price changes detected and updated")
+                log_major_milestone(logger, f"URL collection completed: {dedup_summary['new_listings']} new properties found", config,
+                                   total_found=dedup_summary['total_urls_found'], price_changes=dedup_summary['price_changed'])
         else:
             # Single area - collect all pages
             BASE_URL = f"https://www.homes.co.jp/mansion/chuko/tokyo/{session_areas[0]}/list"
@@ -2775,7 +2854,7 @@ def main():
         
         if not all_urls:
             if dedup_summary:
-                logger.info("✅ Scraping complete: All listings are up-to-date, no new properties to process")
+                log_major_milestone(logger, "Scraping complete: All listings are up-to-date, no new properties to process", config)
                 # Create a summary for no new properties found
                 summary_data = {
                     "start_time": job_start_time.isoformat(),
@@ -2840,14 +2919,24 @@ def main():
                 request_start = time.time()
                 completed_count += 1
                 
-                # Show progress every 10 completions or at milestones
-                if completed_count % 10 == 0 or completed_count == 1 or completed_count == len(all_urls):
+                # Show progress every 10 completions or at milestones for NORMAL mode
+                # More frequent for VERBOSE/DEBUG
+                show_frequency = 10 if should_log_level(config, 'DEBUG') else (5 if should_log_level(config, 'PROGRESS') else 25)
+                if completed_count % show_frequency == 0 or completed_count == 1 or completed_count == len(all_urls):
                     progress_pct = (completed_count / len(all_urls)) * 100
                     elapsed = time.time() - scraping_start_time
                     rate = completed_count / elapsed if elapsed > 0 else 0
                     eta = (len(all_urls) - completed_count) / rate if rate > 0 else 0
-                    logger.info(f"🏠 [{progress_pct:.1f}%] Scraping progress: {completed_count}/{len(all_urls)} "
-                               f"({success_count} ok, {error_count} errors) ~{eta/60:.1f}min remaining")
+                    
+                    if should_log_level(config, 'PROGRESS'):
+                        log_progress(logger, f"[{progress_pct:.1f}%] Scraping progress: {completed_count}/{len(all_urls)} "
+                                   f"({success_count} success, {error_count} errors) ~{eta/60:.1f}min remaining", config)
+                    else:
+                        # NORMAL mode - only show major milestones
+                        milestone_pcts = [25, 50, 75, 100]
+                        if any(abs(progress_pct - pct) < 2 for pct in milestone_pcts) or completed_count == 1:
+                            log_major_milestone(logger, f"[{progress_pct:.0f}%] Progress: {completed_count}/{len(all_urls)} "
+                                              f"({success_count} success, {error_count} errors) ~{eta/60:.0f}min remaining", config)
                 
                 try:
                     result = future.result()
@@ -2937,7 +3026,7 @@ def main():
             local_path = filename
             df.to_csv(local_path, index=False)
         
-        log_structured_message(logger, "INFO", "Data saved locally", file_path=local_path)
+        log_major_milestone(logger, "Data saved locally", config, file_path=local_path)
         
         # Step 4: Upload to S3
         s3_upload_success = False
@@ -2946,10 +3035,9 @@ def main():
         
         if output_bucket and not is_local_testing:
             s3_key = f"scraper-output/{filename}"
-            s3_upload_success = upload_to_s3(local_path, output_bucket, s3_key, logger)
+            s3_upload_success = upload_to_s3(local_path, output_bucket, s3_key, logger, config)
         elif is_local_testing:
-            logger.info("🧪 LOCAL TESTING: Skipping S3 upload")
-            log_structured_message(logger, "INFO", "LOCAL TESTING: S3 upload skipped")
+            log_major_milestone(logger, "LOCAL TESTING: Skipping S3 upload", config)
         else:
             log_structured_message(logger, "WARNING", "OUTPUT_BUCKET environment variable not set")
         
@@ -2971,9 +3059,8 @@ def main():
                 )
                 
                 execution_arn = response['executionArn']
-                logger.info(f"✨ AI Analysis workflow triggered successfully!")
-                logger.info(f"📊 Execution: {execution_name}")
-                logger.info(f"🔗 ARN: {execution_arn}")
+                log_major_milestone(logger, "AI Analysis workflow triggered", config,
+                                   execution_name=execution_name, execution_arn=execution_arn)
                 
                 log_structured_message(logger, "INFO", "AI workflow triggered", 
                                      execution_name=execution_name,
@@ -3084,21 +3171,24 @@ def main():
         
         log_structured_message(logger, "INFO", "HTTP scraper job completed successfully", **summary_data)
         
-        logger.info(f"\n✅ Scraping completed successfully!")
-        logger.info(f"🥷 Session: {config['session_id']}")
+        # Final summary - always show major results
+        log_major_milestone(logger, "Scraping completed successfully", config, 
+                           session_id=config['session_id'], 
+                           properties_scraped=success_count,
+                           errors=error_count,
+                           duration_minutes=f"{duration/60:.1f}",
+                           output_file=local_path)
+        
         if dedup_summary:
-            logger.info(f"🌍 Tokyo Coverage Complete!")
-            logger.info(f"   📈 Total URLs discovered: {dedup_summary['total_urls_found']:,}")
-            logger.info(f"   ✨ New properties processed: {dedup_summary['new_listings']:,}")
-            logger.info(f"   💰 Price changes detected: {dedup_summary['price_changed']:,}")
-            logger.info(f"   📋 Properties scraped: {success_count:,}")
             efficiency = ((dedup_summary['total_urls_found'] - dedup_summary['new_listings']) / dedup_summary['total_urls_found'] * 100) if dedup_summary['total_urls_found'] > 0 else 0
-            logger.info(f"   ⚡ Efficiency gain: {efficiency:.1f}% (skipped {dedup_summary['total_urls_found'] - dedup_summary['new_listings']:,} duplicates)")
-        logger.info(f"📊 Results: {success_count} successful, {error_count} failed")
-        logger.info(f"⏱️ Duration: {duration:.1f} seconds ({duration/60:.1f} minutes)")
-        logger.info(f"💾 Output: {local_path}")
+            log_major_milestone(logger, "Tokyo Coverage Complete", config,
+                               total_discovered=dedup_summary['total_urls_found'],
+                               new_properties=dedup_summary['new_listings'],
+                               price_changes=dedup_summary['price_changed'],
+                               efficiency_gain=f"{efficiency:.1f}%")
+        
         if s3_upload_success:
-            logger.info(f"☁️ S3: s3://{output_bucket}/{s3_key}")
+            log_major_milestone(logger, "Results uploaded to S3", config, s3_location=f"s3://{output_bucket}/{s3_key}")
         
     except Exception as e:
         job_end_time = datetime.now()

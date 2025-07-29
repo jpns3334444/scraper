@@ -7,13 +7,16 @@ import time
 import pandas as pd
 import os
 import requests
+import logging
+import sys
+import json
+from datetime import datetime
 import re
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import random
 import boto3
 from datetime import datetime
-import json
 import threading
 from queue import Queue, Empty
 from enum import Enum
@@ -24,6 +27,30 @@ import logging
 from PIL import Image
 from decimal import Decimal
 import math
+
+# Global session_id storage for logging
+_GLOBAL_SESSION_ID = None
+
+def set_global_session_id(session_id):
+    """Set the global session_id for logging"""
+    global _GLOBAL_SESSION_ID
+    _GLOBAL_SESSION_ID = session_id
+
+def get_global_session_id():
+    """Get the global session_id for logging"""
+    global _GLOBAL_SESSION_ID
+    return _GLOBAL_SESSION_ID or "unknown"
+
+class SessionIDFormatter(logging.Formatter):
+    """Custom formatter that adds session_id prefix to every log message"""
+    
+    def format(self, record):
+        # Get the original formatted message
+        original_message = super().format(record)
+        
+        # Get session_id and add prefix
+        session_id = get_global_session_id()
+        return f"[{session_id}] {original_message}"
 
 # Enhanced browser profiles for stealth mode
 BROWSER_PROFILES = [
@@ -618,7 +645,7 @@ def get_scraper_config(args):
     areas = [area.strip() for area in args['areas'].split(',') if area.strip()] if args['areas'] else []
     
     config = {
-        'session_id': os.environ.get('SESSION_ID', f'session-{int(time.time())}'),
+        'session_id': args.get('session_id', os.environ.get('SESSION_ID', f'lambda-{int(time.time())}-{random.randint(10000, 99999)}')),
         'max_properties': args['max_properties'],
         'entry_point': os.environ.get('ENTRY_POINT', 'default'),
         'stealth_mode': True,  # Always use stealth mode
@@ -805,59 +832,82 @@ def collect_area_listing_urls_efficient(area_name, existing_properties=None, max
         # Set referer for subsequent requests
         session.headers['Referer'] = base_url
         
-        # Step 2: Get remaining pages with stealth timing
-        for page_num in range(2, max_page + 1):
+        # Step 2: Get remaining pages in parallel (FAST URL collection)
+        if max_page > 1:
+            # Prepare page URLs for parallel fetching
+            page_urls = [(page_num, f"{base_url}/?page={page_num}") for page_num in range(2, max_page + 1)]
+            
             if logger:
-                logger.info(f"=== Efficiently collecting from {area_name} (page {page_num}) ===")
+                logger.info(f"🚀 Parallel fetching {len(page_urls)} pages for {area_name} (no delays for speed)")
             
-            # Simple respectful delay
-            time.sleep(random.uniform(0.1, 0.3))
-            page_url = f"{base_url}/?page={page_num}"
+            # Use ThreadPoolExecutor for parallel page fetching (3-5 concurrent)
+            max_workers = min(5, len(page_urls))  # Cap at 5 concurrent requests
             
-            try:
-                response = session.get(page_url, timeout=15)
-                
-                if response.status_code != 200:
+            def fetch_page(page_info):
+                page_num, page_url = page_info
+                try:
+                    # Create a copy of session for thread safety
+                    page_session = requests.Session()
+                    page_session.headers.update(session.headers)
+                    page_session.cookies.update(session.cookies)
+                    
+                    response = page_session.get(page_url, timeout=15)
+                    
+                    if response.status_code != 200:
+                        if logger:
+                            log_structured_message(logger, "WARNING", "Failed to access area page", 
+                                                 area=area_name, page=page_num, status_code=response.status_code)
+                        return None
+                    
+                    if "pardon our interruption" in response.text.lower():
+                        if logger:
+                            log_structured_message(logger, "ERROR", "Anti-bot protection triggered", 
+                                                 area=area_name, page=page_num)
+                        return None
+                    
+                    # Extract listings with metadata from this page
+                    page_listings = extract_listings_with_metadata_from_html(response.text)
+                    return {
+                        'page_num': page_num,
+                        'listings': page_listings,
+                        'url': page_url
+                    }
+                    
+                except Exception as e:
                     if logger:
-                        log_structured_message(logger, "WARNING", "Failed to access area page", 
-                                             area=area_name, page=page_num, status_code=response.status_code)
-                    continue
+                        log_structured_message(logger, "ERROR", "Error fetching area page", 
+                                             area=area_name, page=page_num, error=str(e))
+                    return None
+            
+            # Execute parallel page fetching
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_page = {executor.submit(fetch_page, page_info): page_info for page_info in page_urls}
                 
-                if "pardon our interruption" in response.text.lower():
-                    if logger:
-                        log_structured_message(logger, "ERROR", "Anti-bot protection triggered", 
-                                             area=area_name, page=page_num)
-                    break
-                
-                # Extract listings with metadata from this page
-                page_listings = extract_listings_with_metadata_from_html(response.text)
-                
-                # Store metadata for all listings from this page
-                for listing in page_listings:
-                    metadata_lookup[listing['url']] = listing
-                
-                # Process listings
-                page_new, page_changed, page_unchanged = process_listings_with_existing_check(
-                    page_listings, existing_properties, logger)
-                
-                new_urls.extend(page_new)
-                price_changed_urls.extend(page_changed)
-                price_unchanged_urls.extend(page_unchanged)
-                
-                if logger:
-                    logger.info(f"{area_name} page {page_num}: Found {len(page_listings)} listings "
-                               f"(new: {len(page_new)}, changed: {len(page_changed)}, unchanged: {len(page_unchanged)})")
-                
-                session.headers['Referer'] = page_url
-                if logger:
-                    log_structured_message(logger, "INFO", "Area page scraped successfully", 
-                                         area=area_name, page=page_num, listings_found=len(page_listings))
-                
-            except Exception as e:
-                if logger:
-                    log_structured_message(logger, "ERROR", "Error fetching area page", 
-                                         area=area_name, page=page_num, error=str(e))
-                continue
+                for future in as_completed(future_to_page):
+                    result = future.result()
+                    if result:
+                        page_num = result['page_num']
+                        page_listings = result['listings']
+                        page_url = result['url']
+                        
+                        # Store metadata for all listings from this page
+                        for listing in page_listings:
+                            metadata_lookup[listing['url']] = listing
+                        
+                        # Process listings
+                        page_new, page_changed, page_unchanged = process_listings_with_existing_check(
+                            page_listings, existing_properties, logger)
+                        
+                        new_urls.extend(page_new)
+                        price_changed_urls.extend(page_changed)
+                        price_unchanged_urls.extend(page_unchanged)
+                        
+                        if logger:
+                            logger.info(f"{area_name} page {page_num}: Found {len(page_listings)} listings "
+                                       f"(new: {len(page_new)}, changed: {len(page_changed)}, unchanged: {len(page_unchanged)})")
+            
+            if logger:
+                logger.info(f"✅ Parallel page fetching completed for {area_name}")
         
         total_listings = len(new_urls) + len(price_changed_urls) + len(price_unchanged_urls)
         if logger:
@@ -1155,9 +1205,7 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
             if logger:
                 logger.info(f"\n=== [{progress_pct:.1f}%] Efficiently processing area {i+1}/{len(areas)}: {area} ===")
             
-            # Simple area transition delay
-            if i > 0:
-                time.sleep(random.uniform(0.1, 0.3))
+            # No delays during URL collection phase for speed
             
             # Efficiently collect URLs with price checking for this area
             area_start_time = time.time()
@@ -1203,67 +1251,11 @@ def collect_urls_with_deduplication(areas, stealth_config=None, enable_dedup=Tru
                     logger
                 )
         
-        # Step 4: Create discovery records for truly new listings
-        if all_new_urls:
-            if logger:
-                logger.info(f"✨ Creating discovery records for {len(all_new_urls)} new listings...")
-            
-            # Create discovery records using metadata already extracted from listing pages
-            discovery_start = time.time()
-            processed_property_ids = set()  # Prevent duplicate property IDs
-            with table.batch_writer() as batch:
-                batch_count = 0
-                for idx, url in enumerate(all_new_urls):
-                    progress_pct = ((idx + 1) / len(all_new_urls)) * 100
-                    
-                    # Log progress every 25 items or at key milestones
-                    if (idx + 1) % 25 == 0 or idx == 0 or idx == len(all_new_urls) - 1:
-                        elapsed = time.time() - discovery_start
-                        rate = (idx + 1) / elapsed if elapsed > 0 else 0
-                        eta = (len(all_new_urls) - (idx + 1)) / rate if rate > 0 else 0
-                        if logger:
-                            logger.info(f"💾 [{progress_pct:.1f}%] Saving discovery records: {idx+1}/{len(all_new_urls)} (~{eta/60:.1f}min remaining)")
-                    
-                    # Use metadata from lookup if available
-                    listing_metadata = all_metadata_lookup.get(url, {})
-                    
-                    # Extract property ID from URL
-                    raw_property_id = extract_property_id_from_url(url)
-                    if raw_property_id:
-                        property_id = create_property_id_key(raw_property_id)
-                        # Create record with data we already have from listing page
-                        record = {
-                            'property_id': property_id,
-                            'sort_key': 'META',
-                            'listing_url': url,
-                            'listing_status': 'discovered',
-                            'analysis_date': datetime.now().isoformat(),
-                            'price': listing_metadata.get('price', 0),
-                            'price_display': listing_metadata.get('price_display', ''),
-                            'title': listing_metadata.get('title', ''),
-                            'data_source': 'scraper_discovery_fast'
-                        }
-                        
-                        # Validate record and required keys before writing to DynamoDB
-                        if record.get('property_id') and record.get('sort_key'):
-                            # Skip if property_id already processed to prevent duplicates
-                            if property_id in processed_property_ids:
-                                continue
-                            processed_property_ids.add(property_id)
-                            
-                            batch.put_item(Item=record)
-                            batch_count += 1
-                        else:
-                            if logger:
-                                logger.warning(f"Skipping record with missing keys: property_id={property_id}, url={url}")
-                        
-                        # Batch limit management
-                        if batch_count % 25 == 0:
-                            if logger:
-                                logger.info(f"💾 Saved {batch_count} discovery records to DynamoDB")
-                    else:
-                        if logger:
-                            logger.warning(f"Could not extract property ID from URL: {url}")
+        # Step 4: (REMOVED) No longer create skeleton records during URL collection
+        # This prevents race conditions where Lambda times out after creating skeleton records
+        # but before full property scraping, leaving incomplete records in DynamoDB
+        if all_new_urls and logger:
+            logger.info(f"✨ Found {len(all_new_urls)} new listings to process (skeleton record creation removed)")
         
         # Step 5: Log summary
         total_processed = len(all_new_urls) + len(all_price_changed_urls) + len(all_price_unchanged_urls)
@@ -1632,7 +1624,10 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
                 raise Exception("Anti-bot protection detected")
             
             soup = BeautifulSoup(response.content, 'html.parser')
-            data = {"url": property_url}
+            data = {
+                "url": property_url,
+                "extraction_timestamp": datetime.now().isoformat()
+            }
             
             # FIXED: Better property ID extraction from URL
             property_id = "unknown"
@@ -1682,6 +1677,10 @@ def _extract_property_details_core(session, property_url, referer_url, retries=3
             
             # Store the extracted ID
             data["id"] = property_id
+            
+            # Also store as property_id for consistency with DynamoDB schema
+            if property_id and property_id != "unknown":
+                data["property_id"] = create_property_id_key(property_id)
             
             # Extract title from h1 elements
             h1_elements = soup.select('h1')
@@ -1942,7 +1941,7 @@ def write_job_summary(summary_data):
         print(f"❌ Failed to write job summary: {e}")
 
 def setup_logging():
-    """Configure logging optimized for AWS Lambda environment"""
+    """Configure logging optimized for AWS Lambda environment with session_id prefix"""
     
     # Configure root logger for Lambda
     root_logger = logging.getLogger()
@@ -1959,8 +1958,8 @@ def setup_logging():
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
     
-    # Simple formatter that works well with CloudWatch
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    # Use custom formatter that includes session_id prefix
+    formatter = SessionIDFormatter('%(asctime)s - %(levelname)s - %(message)s')
     console_handler.setFormatter(formatter)
     
     # Add handler to root logger
@@ -2358,6 +2357,135 @@ def create_listing_meta_record(metadata, date_str=None):
     
     return record
 
+def create_complete_property_record(property_data, config, logger=None):
+    """Create a complete property record after successful extraction
+    
+    This replaces the skeleton record approach to prevent race conditions.
+    Only creates records after we have ALL property data including images.
+    """
+    try:
+        # Extract property ID from URL if not already present
+        if not property_data.get('property_id'):
+            raw_property_id = extract_property_id_from_url(property_data.get('url', ''))
+            if raw_property_id:
+                property_data['property_id'] = create_property_id_key(raw_property_id)
+        
+        property_id = property_data.get('property_id')
+        if not property_id:
+            if logger:
+                logger.warning(f"Cannot create record without property_id for URL: {property_data.get('url')}")
+            return None
+        
+        now = datetime.now()
+        
+        # Create complete record with all scraped data
+        record = {
+            'property_id': property_id,
+            'sort_key': 'META',
+            'listing_url': property_data.get('url', ''),
+            'listing_status': 'scraped',  # Mark as fully scraped, not just discovered
+            'scraped_date': now.isoformat(),
+            'analysis_date': now.isoformat(),
+            'data_source': 'scraper_complete',
+            'analysis_yymm': now.strftime('%Y-%m'),
+            'invest_partition': 'SCRAPED',
+            
+            # Property details
+            'price': property_data.get('price', 0),
+            'price_display': property_data.get('価格', ''),
+            'title': property_data.get('title', ''),
+            'address': property_data.get('所在地', ''),
+            'transportation': property_data.get('交通', ''),
+            'building_age': property_data.get('築年月', ''),
+            'floor_area': property_data.get('専有面積', ''),
+            'balcony_area': property_data.get('バルコニー', ''),
+            'floor_number': property_data.get('所在階', ''),
+            'total_units': property_data.get('総戸数', ''),
+            'layout': property_data.get('間取り', ''),
+            'management_company': property_data.get('管理会社', ''),
+            'management_fee': property_data.get('管理費', ''),
+            'repair_fund': property_data.get('修繕積立金', ''),
+            
+            # Image data
+            'photo_filenames': property_data.get('photo_filenames', ''),
+            'image_count': property_data.get('image_count', 0),
+            
+            # Processing metadata
+            'extraction_timestamp': property_data.get('extraction_timestamp', now.isoformat()),
+            'scraper_session': config.get('session_id', 'unknown')
+        }
+        
+        # Remove empty strings and None values
+        record = {k: v for k, v in record.items() if v is not None and v != ''}
+        
+        return record
+        
+    except Exception as e:
+        if logger:
+            logger.error(f"Error creating complete property record: {str(e)}")
+        return None
+
+def save_complete_properties_to_dynamodb(properties_data, config, logger=None):
+    """Save successfully scraped properties to DynamoDB
+    
+    This replaces the skeleton record approach. Only saves complete records
+    after successful property extraction including images.
+    """
+    if not properties_data:
+        if logger:
+            logger.info("No properties to save to DynamoDB")
+        return 0
+    
+    try:
+        # Get DynamoDB table
+        dynamodb = boto3.resource('dynamodb', region_name='ap-northeast-1')
+        table_name = config.get('dynamodb_table', 'property-listings')
+        table = dynamodb.Table(table_name)
+        
+        saved_count = 0
+        error_count = 0
+        
+        # Filter out properties with errors
+        successful_properties = [p for p in properties_data if 'error' not in p]
+        
+        if logger:
+            logger.info(f"💾 Saving {len(successful_properties)} successfully scraped properties to DynamoDB...")
+        
+        # Save in batches
+        with table.batch_writer() as batch:
+            for idx, property_data in enumerate(successful_properties):
+                try:
+                    # Create complete record
+                    record = create_complete_property_record(property_data, config, logger)
+                    
+                    if record and record.get('property_id') and record.get('sort_key'):
+                        batch.put_item(Item=record)
+                        saved_count += 1
+                        
+                        # Log progress every 25 items
+                        if (saved_count % 25 == 0) or (saved_count == len(successful_properties)):
+                            if logger:
+                                logger.info(f"💾 Progress: {saved_count}/{len(successful_properties)} properties saved")
+                    else:
+                        error_count += 1
+                        if logger:
+                            logger.warning(f"Skipping invalid record for URL: {property_data.get('url')}")
+                        
+                except Exception as e:
+                    error_count += 1
+                    if logger:
+                        logger.error(f"Error saving property {property_data.get('url')}: {str(e)}")
+        
+        if logger:
+            logger.info(f"✅ DynamoDB save complete: {saved_count} saved, {error_count} errors")
+        
+        return saved_count
+        
+    except Exception as e:
+        if logger:
+            logger.error(f"Fatal error saving to DynamoDB: {str(e)}")
+        return 0
+
 def update_listing_with_price_change(existing_record, new_metadata, table, logger=None):
     """Update existing listing record with new price and create price history"""
     try:
@@ -2584,6 +2712,7 @@ def validate_property_data(property_data):
 def parse_lambda_event(event):
     """Parse lambda event with environment variable fallbacks"""
     return {
+        'session_id': event.get('session_id', os.environ.get('SESSION_ID', f'lambda-{int(time.time())}-{random.randint(10000, 99999)}')),
         'max_properties': event.get('max_properties', int(os.environ.get('MAX_PROPERTIES', '0'))),
         'output_bucket': event.get('output_bucket', os.environ.get('OUTPUT_BUCKET', '')),
         'max_threads': event.get('max_threads', int(os.environ.get('MAX_THREADS', '2'))),
@@ -2603,8 +2732,15 @@ def main(event=None):
         event = {}
     args = parse_lambda_event(event)
     
+    # Set global session_id for logging BEFORE setting up logging
+    set_global_session_id(args['session_id'])
+    
     # Setup logging
     logger = setup_logging()
+    
+    # Test that session_id appears in simple log calls
+    logger.info("Starting area collection")
+    logger.warning("This is a test warning message")
     
     job_start_time = datetime.now()
     
@@ -2879,6 +3015,13 @@ def main(event=None):
                         if stealth_enabled:
                             send_detection_metrics(risk_level, indicators, config)
         
+        # Step 2.5: Save complete properties to DynamoDB
+        # This replaces the skeleton record approach to prevent race conditions
+        if config.get('enable_deduplication', True) and listings_data:
+            dynamodb_saved = save_complete_properties_to_dynamodb(listings_data, config, logger)
+            if logger:
+                logger.info(f"📊 DynamoDB update: {dynamodb_saved} new properties saved")
+        
         # Step 3: Save data
         df = pd.DataFrame(listings_data)
         
@@ -3119,7 +3262,7 @@ def lambda_handler(event, context):
             'statusCode': 200,
             'body': json.dumps({
                 'message': 'Scraper completed successfully',
-                'session_id': event.get('session_id', os.environ.get('SESSION_ID', f'session-{int(time.time())}')),
+                'session_id': event.get('session_id', os.environ.get('SESSION_ID', f'lambda-{int(time.time())}-{random.randint(10000, 99999)}')),
                 'timestamp': datetime.now().isoformat(),
                 'request_id': context.aws_request_id
             })
