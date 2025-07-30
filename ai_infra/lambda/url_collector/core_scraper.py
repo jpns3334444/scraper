@@ -526,8 +526,11 @@ def discover_tokyo_areas(logger=None):
             href = link['href']
             if '/mansion/chuko/tokyo/' in href and href.endswith('/list/'):
                 area_part = href.split('/mansion/chuko/tokyo/')[-1].replace('/list/', '')
-                if area_part and area_part != 'city':
-                    area_links.append(area_part)
+                # More robust validation to prevent empty or invalid areas
+                if area_part and area_part.strip() and area_part != 'city' and '/' not in area_part:
+                    clean_area = area_part.strip()
+                    if clean_area:  # Double check after stripping
+                        area_links.append(clean_area)
         
         # Use fallback list if no links found
         if not area_links:

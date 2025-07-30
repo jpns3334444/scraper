@@ -109,6 +109,22 @@ def get_collector_config(args):
 def collect_area_urls_parallel_worker(area, existing_properties, existing_urls_in_tracking, url_tracking_table, logger=None):
     """Worker function for parallel area URL collection with price change detection"""
     try:
+        # Validate area parameter early
+        if not area or not area.strip():
+            error_msg = f"Invalid area parameter: '{area}' - area cannot be empty or None"
+            if logger:
+                logger.error(error_msg)
+            return {
+                'area': area,
+                'success': False,
+                'new_urls': [],
+                'price_changed_urls': [],
+                'unchanged_urls': [],
+                'already_tracked_urls': [],
+                'error': error_msg
+            }
+        
+        area = area.strip()
         if logger:
             logger.info(f"Starting area processing: {area}")
         
