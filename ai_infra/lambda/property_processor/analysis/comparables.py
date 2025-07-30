@@ -62,10 +62,15 @@ class ComparablesFilter:
         target_id = target_property.get('id', '')
         
         if not target_ppsm or not target_size:
-            logger.warning(f"Target property {target_id} missing price_per_sqm or size_sqm")
+            logger.warning(f"Target property {target_id} missing price_per_sqm ({target_ppsm}) or size_sqm ({target_size}). Available fields: {list(target_property.keys())}")
             return []
         
         logger.info(f"Finding comparables for {target_id}: ppsm={target_ppsm}, size={target_size}, age={target_age}")
+        logger.debug(f"Candidate pool size: {len(candidate_properties)}")
+        
+        # Debug: Count how many properties have valid data
+        valid_count = sum(1 for p in candidate_properties if p.get('price_per_sqm', 0) > 0 and p.get('size_sqm', 0) > 0)
+        logger.debug(f"Properties with valid price_per_sqm and size_sqm: {valid_count}/{len(candidate_properties)}")
         
         # Calculate filtering thresholds
         ppsm_min = target_ppsm * 0.7   # -30%
@@ -88,6 +93,8 @@ class ComparablesFilter:
             
             # Skip properties missing critical data
             if not prop_ppsm or not prop_size:
+                # Log for debugging why comparables are being rejected
+                logger.debug(f"Skipping property {prop.get('id', 'unknown')}: ppsm={prop_ppsm}, size={prop_size}")
                 continue
             
             # Apply filters
@@ -122,6 +129,14 @@ class ComparablesFilter:
         
         logger.info(f"Found {len(selected_comps)} comparables for {target_id} "
                    f"(filtered from {len(candidate_properties)} candidates)")
+        
+        # Debug: If no comparables found, provide more info
+        if len(selected_comps) == 0 and len(candidate_properties) > 0:
+            logger.warning(f"No comparables found. Criteria: ppsm {ppsm_min:.0f}-{ppsm_max:.0f}, size {size_min:.0f}-{size_max:.0f}, age {age_min}-{age_max}")
+            # Sample a few properties to see what we're working with
+            sample_props = candidate_properties[:3]  
+            for i, prop in enumerate(sample_props):
+                logger.debug(f"Sample candidate {i}: id={prop.get('id', 'unknown')}, ppsm={prop.get('price_per_sqm', 0)}, size={prop.get('size_sqm', 0)}, age={prop.get('building_age_years', 'unknown')}")
         
         return selected_comps
     

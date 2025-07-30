@@ -292,9 +292,25 @@ def process_single_url(url, session_pool, rate_limiter, url_tracking_table, conf
         is_valid, msg = validate_property_data(result)
         if not is_valid:
             result["validation_error"] = msg
+            logger.warning(f"Property validation failed for {url}: {msg}")
             # Mark URL as processed even if validation failed
             mark_url_processed(url, url_tracking_table, logger)
             return result
+        
+        # Additional data quality checks
+        quality_issues = []
+        if not result.get('price') or result.get('price') == 0:
+            quality_issues.append('missing_price')
+        if not result.get('size_sqm') or result.get('size_sqm') == 0:
+            quality_issues.append('missing_size')
+        if not result.get('ward'):
+            quality_issues.append('missing_ward')
+        if not result.get('address'):
+            quality_issues.append('missing_address')
+            
+        if quality_issues:
+            logger.warning(f"Data quality issues for {url}: {', '.join(quality_issues)}")
+            result['data_quality_issues'] = quality_issues
         
         # Apply enrichment if lean mode is enabled and modules are available
         if enrichment_context and enrichment_context.get('lean_mode_enabled') and LEAN_MODULES_AVAILABLE:
@@ -595,15 +611,46 @@ def process_urls_in_batches(urls, config, logger, job_start_time, max_runtime_se
             batch_urls, config, logger, job_start_time, max_runtime_seconds, enrichment_context
         )
         
+        # Data quality summary for the batch
+        batch_quality_summary = {
+            'total_properties': len(batch_results),
+            'properties_with_price': 0,
+            'properties_with_size': 0,
+            'properties_with_ward': 0,
+            'properties_with_comparables': 0,
+            'validation_errors': 0
+        }
+        
         # Update enrichment context with new properties for better comparables
         if enrichment_context:
             for result in batch_results:
-                if 'error' not in result and result.get('price_per_sqm'):
-                    enrichment_context['all_properties'].append(result)
+                if 'error' not in result:
+                    # Count data quality metrics
+                    if result.get('price', 0) > 0:
+                        batch_quality_summary['properties_with_price'] += 1
+                    if result.get('size_sqm', 0) > 0:
+                        batch_quality_summary['properties_with_size'] += 1
+                    if result.get('ward'):
+                        batch_quality_summary['properties_with_ward'] += 1
+                    if result.get('num_comparables', 0) > 0:
+                        batch_quality_summary['properties_with_comparables'] += 1
+                    if 'validation_error' in result:
+                        batch_quality_summary['validation_errors'] += 1
+                        
+                    # Add to enrichment context if valid
+                    if result.get('price_per_sqm'):
+                        enrichment_context['all_properties'].append(result)
+                        
+        # Log batch quality summary
+        logger.info(f"Batch {batch_num} data quality: {batch_quality_summary['properties_with_price']}/{batch_quality_summary['total_properties']} with price, "
+                   f"{batch_quality_summary['properties_with_size']}/{batch_quality_summary['total_properties']} with size, "
+                   f"{batch_quality_summary['properties_with_ward']}/{batch_quality_summary['total_properties']} with ward, "
+                   f"{batch_quality_summary['properties_with_comparables']}/{batch_quality_summary['total_properties']} with comparables")
         
         # Track metrics and candidates with enhanced error categorization
         success_count = 0
         error_count = 0
+        candidates_found = 0
         for result in batch_results:
             if 'error' in result:
                 error_msg = str(result.get('error', '')).lower()
@@ -631,6 +678,7 @@ def process_urls_in_batches(urls, config, logger, job_start_time, max_runtime_se
                 
                 # Track candidates
                 if result.get('is_candidate', False):
+                    candidates_found += 1
                     if len(candidates) < max_candidates_per_day:
                         candidates.append(result)
                         metrics['CandidatesEnqueued'] += 1
@@ -777,6 +825,22 @@ def main(event=None):
         dynamodb_saved = len([r for r in listings_data if 'error' not in r and 'validation_error' not in r])
         logger.info(f"DynamoDB processing completed during batch execution")
         
+        # Calculate and log overall data quality metrics
+        properties_with_valid_price = len([r for r in listings_data if r.get('price', 0) > 0])
+        properties_with_valid_size = len([r for r in listings_data if r.get('size_sqm', 0) > 0])
+        properties_with_ward = len([r for r in listings_data if r.get('ward') and r.get('ward') != 'unknown'])
+        properties_with_comparables = len([r for r in listings_data if r.get('num_comparables', 0) > 0])
+        properties_with_images = len([r for r in listings_data if r.get('image_count', 0) > 0])
+        investment_candidates = len([r for r in listings_data if r.get('verdict') == 'BUY_CANDIDATE'])
+        
+        logger.info(f"=== FINAL DATA QUALITY SUMMARY ===")
+        logger.info(f"Properties with valid price: {properties_with_valid_price}/{len(listings_data)} ({properties_with_valid_price/len(listings_data)*100:.1f}%)" if listings_data else "N/A")
+        logger.info(f"Properties with valid size: {properties_with_valid_size}/{len(listings_data)} ({properties_with_valid_size/len(listings_data)*100:.1f}%)" if listings_data else "N/A")
+        logger.info(f"Properties with ward data: {properties_with_ward}/{len(listings_data)} ({properties_with_ward/len(listings_data)*100:.1f}%)" if listings_data else "N/A")
+        logger.info(f"Properties with comparables: {properties_with_comparables}/{len(listings_data)} ({properties_with_comparables/len(listings_data)*100:.1f}%)" if listings_data else "N/A")
+        logger.info(f"Properties with images: {properties_with_images}/{len(listings_data)} ({properties_with_images/len(listings_data)*100:.1f}%)" if listings_data else "N/A")
+        logger.info(f"Investment candidates found: {investment_candidates}/{len(listings_data)} ({investment_candidates/len(listings_data)*100:.1f}%)" if listings_data else "N/A")
+
         # Emit metrics if available
         if LEAN_MODULES_AVAILABLE and hasattr(listings_data, '__len__'):
             try:

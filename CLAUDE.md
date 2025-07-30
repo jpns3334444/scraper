@@ -43,8 +43,8 @@ The system implements "Lean v1.3" - an efficiency-focused approach that uses det
 # Deploy AI infrastructure (main pipeline)
 cd ai_infra && ./deploy-ai.sh
 
-# Deploy dashboard
-cd dashboard && ./deploy-dashboard.sh
+# Deploy dashboard (after AI infrastructure is deployed)
+cd ai_infra && ./deploy-dashboard.sh
 
 # Update scraper Lambda function only
 cd ai_infra && ./update-scraper-lambda.sh

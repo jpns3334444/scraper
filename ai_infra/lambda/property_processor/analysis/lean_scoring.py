@@ -305,17 +305,22 @@ def compute_base_and_adjustments(listing: Dict[str, Any],
     # Missing ward median: -4
     if not ward_median_ppm2 or ward_median_ppm2 == 0:
         dq_penalty += 4
+        logger.debug(f"DQ penalty +4: Missing ward median (ward_median_ppm2={ward_median_ppm2})")
         
     # <4 comps AND no building discount: -3  
     if len(comps) < 4 and (not building_median or building_median == 0):
         dq_penalty += 3
+        logger.debug(f"DQ penalty +3: <4 comps ({len(comps)}) AND no building discount (building_median={building_median})")
         
     # Critical null (price OR size): -6
     if not current_price or current_price == 0 or not total_sqm or total_sqm == 0:
         dq_penalty += 6
         components.data_quality_issue = True
+        logger.debug(f"DQ penalty +6: Critical null data (price={current_price}, size={total_sqm})")
     
     components.data_quality_penalty = -min(dq_penalty, 8)
+    if dq_penalty > 0:
+        logger.debug(f"Total DQ penalty: -{min(dq_penalty, 8)} (raw: -{dq_penalty})")
     
     # 4. Overstated Discount Penalty (0..-8)
     # If discount explained mostly by being smallest size among comps or oldest

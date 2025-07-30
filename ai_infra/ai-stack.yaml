@@ -1163,6 +1163,12 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}-DashboardAPIFunctionArn'
 
+  DashboardAPIFunctionName:
+    Description: 'Name of the Dashboard API Lambda function'
+    Value: !Ref DashboardAPIFunction
+    Export:
+      Name: !Sub '${AWS::StackName}-DashboardAPIFunctionName'
+
   URLCollectorFunctionArn:
     Description: 'ARN of the URL Collector Lambda function'
     Value: !GetAtt URLCollectorFunction.Arn

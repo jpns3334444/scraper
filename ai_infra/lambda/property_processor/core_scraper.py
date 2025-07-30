@@ -69,25 +69,40 @@ def parse_price_from_text(price_text):
     if not price_text:
         return 0
     
+    # Handle case where price_text is already a number
+    if isinstance(price_text, (int, float)):
+        return int(price_text)
+    
     try:
+        # Convert to string and clean up
+        price_str = str(price_text).strip()
+        
+        # Handle complex price displays (e.g., "9,380万円支払い目安：29.3万円／月")
+        # Extract just the main price part before any additional text
+        main_price_match = re.search(r'(\d{1,4}(?:,\d{3})*万円)', price_str)
+        if main_price_match:
+            price_str = main_price_match.group(1)
+        
         # Remove common patterns and extract number
-        price_clean = re.sub(r'[^\d,万円.]', '', str(price_text))
+        price_clean = re.sub(r'[^\d,万円.]', '', price_str)
         
         # Handle different formats
         if '万円' in price_clean:
             # Format: "1,980万円" -> 1980
             number_part = price_clean.replace('万円', '').replace(',', '')
-            return int(float(number_part))
+            if number_part:
+                return int(float(number_part))
         elif '円' in price_clean:
             # Format: "19,800,000円" -> 1980
             number_part = price_clean.replace('円', '').replace(',', '')
-            return int(float(number_part) / 10000)  # Convert to man-yen
+            if number_part:
+                return int(float(number_part) / 10000)  # Convert to man-yen
         else:
             # Try to extract just numbers
             number_part = price_clean.replace(',', '')
-            if number_part.isdigit():
+            if number_part and number_part.isdigit():
                 return int(number_part)
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, TypeError):
         pass
     
     return 0
@@ -159,6 +174,9 @@ def extract_ward_and_district(address_text):
     if not address_text:
         return None, None
     
+    # Clean up the address text
+    address_clean = address_text.strip()
+    
     # Tokyo 23 wards list
     tokyo_wards = [
         '千代田区', '中央区', '港区', '新宿区', '文京区', '台東区',
@@ -167,19 +185,60 @@ def extract_ward_and_district(address_text):
         '板橋区', '練馬区', '足立区', '葛飾区', '江戸川区'
     ]
     
+    # Tokyo cities/municipalities (Tama area)
+    tokyo_cities = [
+        '八王子市', '立川市', '武蔵野市', '三鷹市', '青梅市', '府中市', '昭島市', '調布市',
+        '樺田市', '日野市', '国分寺市', '国立市', '福生市', '狛江市', '東久留米市',
+        '武蔵村山市', '多摩市', '稲城市', '羽村市', 'あきる野市', '西東京市',
+        '清瀬市', '東村山市', '小平市', '日の出市', '横田市'
+    ]
+    
     ward = None
     district = None
     
-    # Find ward
+    # First try to find Tokyo 23 wards
     for w in tokyo_wards:
-        if w in address_text:
+        if w in address_clean:
             ward = w
             # Extract district (text after ward, before first number)
-            after_ward = address_text.split(w)[1]
-            district_match = re.match(r'^([^\d]+)', after_ward)
-            if district_match:
-                district = district_match.group(1).strip()
+            try:
+                after_ward = address_clean.split(w)[1]
+                # Clean district extraction - handle various formats
+                district_match = re.search(r'^([^\d０-９]+)', after_ward)
+                if district_match:
+                    raw_district = district_match.group(1).strip()
+                    # Clean up district name
+                    raw_district = re.sub(r'[丁目・ー・・T第]*$', '', raw_district).strip()
+                    if raw_district and len(raw_district) > 0:
+                        district = raw_district
+            except (IndexError, AttributeError):
+                pass
             break
+    
+    # If no ward found, try Tokyo cities
+    if not ward:
+        for city in tokyo_cities:
+            if city in address_clean:
+                ward = city  # Use city as ward for consistency
+                # Extract district/area within the city
+                try:
+                    after_city = address_clean.split(city)[1]
+                    district_match = re.search(r'^([^\d０-９]+)', after_city)
+                    if district_match:
+                        raw_district = district_match.group(1).strip()
+                        raw_district = re.sub(r'[丁目・ー・・T第]*$', '', raw_district).strip()
+                        if raw_district and len(raw_district) > 0:
+                            district = raw_district
+                except (IndexError, AttributeError):
+                    pass
+                break
+    
+    # Final cleanup
+    if district:
+        # Remove common suffixes and clean up
+        district = re.sub(r'[丁目・ー・・T第\s]*$', '', district).strip()
+        if not district or len(district) == 0:
+            district = None
     
     return ward, district
 
@@ -500,9 +559,34 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                                     data[field_mappings[key]] = value
             
             # Parse extracted fields
-            # Price (already extracted above)
-            if 'price' in data:
-                data['price'] = parse_price_from_text(data['price'])
+            # Price processing with fallback logic
+            price_numeric = 0
+            
+            # Try multiple price sources in order of preference
+            price_sources = []
+            if 'price' in data:  # From regex pattern
+                price_sources.append(('regex_price', data['price']))
+            if 'price_text' in data:  # From table field '価格'
+                price_sources.append(('table_price', data['price_text']))
+            if '価格' in data:  # Direct Japanese field
+                price_sources.append(('japanese_price', data['価格']))
+            
+            # Try each price source until we get a valid result
+            for source_name, price_value in price_sources:
+                if price_value:
+                    parsed_price = parse_price_from_text(price_value)
+                    if parsed_price > 0:
+                        price_numeric = parsed_price
+                        if logger:
+                            logger.debug(f"Price extracted from {source_name}: {price_value} -> {parsed_price}")
+                        break
+            
+            # Store the numeric price
+            data['price'] = price_numeric
+            
+            # Keep the original price display for reference
+            if price_sources:
+                data['price_display'] = price_sources[0][1]  # Store the first price text found
             
             # Size in square meters
             if 'size_sqm_text' in data:
@@ -510,8 +594,10 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                 if size_sqm:
                     data['size_sqm'] = size_sqm
                     # Calculate price per sqm if we have both
-                    if data.get('price'):
+                    if data.get('price') and data['price'] > 0:
                         data['price_per_sqm'] = (data['price'] * 10000) / size_sqm  # Convert man-yen to yen
+                        if logger:
+                            logger.debug(f"Calculated price_per_sqm: {data['price_per_sqm']:.0f} yen/sqm")
             
             # Building age
             if 'building_age_text' in data:
@@ -577,6 +663,21 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
             # Additional fields for compatibility
             data['source'] = 'homes_scraper'
             data['processed_date'] = datetime.now().strftime('%Y-%m-%d')
+            
+            # Final price validation and fallback
+            if not data.get('price') or data.get('price') == 0:
+                # Try one more time with the title if it contains price info
+                if 'title' in data and '万円' in data['title']:
+                    title_price = parse_price_from_text(data['title'])
+                    if title_price > 0:
+                        data['price'] = title_price
+                        if logger:
+                            logger.debug(f"Price extracted from title: {data['title']} -> {title_price}")
+                
+                # If still no price, log warning but continue processing
+                if not data.get('price') or data.get('price') == 0:
+                    if logger:
+                        logger.warning(f"No valid price found for {property_url}. Available price fields: {[k for k in data.keys() if 'price' in k.lower() or '価格' in k]}")
             
             # Extract images
             try:
@@ -651,15 +752,41 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
                     # Filter out non-property images
                     exclude_patterns = ['icon', 'logo', 'btn', 'button', 'arrow', 'banner']
                     if any(pattern in src.lower() for pattern in exclude_patterns):
+                        if logger:
+                            logger.debug(f"Excluding image (pattern match): {src}")
                         continue
                         
-                    if any(pattern in src.lower() for pattern in ['photo', 'image', 'pic', 'img']):
+                    # More permissive image detection - check for image file extensions too
+                    if (any(pattern in src.lower() for pattern in ['photo', 'image', 'pic', 'img']) or
+                        any(src.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp'])):
                         image_urls.add(src)
+                        if logger:
+                            logger.debug(f"Added image URL: {src}")
+                    else:
+                        if logger:
+                            logger.debug(f"Skipping non-image URL: {src}")
+        
+        # Debug logging for image discovery
+        if logger:
+            logger.debug(f"Found {len(image_urls)} potential image URLs for property {property_id}")
+            if len(image_urls) == 0:
+                # Check if we can find any images at all
+                all_imgs = soup.find_all('img')
+                logger.debug(f"Total img tags found: {len(all_imgs)}")
+                if len(all_imgs) > 0:
+                    sample_imgs = all_imgs[:3]
+                    for i, img in enumerate(sample_imgs):
+                        logger.debug(f"Sample img {i}: src={img.get('src')}, data-src={img.get('data-src')}, class={img.get('class')}")
         
         # Limit to 5 images per property (reduced from 10 for better performance)
         urls = list(image_urls)[:5]
         
         # Download and process images in parallel
+        if not bucket:
+            if logger:
+                logger.debug(f"No S3 bucket specified, skipping image download for {len(urls)} URLs")
+            return []  # Return empty list if no bucket for upload
+            
         if session_pool and image_rate_limiter:
             # Use session pool and rate limiter for better control
             s3_keys = download_images_parallel(urls, session_pool, bucket, property_id, logger, image_rate_limiter)
