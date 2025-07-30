@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Property Processor Lambda - Processes unprocessed URLs from the tracking table
+Now includes full ETL functionality with lean scoring and enrichment
 """
 import os
 import time
@@ -12,6 +13,33 @@ import boto3
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Queue
+
+# Import analysis modules
+try:
+    from analysis.lean_scoring import LeanScoring, Verdict
+    from analysis.comparables import ComparablesFilter, enrich_property_with_comparables
+    from analysis.vision_stub import enrich_property_with_vision
+    from util.metrics import emit_pipeline_metrics, emit_properties_processed, emit_candidates_enqueued, emit_candidates_suppressed, MetricsTimer
+    from util.config import get_config as get_util_config, is_lean_mode
+    LEAN_MODULES_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Failed to import analysis modules: {e}")
+    LEAN_MODULES_AVAILABLE = False
+    # Define stubs
+    LeanScoring = None
+    ComparablesFilter = None
+    enrich_property_with_comparables = lambda x, y: x
+    enrich_property_with_vision = lambda x: x
+    emit_pipeline_metrics = lambda *args: None
+    emit_properties_processed = lambda *args: None
+    emit_candidates_enqueued = lambda *args: None
+    emit_candidates_suppressed = lambda *args: None
+    get_util_config = None
+    is_lean_mode = lambda: False
+    class MetricsTimer:
+        def __init__(self, stage): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
 
 class SessionLogger:
     """Simple logger that automatically includes session_id in all messages"""
@@ -115,7 +143,8 @@ class RateLimiter:
 from core_scraper import create_session, extract_property_details
 from dynamodb_utils import (
     setup_dynamodb_client, save_complete_properties_to_dynamodb,
-    setup_url_tracking_table, scan_unprocessed_urls, mark_url_processed
+    setup_url_tracking_table, scan_unprocessed_urls, mark_url_processed,
+    load_recent_properties_for_comparables, calculate_ward_medians_from_dynamodb
 )
 
 def parse_lambda_event(event):
@@ -185,8 +214,8 @@ def write_job_summary(summary_data):
     except Exception as e:
         print(f"Failed to write summary: {e}")
 
-def process_single_url(url, session_pool, rate_limiter, url_tracking_table, config, logger):
-    """Process a single URL with rate limiting and error handling"""
+def process_single_url(url, session_pool, rate_limiter, url_tracking_table, config, logger, image_rate_limiter, enrichment_context=None):
+    """Process a single URL with rate limiting, error handling, and enrichment"""
     session = None
     try:
         # Acquire rate limit token
@@ -199,16 +228,92 @@ def process_single_url(url, session_pool, rate_limiter, url_tracking_table, conf
         jitter_delay = random.uniform(0.5, 2.0)
         time.sleep(jitter_delay)
         
-        # Extract property details
+        # Extract property details with session pool for images
         result = extract_property_details(
             session, url, "https://www.homes.co.jp", 
-            config=config, logger=logger
+            config=config, logger=logger,
+            session_pool=session_pool, image_rate_limiter=image_rate_limiter
         )
         
         # Validate data
         is_valid, msg = validate_property_data(result)
         if not is_valid:
             result["validation_error"] = msg
+            # Mark URL as processed even if validation failed
+            mark_url_processed(url, url_tracking_table, logger)
+            return result
+        
+        # Apply enrichment if lean mode is enabled and modules are available
+        if enrichment_context and enrichment_context.get('lean_mode_enabled') and LEAN_MODULES_AVAILABLE:
+            try:
+                # Enrich with comparables
+                result = enrich_property_with_comparables(result, enrichment_context.get('all_properties', []))
+                
+                # Enrich with vision analysis
+                result = enrich_property_with_vision(result)
+                
+                # Add ward median data
+                ward = result.get('ward', 'unknown')
+                ward_medians = enrichment_context.get('ward_medians', {})
+                if ward in ward_medians:
+                    result.update(ward_medians[ward])
+                
+                # Add building median data
+                building_name = result.get('building_name', 'unknown')
+                building_medians = enrichment_context.get('building_medians', {})
+                if building_name in building_medians:
+                    result.update(building_medians[building_name])
+                
+                # Calculate score
+                scorer = enrichment_context.get('scorer')
+                if scorer:
+                    scoring_components = scorer.calculate_score(result)
+                    
+                    # Add scoring results
+                    result.update({
+                        'final_score': scoring_components.final_score,
+                        'base_score': scoring_components.base_score,
+                        'addon_score': scoring_components.addon_score,
+                        'adjustment_score': scoring_components.adjustment_score,
+                        'verdict': scoring_components.verdict.value,
+                        'ward_discount_pct': scoring_components.ward_discount_pct,
+                        'data_quality_penalty': scoring_components.data_quality_penalty,
+                        'scoring_components': {
+                            'ward_discount': scoring_components.ward_discount,
+                            'building_discount': scoring_components.building_discount,
+                            'comps_consistency': scoring_components.comps_consistency,
+                            'condition': scoring_components.condition,
+                            'size_efficiency': scoring_components.size_efficiency,
+                            'carry_cost': scoring_components.carry_cost,
+                            'price_cut': scoring_components.price_cut,
+                            'renovation_potential': scoring_components.renovation_potential,
+                            'access': scoring_components.access,
+                            'vision_positive': scoring_components.vision_positive,
+                            'vision_negative': scoring_components.vision_negative,
+                            'overstated_discount_penalty': scoring_components.overstated_discount_penalty
+                        }
+                    })
+                    
+                    # Apply candidate gating logic
+                    is_candidate_eligible = (
+                        scoring_components.base_score >= 70 and
+                        scoring_components.ward_discount_pct <= -8 and
+                        scoring_components.data_quality_penalty > -5
+                    )
+                    result['is_candidate'] = is_candidate_eligible
+                    
+                    if is_candidate_eligible:
+                        logger.debug(f"Property {result.get('id', 'unknown')} qualified as candidate ")
+                else:
+                    result['is_candidate'] = False
+                    
+            except Exception as e:
+                logger.warning(f"Enrichment failed for {url}: {str(e)}")
+                # Continue without enrichment
+                result['is_candidate'] = False
+        else:
+            # No enrichment - mark as non-candidate
+            result['is_candidate'] = False
         
         # Mark URL as processed in tracking table
         mark_url_processed(url, url_tracking_table, logger)
@@ -231,14 +336,18 @@ def process_single_url(url, session_pool, rate_limiter, url_tracking_table, conf
         if session:
             session_pool.return_session(session)
 
-def process_urls_parallel(urls, config, logger, job_start_time, max_runtime_seconds):
-    """Process URLs in parallel with configurable concurrency"""
+def process_urls_parallel(urls, config, logger, job_start_time, max_runtime_seconds, enrichment_context=None):
+    """Process URLs in parallel with configurable concurrency and enrichment"""
     max_workers = config['max_workers']
     requests_per_second = config['requests_per_second']
     
     # Setup parallel processing infrastructure
     session_pool = SessionPool(size=max_workers * 2)  # 2x workers for better utilization
     rate_limiter = RateLimiter(rate=requests_per_second)
+    
+    # Create separate rate limiter for images with higher rate (for burst downloads per property)
+    image_requests_per_second = requests_per_second * 2  # Allow 2x rate for images
+    image_rate_limiter = RateLimiter(rate=image_requests_per_second, burst_multiplier=3)
     
     # Setup URL tracking table
     _, url_tracking_table = setup_url_tracking_table(config['url_tracking_table'], logger)
@@ -247,7 +356,7 @@ def process_urls_parallel(urls, config, logger, job_start_time, max_runtime_seco
     completed_count = 0
     
     try:
-        logger.info(f"Starting parallel processing: {max_workers} workers, {requests_per_second} req/s")
+        logger.info(f"Starting parallel processing: {max_workers} workers, {requests_per_second} req/s (property), {image_requests_per_second} req/s (images)")
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all tasks
@@ -255,7 +364,7 @@ def process_urls_parallel(urls, config, logger, job_start_time, max_runtime_seco
             for url in urls:
                 future = executor.submit(
                     process_single_url, 
-                    url, session_pool, rate_limiter, url_tracking_table, config, logger
+                    url, session_pool, rate_limiter, url_tracking_table, config, logger, image_rate_limiter, enrichment_context
                 )
                 future_to_url[future] = url
             
@@ -300,11 +409,87 @@ def process_urls_parallel(urls, config, logger, job_start_time, max_runtime_seco
         session_pool.close_all()
 
 def process_urls_in_batches(urls, config, logger, job_start_time, max_runtime_seconds):
-    """Process URLs in batches for better progress tracking and DynamoDB saves"""
+    """Process URLs in batches with enrichment context for lean scoring"""
     batch_size = config['batch_size']
     all_results = []
+    failed_saves = []  # Track failed DynamoDB saves for retries
+    total_saved = 0
+    
+    # Setup enrichment context if lean mode is enabled
+    enrichment_context = None
+    if LEAN_MODULES_AVAILABLE:
+        try:
+            # Check if lean mode is enabled
+            lean_mode_enabled = is_lean_mode()
+            if not lean_mode_enabled:
+                # Try environment variable fallback
+                lean_mode_enabled = os.environ.get('LEAN_MODE', '0').lower() in ('1', 'true', 'yes', 'on', 'enabled')
+            
+            if lean_mode_enabled:
+                logger.info("Lean mode enabled - setting up enrichment context")
+                
+                # Setup DynamoDB for loading comparables
+                _, main_table = setup_dynamodb_client(logger)
+                
+                # Load recent properties for comparables
+                recent_properties = load_recent_properties_for_comparables(main_table, limit=500, logger=logger)
+                
+                # Calculate ward medians
+                ward_medians = calculate_ward_medians_from_dynamodb(main_table, logger)
+                
+                # Calculate building medians from recent properties
+                building_data = {}
+                for prop in recent_properties:
+                    building_name = prop.get('building_name', 'unknown')
+                    price_per_sqm = prop.get('price_per_sqm')
+                    if building_name != 'unknown' and price_per_sqm:
+                        if building_name not in building_data:
+                            building_data[building_name] = []
+                        building_data[building_name].append(price_per_sqm)
+                
+                building_medians = {}
+                for building, prices in building_data.items():
+                    if len(prices) >= 2:
+                        sorted_prices = sorted(prices)
+                        median_idx = len(sorted_prices) // 2
+                        building_medians[building] = {
+                            'building_median_price_per_sqm': sorted_prices[median_idx],
+                            'building_property_count': len(prices)
+                        }
+                
+                # Initialize scorer
+                scorer = LeanScoring()
+                
+                # Create enrichment context
+                enrichment_context = {
+                    'lean_mode_enabled': True,
+                    'all_properties': recent_properties,
+                    'ward_medians': ward_medians,
+                    'building_medians': building_medians,
+                    'scorer': scorer
+                }
+                
+                logger.info(f"Enrichment context ready: {len(recent_properties)} comparables, "
+                          f"{len(ward_medians)} ward medians, {len(building_medians)} building medians")
+            else:
+                logger.info("Lean mode disabled - processing without enrichment")
+                
+        except Exception as e:
+            logger.error(f"Failed to setup enrichment context: {str(e)}")
+            logger.info("Continuing without enrichment")
     
     logger.info(f"Processing {len(urls)} URLs in batches of {batch_size}")
+    
+    # Metrics tracking
+    metrics = {
+        'PropertiesProcessed': 0,
+        'CandidatesEnqueued': 0,
+        'CandidatesSuppressed': 0,
+        'ProcessingErrors': 0,
+        'ScoreDistribution': {'BUY_CANDIDATE': 0, 'WATCH': 0, 'REJECT': 0}
+    }
+    candidates = []
+    max_candidates_per_day = int(os.environ.get('MAX_CANDIDATES_PER_DAY', '50'))
     
     for batch_start in range(0, len(urls), batch_size):
         batch_end = min(batch_start + batch_size, len(urls))
@@ -314,22 +499,97 @@ def process_urls_in_batches(urls, config, logger, job_start_time, max_runtime_se
         
         logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch_urls)} URLs)")
         
-        # Process batch in parallel
+        # Process batch in parallel with enrichment context
         batch_results = process_urls_parallel(
-            batch_urls, config, logger, job_start_time, max_runtime_seconds
+            batch_urls, config, logger, job_start_time, max_runtime_seconds, enrichment_context
         )
+        
+        # Update enrichment context with new properties for better comparables
+        if enrichment_context:
+            for result in batch_results:
+                if 'error' not in result and result.get('price_per_sqm'):
+                    enrichment_context['all_properties'].append(result)
+        
+        # Track metrics and candidates
+        for result in batch_results:
+            if 'error' in result:
+                metrics['ProcessingErrors'] += 1
+            else:
+                metrics['PropertiesProcessed'] += 1
+                
+                # Track score distribution
+                verdict = result.get('verdict', '')
+                if verdict in ['buy_candidate', 'watch', 'reject']:
+                    metrics['ScoreDistribution'][verdict.upper()] += 1
+                
+                # Track candidates
+                if result.get('is_candidate', False):
+                    if len(candidates) < max_candidates_per_day:
+                        candidates.append(result)
+                        metrics['CandidatesEnqueued'] += 1
+                    else:
+                        metrics['CandidatesSuppressed'] += 1
+        
         all_results.extend(batch_results)
         
-        # Save batch results to DynamoDB immediately
+        # Save batch results to DynamoDB immediately with error tracking
         if config.get('enable_deduplication') and batch_results:
-            batch_saved = save_complete_properties_to_dynamodb(batch_results, config, logger)
-            logger.info(f"Batch {batch_num}: {batch_saved}/{len(batch_results)} properties saved to DynamoDB")
+            try:
+                successful_properties = [p for p in batch_results if 'error' not in p]
+                if successful_properties:
+                    batch_saved = save_complete_properties_to_dynamodb(successful_properties, config, logger)
+                    total_saved += batch_saved
+                    
+                    # Check if all properties were saved
+                    if batch_saved < len(successful_properties):
+                        unsaved_count = len(successful_properties) - batch_saved
+                        logger.warning(f"Batch {batch_num}: {unsaved_count} properties failed to save, adding to retry list")
+                        failed_saves.extend(successful_properties[batch_saved:])  # Add unsaved items to retry list
+                    
+                    logger.info(f"Batch {batch_num}: {batch_saved}/{len(successful_properties)} properties saved to DynamoDB (total: {total_saved})")
+                else:
+                    logger.info(f"Batch {batch_num}: No successful properties to save")
+                    
+            except Exception as e:
+                logger.error(f"Batch {batch_num}: DynamoDB save failed completely: {str(e)}")
+                # Add all successful properties to retry list
+                successful_properties = [p for p in batch_results if 'error' not in p]
+                failed_saves.extend(successful_properties)
         
         # Check runtime limit
         elapsed_time = (datetime.now() - job_start_time).total_seconds()
         if elapsed_time > (max_runtime_seconds - 60):  # 1 minute buffer for cleanup
             logger.warning(f"Approaching runtime limit, stopping after batch {batch_num}")
             break
+    
+    # Retry failed saves if we have time
+    if failed_saves:
+        elapsed_time = (datetime.now() - job_start_time).total_seconds()
+        if elapsed_time < (max_runtime_seconds - 30):  # 30 second buffer
+            logger.info(f"Retrying {len(failed_saves)} failed DynamoDB saves...")
+            try:
+                retry_saved = save_complete_properties_to_dynamodb(failed_saves, config, logger)
+                total_saved += retry_saved
+                logger.info(f"Retry: {retry_saved}/{len(failed_saves)} properties saved (final total: {total_saved})")
+                
+                # Remove successfully saved items from failed list
+                if retry_saved < len(failed_saves):
+                    remaining_failed = len(failed_saves) - retry_saved  
+                    logger.warning(f"{remaining_failed} properties still failed to save after retry")
+                    
+            except Exception as e:
+                logger.error(f"Retry DynamoDB save failed: {str(e)}")
+        else:
+            logger.warning(f"No time for retrying {len(failed_saves)} failed saves")
+    
+    # Add save statistics to results metadata
+    if hasattr(all_results, 'append'):
+        save_stats = {
+            'total_processed': len(all_results),
+            'total_saved_to_dynamodb': total_saved,
+            'failed_saves': len(failed_saves)
+        }
+        logger.info(f"Final batch processing stats: {save_stats}")
     
     return all_results
 
@@ -398,17 +658,20 @@ def main(event=None):
         error_count = len([r for r in listings_data if 'error' in r or 'validation_error' in r])
         processed_urls = len(listings_data)
         
-        # Final DynamoDB save (in case batching was disabled or some data wasn't saved)
-        dynamodb_saved = 0
-        if config.get('enable_deduplication') and listings_data:
-            # Only save properties that weren't already saved in batches
-            unsaved_properties = [p for p in listings_data if 'error' not in p]
-            if unsaved_properties:
-                additional_saved = save_complete_properties_to_dynamodb(unsaved_properties, config, logger)
-                logger.info(f"Final DynamoDB save: {additional_saved} additional properties saved")
-                dynamodb_saved = additional_saved
-            else:
-                logger.info("All properties already saved to DynamoDB during batch processing")
+        # Count total DynamoDB saves (batch processing handles saves internally)
+        dynamodb_saved = len([r for r in listings_data if 'error' not in r and 'validation_error' not in r])
+        logger.info(f"DynamoDB processing completed during batch execution")
+        
+        # Emit metrics if available
+        if LEAN_MODULES_AVAILABLE and hasattr(listings_data, '__len__'):
+            try:
+                # Extract metrics from batch processing
+                total_candidates = len([r for r in listings_data if r.get('is_candidate', False)])
+                emit_properties_processed(success_count)
+                emit_candidates_enqueued(total_candidates)
+                logger.info(f"Emitted metrics: {success_count} processed, {total_candidates} candidates")
+            except Exception as e:
+                logger.warning(f"Failed to emit metrics: {e}")
         
         # Save to CSV
         output_filename = None

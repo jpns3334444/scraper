@@ -92,6 +92,135 @@ def parse_price_from_text(price_text):
     
     return 0
 
+def parse_numeric_field(text, default=None):
+    """Parse numeric fields from Japanese text"""
+    if not text or text == '-':
+        return default
+    
+    try:
+        # Extract digits and decimal points
+        cleaned = re.sub(r'[^\d.,]', '', str(text).replace('，', ','))
+        cleaned = cleaned.replace(',', '')
+        
+        if cleaned:
+            return float(cleaned)
+    except (ValueError, TypeError):
+        pass
+    
+    return default
+
+def parse_building_age(text):
+    """Parse building age from 築年月 field (e.g., '1999年3月' or '築25年')"""
+    if not text:
+        return None
+    
+    try:
+        # Pattern 1: "築25年" -> 25
+        age_match = re.search(r'築(\d+)年', text)
+        if age_match:
+            return int(age_match.group(1))
+        
+        # Pattern 2: "1999年3月" -> calculate from year
+        year_match = re.search(r'(\d{4})年', text)
+        if year_match:
+            built_year = int(year_match.group(1))
+            current_year = datetime.now().year
+            age = current_year - built_year
+            return age if age >= 0 else None
+    except (ValueError, TypeError):
+        pass
+    
+    return None
+
+def parse_floor_info(text):
+    """Parse floor information from '3階/10階建' format"""
+    if not text:
+        return None, None
+    
+    try:
+        # Pattern: "3階/10階建" or "3階/10階"
+        match = re.search(r'(\d+)階[^\d]*(\d+)階', text)
+        if match:
+            floor = int(match.group(1))
+            total_floors = int(match.group(2))
+            return floor, total_floors
+        
+        # Pattern: just "3階"
+        floor_match = re.search(r'(\d+)階', text)
+        if floor_match:
+            return int(floor_match.group(1)), None
+    except (ValueError, TypeError):
+        pass
+    
+    return None, None
+
+def extract_ward_and_district(address_text):
+    """Extract ward and district from Japanese address"""
+    if not address_text:
+        return None, None
+    
+    # Tokyo 23 wards list
+    tokyo_wards = [
+        '千代田区', '中央区', '港区', '新宿区', '文京区', '台東区',
+        '墨田区', '江東区', '品川区', '目黒区', '大田区', '世田谷区',
+        '渋谷区', '中野区', '杉並区', '豊島区', '北区', '荒川区',
+        '板橋区', '練馬区', '足立区', '葛飾区', '江戸川区'
+    ]
+    
+    ward = None
+    district = None
+    
+    # Find ward
+    for w in tokyo_wards:
+        if w in address_text:
+            ward = w
+            # Extract district (text after ward, before first number)
+            after_ward = address_text.split(w)[1]
+            district_match = re.match(r'^([^\d]+)', after_ward)
+            if district_match:
+                district = district_match.group(1).strip()
+            break
+    
+    return ward, district
+
+def parse_station_distance(text):
+    """Parse station distance from 交通 field"""
+    if not text:
+        return None
+    
+    try:
+        # Pattern: "徒歩5分" or "歩5分"
+        walk_match = re.search(r'[徒歩]+(\d+)分', text)
+        if walk_match:
+            return int(walk_match.group(1))
+        
+        # Pattern: "5分" (just minutes)
+        min_match = re.search(r'(\d+)分', text)
+        if min_match:
+            return int(min_match.group(1))
+    except (ValueError, TypeError):
+        pass
+    
+    return None
+
+def parse_layout_type(text):
+    """Parse layout type and extract number of bedrooms"""
+    if not text:
+        return None, None
+    
+    layout_type = text.strip()
+    num_bedrooms = None
+    
+    try:
+        # Extract number from patterns like "2LDK", "3DK", "1K"
+        match = re.search(r'(\d+)[LDKS]', text)
+        if match:
+            num_bedrooms = int(match.group(1))
+    except (ValueError, TypeError):
+        pass
+    
+    return layout_type, num_bedrooms
+
 def extract_listing_urls_from_html(html_content):
     """Extract unique listing URLs from HTML content"""
     relative_urls = re.findall(r'/mansion/b-\d+/?', html_content)
@@ -278,7 +407,7 @@ def collect_area_listings_with_prices(area_name, max_pages=None, session=None, l
         if should_close_session:
             session.close()
 
-def extract_property_details(session, property_url, referer_url, retries=3, config=None, logger=None):
+def extract_property_details(session, property_url, referer_url, retries=3, config=None, logger=None, session_pool=None, image_rate_limiter=None):
     """Extract detailed property information with retry logic"""
     last_error = None
     output_bucket = config.get('output_bucket', '') if config else ''
@@ -337,26 +466,125 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
             if price_pattern:
                 data["price"] = price_pattern.group(1)
             
-            # Extract property details from tables
+            # Extract property details from tables with field mapping
+            field_mappings = {
+                '価格': 'price_text',
+                '専有面積': 'size_sqm_text',
+                '築年月': 'building_age_text',
+                '所在階': 'floor_text',
+                '所在地': 'address',
+                '管理費': 'management_fee_text',
+                '修繕積立金': 'repair_reserve_fee_text',
+                '交通': 'station_info',
+                '向き': 'direction_facing',
+                '間取り': 'layout_text',
+                '建物名': 'building_name',
+                'バルコニー': 'balcony_area_text',
+                '総戸数': 'total_units_text'
+            }
+            
             tables = soup.find_all('table')
             for table in tables:
                 rows = table.find_all('tr')
-                if len(rows) > 10:
+                if len(rows) > 5:  # Reduced threshold for better detection
                     for row in rows:
                         cells = row.find_all(['th', 'td'])
                         if len(cells) >= 2:
                             key = cells[0].text.strip()
                             value = cells[1].text.strip()
                             if key and value and len(key) < 30:
+                                # Store raw value
                                 data[key] = value
-                    break
+                                # Store mapped field if exists
+                                if key in field_mappings:
+                                    data[field_mappings[key]] = value
+            
+            # Parse extracted fields
+            # Price (already extracted above)
+            if 'price' in data:
+                data['price'] = parse_price_from_text(data['price'])
+            
+            # Size in square meters
+            if 'size_sqm_text' in data:
+                size_sqm = parse_numeric_field(data['size_sqm_text'].replace('m²', '').replace('㎡', ''))
+                if size_sqm:
+                    data['size_sqm'] = size_sqm
+                    # Calculate price per sqm if we have both
+                    if data.get('price'):
+                        data['price_per_sqm'] = (data['price'] * 10000) / size_sqm  # Convert man-yen to yen
+            
+            # Building age
+            if 'building_age_text' in data:
+                age = parse_building_age(data['building_age_text'])
+                if age is not None:
+                    data['building_age_years'] = age
+            
+            # Floor information
+            if 'floor_text' in data:
+                floor, total_floors = parse_floor_info(data['floor_text'])
+                if floor is not None:
+                    data['floor'] = floor
+                if total_floors is not None:
+                    data['total_floors'] = total_floors
+            
+            # Ward and district from address
+            if 'address' in data:
+                ward, district = extract_ward_and_district(data['address'])
+                if ward:
+                    data['ward'] = ward
+                if district:
+                    data['district'] = district
+            
+            # Management and repair fees
+            if 'management_fee_text' in data:
+                fee = parse_numeric_field(data['management_fee_text'])
+                if fee is not None:
+                    data['management_fee'] = fee
+            
+            if 'repair_reserve_fee_text' in data:
+                fee = parse_numeric_field(data['repair_reserve_fee_text'])
+                if fee is not None:
+                    data['repair_reserve_fee'] = fee
+            
+            # Calculate total monthly costs
+            monthly_costs = 0
+            if data.get('management_fee'):
+                monthly_costs += data['management_fee']
+            if data.get('repair_reserve_fee'):
+                monthly_costs += data['repair_reserve_fee']
+            if monthly_costs > 0:
+                data['monthly_costs'] = monthly_costs
+                data['total_monthly_costs'] = monthly_costs
+            
+            # Station distance
+            if 'station_info' in data:
+                distance = parse_station_distance(data['station_info'])
+                if distance is not None:
+                    data['station_distance_minutes'] = distance
+            
+            # Layout type and bedrooms
+            if 'layout_text' in data:
+                layout, bedrooms = parse_layout_type(data['layout_text'])
+                if layout:
+                    data['layout_type'] = layout
+                if bedrooms is not None:
+                    data['num_bedrooms'] = bedrooms
+            
+            # Direction facing
+            if 'direction_facing' in data:
+                data['direction_facing'] = data['direction_facing']
+            
+            # Additional fields for compatibility
+            data['source'] = 'homes_scraper'
+            data['processed_date'] = datetime.now().strftime('%Y-%m-%d')
             
             # Extract images
             try:
                 s3_keys = extract_property_images(
                     soup, session, "https://www.homes.co.jp", 
                     bucket=output_bucket, property_id=property_id,
-                    config=config, logger=logger
+                    config=config, logger=logger,
+                    session_pool=session_pool, image_rate_limiter=image_rate_limiter
                 )
                 if s3_keys:
                     data["photo_filenames"] = "|".join(s3_keys)
@@ -384,7 +612,7 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
     else:
         raise Exception("Max retries exceeded")
 
-def extract_property_images(soup, session, base_url, bucket=None, property_id=None, config=None, logger=None):
+def extract_property_images(soup, session, base_url, bucket=None, property_id=None, config=None, logger=None, session_pool=None, image_rate_limiter=None):
     """Extract property images and upload to S3"""
     s3_keys = []
     image_urls = set()
@@ -432,7 +660,12 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
         urls = list(image_urls)[:5]
         
         # Download and process images in parallel
-        s3_keys = download_images_parallel(urls, session, bucket, property_id, logger)
+        if session_pool and image_rate_limiter:
+            # Use session pool and rate limiter for better control
+            s3_keys = download_images_parallel(urls, session_pool, bucket, property_id, logger, image_rate_limiter)
+        else:
+            # Fallback to single session (for backward compatibility)
+            s3_keys = download_images_parallel_fallback(urls, session, bucket, property_id, logger)
 
         return s3_keys
         
@@ -441,8 +674,64 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
             logger.error(f"Image extraction error: {str(e)}")
         return []
 
-def download_single_image(session, img_url, index, bucket, property_id, logger):
-    """Download and process a single image"""
+def download_single_image(session_pool, img_url, index, bucket, property_id, logger, rate_limiter=None):
+    """Download and process a single image using session pool"""
+    session = None
+    try:
+        # Apply rate limiting if provided
+        if rate_limiter:
+            rate_limiter.acquire()
+        
+        # Get session from pool
+        session = session_pool.get_session()
+        
+        img_response = session.get(img_url, timeout=10)
+        if img_response.status_code == 200:
+            content_type = img_response.headers.get('content-type', 'image/jpeg')
+            
+            if 'image' in content_type:
+                # Skip tiny images
+                if len(img_response.content) < 1000:
+                    return None
+                
+                # Convert and resize image
+                img = Image.open(io.BytesIO(img_response.content))
+                
+                if img.mode not in ('RGB', 'L'):
+                    img = img.convert('RGB')
+                
+                img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+                
+                output_buffer = io.BytesIO()
+                img.save(output_buffer, format='JPEG', quality=85, optimize=True)
+                output_buffer.seek(0)
+                processed_image_bytes = output_buffer.getvalue()
+                
+                # Upload to S3
+                if bucket and property_id:
+                    s3_key = upload_image_to_s3(
+                        processed_image_bytes, 
+                        bucket, 
+                        property_id, 
+                        index, 
+                        logger=logger
+                    )
+                    return s3_key
+        
+        return None
+        
+    except Exception as e:
+        if logger:
+            logger.debug(f"Failed to download image {index}: {str(e)}")
+        return None
+    
+    finally:
+        # Return session to pool
+        if session and session_pool:
+            session_pool.return_session(session)
+
+def download_single_image_fallback(session, img_url, index, bucket, property_id, logger):
+    """Download and process a single image (fallback for backward compatibility)"""
     try:
         img_response = session.get(img_url, timeout=10)
         if img_response.status_code == 200:
@@ -484,8 +773,8 @@ def download_single_image(session, img_url, index, bucket, property_id, logger):
             logger.debug(f"Failed to download image {index}: {str(e)}")
         return None
 
-def download_images_parallel(image_urls, session, bucket, property_id, logger):
-    """Download images in parallel with limited concurrency"""
+def download_images_parallel(image_urls, session_pool, bucket, property_id, logger, image_rate_limiter):
+    """Download images in parallel with session pool and rate limiting"""
     if not image_urls:
         return []
     
@@ -499,6 +788,41 @@ def download_images_parallel(image_urls, session, bucket, property_id, logger):
             for i, img_url in enumerate(image_urls):
                 future = executor.submit(
                     download_single_image, 
+                    session_pool, img_url, i, bucket, property_id, logger, image_rate_limiter
+                )
+                future_to_index[future] = i
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_index):
+                try:
+                    s3_key = future.result()
+                    if s3_key:
+                        s3_keys.append(s3_key)
+                except Exception as e:
+                    if logger:
+                        logger.debug(f"Image download future failed: {str(e)}")
+    
+    except Exception as e:
+        if logger:
+            logger.debug(f"Parallel image download failed: {str(e)}")
+    
+    return s3_keys
+
+def download_images_parallel_fallback(image_urls, session, bucket, property_id, logger):
+    """Download images in parallel with single session (fallback)"""
+    if not image_urls:
+        return []
+    
+    s3_keys = []
+    max_workers = min(3, len(image_urls))  # Limit to 3-5 concurrent downloads as requested
+    
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all download tasks
+            future_to_index = {}
+            for i, img_url in enumerate(image_urls):
+                future = executor.submit(
+                    download_single_image_fallback, 
                     session, img_url, i, bucket, property_id, logger
                 )
                 future_to_index[future] = i

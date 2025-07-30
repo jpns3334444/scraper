@@ -145,7 +145,7 @@ def save_complete_properties_to_dynamodb(properties_data, config, logger=None):
         return 0
 
 def create_complete_property_record(property_data, config, logger=None):
-    """Create a complete property record"""
+    """Create a complete property record with all enriched fields"""
     try:
         # Extract property ID
         if not property_data.get('property_id'):
@@ -159,7 +159,11 @@ def create_complete_property_record(property_data, config, logger=None):
         
         now = datetime.now()
         
-        # Create record
+        # Create district key for GSI
+        ward = property_data.get('ward', '')
+        district_key = f"DIST#{ward.replace(' ', '_')}" if ward else None
+        
+        # Create record with all fields
         record = {
             'property_id': property_id,
             'sort_key': 'META',
@@ -171,33 +175,86 @@ def create_complete_property_record(property_data, config, logger=None):
             'analysis_yymm': now.strftime('%Y-%m'),
             'invest_partition': 'SCRAPED',
             
-            # Property details
-            'price': property_data.get('price', 0),
+            # Core numeric fields (normalized)
+            'price': int(property_data.get('price', 0)) if property_data.get('price') else 0,
+            'size_sqm': float(property_data.get('size_sqm', 0)) if property_data.get('size_sqm') else 0,
+            'price_per_sqm': float(property_data.get('price_per_sqm', 0)) if property_data.get('price_per_sqm') else 0,
+            'building_age_years': int(property_data.get('building_age_years', 0)) if property_data.get('building_age_years') is not None else None,
+            'floor': int(property_data.get('floor', 0)) if property_data.get('floor') is not None else None,
+            'total_floors': int(property_data.get('total_floors', 0)) if property_data.get('total_floors') is not None else None,
+            'management_fee': float(property_data.get('management_fee', 0)) if property_data.get('management_fee') else 0,
+            'repair_reserve_fee': float(property_data.get('repair_reserve_fee', 0)) if property_data.get('repair_reserve_fee') else 0,
+            'monthly_costs': float(property_data.get('monthly_costs', 0)) if property_data.get('monthly_costs') else 0,
+            'total_monthly_costs': float(property_data.get('total_monthly_costs', 0)) if property_data.get('total_monthly_costs') else 0,
+            'station_distance_minutes': int(property_data.get('station_distance_minutes', 0)) if property_data.get('station_distance_minutes') is not None else None,
+            'num_bedrooms': int(property_data.get('num_bedrooms', 0)) if property_data.get('num_bedrooms') is not None else None,
+            
+            # Location fields
+            'ward': ward,
+            'district': property_data.get('district', ''),
+            'district_key': district_key,  # For GSI queries
+            
+            # Property details (raw Japanese text)
             'price_display': property_data.get('価格', ''),
             'title': property_data.get('title', ''),
-            'address': property_data.get('所在地', ''),
-            'transportation': property_data.get('交通', ''),
-            'building_age': property_data.get('築年月', ''),
-            'floor_area': property_data.get('専有面積', ''),
-            'balcony_area': property_data.get('バルコニー', ''),
-            'floor_number': property_data.get('所在階', ''),
-            'total_units': property_data.get('総戸数', ''),
-            'layout': property_data.get('間取り', ''),
+            'address': property_data.get('address') or property_data.get('所在地', ''),
+            'transportation': property_data.get('station_info') or property_data.get('交通', ''),
+            'building_age': property_data.get('building_age_text') or property_data.get('築年月', ''),
+            'floor_area': property_data.get('size_sqm_text') or property_data.get('専有面積', ''),
+            'balcony_area': property_data.get('balcony_area_text') or property_data.get('バルコニー', ''),
+            'floor_number': property_data.get('floor_text') or property_data.get('所在階', ''),
+            'total_units': property_data.get('total_units_text') or property_data.get('総戸数', ''),
+            'layout': property_data.get('layout_text') or property_data.get('間取り', ''),
+            'layout_type': property_data.get('layout_type', ''),
+            'direction_facing': property_data.get('direction_facing') or property_data.get('向き', ''),
+            'building_name': property_data.get('building_name') or property_data.get('建物名', ''),
             'management_company': property_data.get('管理会社', ''),
-            'management_fee': property_data.get('管理費', ''),
-            'repair_fund': property_data.get('修繕積立金', ''),
+            'management_fee_display': property_data.get('management_fee_text') or property_data.get('管理費', ''),
+            'repair_fund_display': property_data.get('repair_reserve_fee_text') or property_data.get('修繕積立金', ''),
+            
+            # Scoring and enrichment fields (if available)
+            'final_score': float(property_data.get('final_score', 0)) if property_data.get('final_score') else None,
+            'base_score': float(property_data.get('base_score', 0)) if property_data.get('base_score') else None,
+            'addon_score': float(property_data.get('addon_score', 0)) if property_data.get('addon_score') else None,
+            'adjustment_score': float(property_data.get('adjustment_score', 0)) if property_data.get('adjustment_score') else None,
+            'verdict': property_data.get('verdict', ''),
+            'ward_discount_pct': float(property_data.get('ward_discount_pct', 0)) if property_data.get('ward_discount_pct') else None,
+            'data_quality_penalty': float(property_data.get('data_quality_penalty', 0)) if property_data.get('data_quality_penalty') else None,
+            'is_candidate': property_data.get('is_candidate', False),
+            
+            # Ward median data (if available)
+            'ward_avg_price_per_sqm': float(property_data.get('ward_avg_price_per_sqm', 0)) if property_data.get('ward_avg_price_per_sqm') else None,
+            'ward_property_count': int(property_data.get('ward_property_count', 0)) if property_data.get('ward_property_count') else None,
+            
+            # Building median data (if available)
+            'building_median_price_per_sqm': float(property_data.get('building_median_price_per_sqm', 0)) if property_data.get('building_median_price_per_sqm') else None,
+            'building_property_count': int(property_data.get('building_property_count', 0)) if property_data.get('building_property_count') else None,
+            
+            # Comparables data (if available)
+            'num_comparables': int(property_data.get('num_comparables', 0)) if property_data.get('num_comparables') else 0,
+            'comps_avg_price_per_sqm': float(property_data.get('comps_avg_price_per_sqm', 0)) if property_data.get('comps_avg_price_per_sqm') else None,
+            'comps_min_price_per_sqm': float(property_data.get('comps_min_price_per_sqm', 0)) if property_data.get('comps_min_price_per_sqm') else None,
+            'comps_max_price_per_sqm': float(property_data.get('comps_max_price_per_sqm', 0)) if property_data.get('comps_max_price_per_sqm') else None,
             
             # Image data
             'photo_filenames': property_data.get('photo_filenames', ''),
+            'uploaded_image_urls': property_data.get('uploaded_image_urls', []),
+            'interior_photos': property_data.get('interior_photos', []),
             'image_count': property_data.get('image_count', 0),
             
             # Metadata
             'extraction_timestamp': property_data.get('extraction_timestamp', now.isoformat()),
-            'scraper_session': config.get('session_id', 'unknown')
+            'scraper_session': config.get('session_id', 'unknown'),
+            'source': property_data.get('source', 'homes_scraper'),
+            'processed_date': property_data.get('processed_date', now.strftime('%Y-%m-%d'))
         }
         
-        # Remove empty values
-        record = {k: v for k, v in record.items() if v is not None and v != ''}
+        # Store scoring components if available
+        if 'scoring_components' in property_data:
+            record['scoring_components'] = property_data['scoring_components']
+        
+        # Remove empty values and None
+        record = {k: v for k, v in record.items() if v is not None and v != '' and v != []}
         
         return record
         
@@ -391,3 +448,125 @@ def mark_url_processed(url, table, logger=None):
         if logger:
             logger.error(f"Failed to mark URL processed {url}: {str(e)}")
         return False
+
+def load_recent_properties_for_comparables(table, ward=None, limit=200, logger=None):
+    """Load recent properties for comparables calculation"""
+    if logger:
+        logger.info(f"Loading recent properties for comparables (ward: {ward}, limit: {limit})")
+    
+    properties = []
+    
+    try:
+        if ward and ward != 'unknown':
+            # Use GSI to query by ward (more efficient)
+            district_key = f"DIST#{ward.replace(' ', '_')}"
+            try:
+                response = table.query(
+                    IndexName='district-index',
+                    KeyConditionExpression='district_key = :dk',
+                    ExpressionAttributeValues={
+                        ':dk': district_key
+                    },
+                    Limit=limit,
+                    ScanIndexForward=False  # Most recent first
+                )
+                properties.extend(response.get('Items', []))
+            except:
+                # GSI doesn't exist, fall back to scan
+                if logger:
+                    logger.debug("GSI query failed, falling back to scan")
+        
+        # If no ward specified or GSI failed, do a general scan
+        if not properties:
+            scan_kwargs = {
+                'FilterExpression': boto3.dynamodb.conditions.Attr('sort_key').eq('META'),
+                'Limit': limit
+            }
+            
+            response = table.scan(**scan_kwargs)
+            properties = response.get('Items', [])
+        
+        # Convert DynamoDB items to dict format
+        converted_properties = []
+        for prop in properties:
+            # Only include properties with required fields for comparables
+            if prop.get('price_per_sqm') and prop.get('size_sqm'):
+                converted_properties.append({
+                    'property_id': prop.get('property_id'),
+                    'price': float(prop.get('price', 0)),
+                    'size_sqm': float(prop.get('size_sqm', 0)),
+                    'price_per_sqm': float(prop.get('price_per_sqm', 0)),
+                    'ward': prop.get('ward', 'unknown'),
+                    'district': prop.get('district', ''),
+                    'building_name': prop.get('building_name', ''),
+                    'building_age_years': int(prop.get('building_age_years', 0)) if prop.get('building_age_years') else None,
+                    'floor': int(prop.get('floor', 0)) if prop.get('floor') else None,
+                    'station_distance_minutes': int(prop.get('station_distance_minutes', 0)) if prop.get('station_distance_minutes') else None,
+                    'layout_type': prop.get('layout_type', ''),
+                    'analysis_date': prop.get('analysis_date', '')
+                })
+        
+        if logger:
+            logger.debug(f"Loaded {len(converted_properties)} properties for comparables")
+        
+        return converted_properties
+        
+    except Exception as e:
+        if logger:
+            logger.error(f"Failed to load properties for comparables: {str(e)}")
+        return []
+
+def calculate_ward_medians_from_dynamodb(table, logger=None):
+    """Calculate ward median prices from recent DynamoDB data"""
+    if logger:
+        logger.info("Calculating ward medians from DynamoDB")
+    
+    ward_data = {}
+    
+    try:
+        # Scan recent properties
+        scan_kwargs = {
+            'FilterExpression': boto3.dynamodb.conditions.Attr('sort_key').eq('META')
+        }
+        
+        items_processed = 0
+        while True:
+            response = table.scan(**scan_kwargs)
+            items = response.get('Items', [])
+            
+            for item in items:
+                ward = item.get('ward', 'unknown')
+                price_per_sqm = item.get('price_per_sqm')
+                
+                if ward and ward != 'unknown' and price_per_sqm:
+                    if ward not in ward_data:
+                        ward_data[ward] = []
+                    ward_data[ward].append(float(price_per_sqm))
+                    items_processed += 1
+            
+            if 'LastEvaluatedKey' not in response:
+                break
+            scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
+        
+        # Calculate medians
+        ward_medians = {}
+        for ward, prices in ward_data.items():
+            if len(prices) >= 3:  # Need at least 3 properties for median
+                sorted_prices = sorted(prices)
+                median_idx = len(sorted_prices) // 2
+                median_price = sorted_prices[median_idx]
+                
+                ward_medians[ward] = {
+                    'ward_avg_price_per_sqm': median_price,
+                    'ward_property_count': len(prices)
+                }
+        
+        if logger:
+            logger.info(f"Calculated medians for {len(ward_medians)} wards from {items_processed} properties")
+        
+        return ward_medians
+        
+    except Exception as e:
+        if logger:
+            logger.error(f"Failed to calculate ward medians: {str(e)}")
+        return {}

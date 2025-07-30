@@ -32,6 +32,13 @@ except ImportError:
     ComparablesFilter = None
     generate_vision_summary = None
 
+# For DynamoDB decimal handling
+try:
+    from boto3.dynamodb.types import TypeDeserializer
+    deserializer = TypeDeserializer()
+except ImportError:
+    deserializer = None
+
 # Import centralized config helper
 try:
     from util.config import get_config
@@ -182,6 +189,66 @@ def load_candidate_properties(bucket: str, date_str: str) -> List[Dict[str, Any]
         logger.info(f"Filtered {len(candidates)} candidates from {total_properties} total properties")
         return candidates
         
+    except Exception as e:
+        logger.error(f"Failed to load candidates from S3: {e}")
+        raise
+
+
+def load_candidate_properties_from_dynamodb(date_str: str) -> List[Dict[str, Any]]:
+    """
+    Load only candidate properties from DynamoDB.
+    
+    Args:
+        date_str: Processing date string
+        
+    Returns:
+        List of candidate properties only
+    """
+    if not table:
+        raise ValueError("DynamoDB table not configured")
+        
+    try:
+        candidates = []
+        total_properties = 0
+        
+        # Query properties for the specific date
+        # First, let's scan for properties with the specific date and is_candidate=True
+        scan_kwargs = {
+            'FilterExpression': 
+                Key('sort_key').eq('META') & 
+                boto3.dynamodb.conditions.Attr('processed_date').eq(date_str) & 
+                boto3.dynamodb.conditions.Attr('is_candidate').eq(True)
+        }
+        
+        while True:
+            response = table.scan(**scan_kwargs)
+            items = response.get('Items', [])
+            
+            for item in items:
+                # Convert DynamoDB item to regular dict with proper types
+                property_data = {}
+                for key, value in item.items():
+                    # Convert Decimal to float/int for JSON serialization
+                    if isinstance(value, Decimal):
+                        if value % 1 == 0:
+                            property_data[key] = int(value)
+                        else:
+                            property_data[key] = float(value)
+                    else:
+                        property_data[key] = value
+                
+                # Ensure we have required fields
+                if property_data.get('is_candidate', False):
+                    candidates.append(property_data)
+                    total_properties += 1
+            
+            if 'LastEvaluatedKey' not in response:
+                break
+            scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
+        
+        logger.info(f"Loaded {len(candidates)} candidates from DynamoDB for date {date_str}")
+        return candidates
+        
     except s3_client.exceptions.NoSuchKey:
         logger.error(f"Candidate properties file not found: s3://{bucket}/{jsonl_key}")
         return []
@@ -216,7 +283,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # Load only candidate properties
         candidates = event.get('candidates', [])
         if not candidates:
-            candidates = load_candidate_properties(bucket, date_str)
+            # Check if we should use DynamoDB
+            use_dynamodb = event.get('use_dynamodb', False)
+            if use_dynamodb:
+                logger.info("Loading candidates from DynamoDB")
+                candidates = load_candidate_properties_from_dynamodb(date_str)
+            else:
+                logger.info("Loading candidates from S3 JSONL")
+                candidates = load_candidate_properties(bucket, date_str)
         
         if not candidates:
             logger.warning("No candidate properties found - returning empty batch")
@@ -270,7 +344,9 @@ def build_lean_batch_requests(candidates: List[Dict[str, Any]], date_str: str,
         List of lean batch request dictionaries
     """
     batch_requests = []
-    all_properties = candidates  # For finding comparables
+    # For finding comparables, we might need more properties
+    # When using DynamoDB, we already have good comparables from the enrichment phase
+    all_properties = candidates
     
     # Load lean system prompt
     system_prompt = load_lean_system_prompt()
