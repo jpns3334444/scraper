@@ -171,9 +171,10 @@ for func in etl prompt_builder llm_batch report_sender dynamodb_writer snapshot_
         fi
     done
     
-    if [ -n "$PYTHON_CMD" ]; then
-        # Use Python method with shared modules
-        $PYTHON_CMD -c "
+    # Use Python method with shared modules (Linux only)
+    [ -n "$PYTHON_CMD" ] || error "Python not found - required for packaging"
+    
+    $PYTHON_CMD -c "
 import zipfile
 import os
 import sys
@@ -195,8 +196,8 @@ def create_zip(func_name, output_zip):
                         
                     file_path = os.path.join(root, file)
                     
-                    # Handle deps directory specially for scraper
-                    if func_name == 'scraper' and '/deps/' in file_path:
+                    # Handle deps directory specially for scraper functions
+                    if func_name in ['scraper', 'url_collector', 'property_processor'] and '/deps/' in file_path:
                         # Put deps contents at root level for imports
                         arc_name = os.path.relpath(file_path, os.path.join(func_dir, 'deps'))
                     else:
@@ -228,73 +229,6 @@ def create_zip(func_name, output_zip):
 create_zip('$func', '$func.zip')
 print('Created $func.zip with shared modules')
 "
-    else
-        # Fallback to PowerShell with shared modules
-        warn "Python not found, using PowerShell as fallback"
-        powershell.exe -Command "
-            \$func = '$func'
-            \$destination = './' + \$func + '.zip'
-            
-            if (Test-Path \$destination) { Remove-Item \$destination -Force }
-            
-            Add-Type -AssemblyName System.IO.Compression.FileSystem
-            
-            # Create temporary directory for filtered files
-            \$tempDir = New-TemporaryFile | %{ rm \$_; mkdir \$_ }
-            
-            # Copy function-specific files
-            \$funcSource = 'lambda/' + \$func
-            if (Test-Path \$funcSource) {
-                Get-ChildItem -Path \$funcSource -Recurse | Where-Object {
-                    \$_.Extension -ne '.pyc' -and 
-                    \$_.FullName -notlike '*__pycache__*' -and
-                    -not \$_.PSIsContainer
-                } | ForEach-Object {
-                    # Handle deps directory specially for scraper
-                    if (\$func -eq 'scraper' -and \$_.FullName -like '*\\deps\\*') {
-                        \$depsIndex = \$_.FullName.IndexOf('\\deps\\')
-                        \$relativePath = \$_.FullName.Substring(\$depsIndex + 6)  # Skip '\deps\'
-                    } else {
-                        \$relativePath = \$_.FullName.Substring(\$funcSource.Length + 1)
-                    }
-                    \$destPath = Join-Path \$tempDir \$relativePath
-                    \$destDir = Split-Path \$destPath
-                    if (-not (Test-Path \$destDir)) { New-Item -ItemType Directory -Path \$destDir -Force | Out-Null }
-                    Copy-Item \$_.FullName \$destPath
-                }
-            }
-            
-            # Copy shared modules
-            \$sharedDirs = @('lambda/util', 'analysis', 'schemas', 'notifications', 'snapshots')
-            foreach (\$sharedDir in \$sharedDirs) {
-                if (Test-Path \$sharedDir) {
-                    Get-ChildItem -Path \$sharedDir -Recurse | Where-Object {
-                        \$_.Extension -ne '.pyc' -and 
-                        \$_.FullName -notlike '*__pycache__*' -and
-                        -not \$_.PSIsContainer
-                    } | ForEach-Object {
-                        if (\$sharedDir.StartsWith('lambda/')) {
-                            \$relativePath = \$_.FullName.Substring(7)  # Remove 'lambda/' prefix
-                        } else {
-                            \$relativePath = \$_.FullName
-                        }
-                        \$destPath = Join-Path \$tempDir \$relativePath
-                        \$destDir = Split-Path \$destPath
-                        if (-not (Test-Path \$destDir)) { New-Item -ItemType Directory -Path \$destDir -Force | Out-Null }
-                        Copy-Item \$_.FullName \$destPath
-                    }
-                }
-            }
-            
-            # Create zip file
-            [System.IO.Compression.ZipFile]::CreateFromDirectory(\$tempDir, \$destination)
-            
-            # Cleanup
-            Remove-Item \$tempDir -Recurse -Force
-            
-            Write-Host 'Created ' + \$func + '.zip with shared modules using PowerShell'
-        "
-    fi
     
     [ -f "$func.zip" ] || error "Failed to create $func.zip"
     

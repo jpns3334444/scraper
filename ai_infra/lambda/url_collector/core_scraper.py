@@ -191,6 +191,11 @@ def collect_area_listing_urls(area_name, max_pages=None, session=None, logger=No
 
 def collect_area_listings_with_prices(area_name, max_pages=None, session=None, logger=None):
     """Collect listing URLs with prices from a specific Tokyo area"""
+    # Validate area_name to prevent malformed URLs
+    if not area_name or not area_name.strip():
+        raise ValueError(f"Invalid area_name: '{area_name}' - area_name cannot be empty or None")
+    
+    area_name = area_name.strip()
     base_url = f"https://www.homes.co.jp/mansion/chuko/tokyo/{area_name}/list"
     
     if session is None:

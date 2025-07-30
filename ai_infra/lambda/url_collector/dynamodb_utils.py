@@ -373,6 +373,41 @@ def scan_unprocessed_urls(table, logger=None):
             logger.error(f"Failed to scan unprocessed URLs: {str(e)}")
         return []
 
+def load_all_urls_from_tracking_table(table, logger=None):
+    """Load ALL URLs from tracking table into a set for fast lookups"""
+    if logger:
+        logger.info("Loading all URLs from tracking table...")
+    
+    tracking_urls = set()
+    
+    try:
+        scan_kwargs = {}
+        
+        items_processed = 0
+        while True:
+            response = table.scan(**scan_kwargs)
+            items = response.get('Items', [])
+            
+            for item in items:
+                url = item.get('url')
+                if url:
+                    tracking_urls.add(url)
+                    items_processed += 1
+            
+            if 'LastEvaluatedKey' not in response:
+                break
+            scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
+        
+        if logger:
+            logger.debug(f"Loaded {items_processed} URLs from tracking table")
+        
+        return tracking_urls
+        
+    except Exception as e:
+        if logger:
+            logger.error(f"Failed to load URLs from tracking table: {str(e)}")
+        return set()
+
 def mark_url_processed(url, table, logger=None):
     """Mark URL as processed by setting processed = 'Y'"""
     try:

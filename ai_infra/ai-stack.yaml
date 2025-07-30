@@ -224,9 +224,7 @@ Resources:
           KeyType: HASH
         - AttributeName: sort_key
           KeyType: RANGE
-      ProvisionedThroughput:
-        ReadCapacityUnits: 5
-        WriteCapacityUnits: 5
+      BillingMode: PAY_PER_REQUEST
       GlobalSecondaryIndexes:
         - IndexName: district-index
           KeySchema:
@@ -234,9 +232,6 @@ Resources:
               KeyType: HASH
           Projection:
             ProjectionType: ALL
-          ProvisionedThroughput:
-            ReadCapacityUnits: 5
-            WriteCapacityUnits: 5
         - IndexName: GSI_DIST_PPSQM
           KeySchema:
             - AttributeName: district_key
@@ -252,9 +247,6 @@ Resources:
               - num_bedrooms
               - building_age_years
               - station_distance_minutes
-          ProvisionedThroughput:
-            ReadCapacityUnits: 5
-            WriteCapacityUnits: 5
         - IndexName: GSI_INVEST
           KeySchema:
             - AttributeName: invest_partition
@@ -270,9 +262,6 @@ Resources:
               - recommendation
               - district
               - total_sqm
-          ProvisionedThroughput:
-            ReadCapacityUnits: 5
-            WriteCapacityUnits: 5
         - IndexName: GSI_ANALYSIS_DATE
           KeySchema:
             - AttributeName: invest_partition
@@ -281,9 +270,6 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
-          ProvisionedThroughput:
-            ReadCapacityUnits: 5
-            WriteCapacityUnits: 5
 
   # DynamoDB Table for URL Tracking (DYDB2)
   URLTrackingDB:
@@ -296,9 +282,7 @@ Resources:
       KeySchema:
         - AttributeName: url
           KeyType: HASH
-      ProvisionedThroughput:
-        ReadCapacityUnits: 5
-        WriteCapacityUnits: 10
+      BillingMode: PAY_PER_REQUEST
 
   # Lambda Functions (using AWS prebuilt layers + our OpenAI layer)
   ETLFunction:
