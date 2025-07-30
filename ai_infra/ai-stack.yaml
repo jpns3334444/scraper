@@ -32,7 +32,7 @@ Parameters:
   DailyDigestCodeVersion:
     Type: String
     Default: latest
-  ScraperCodeVersion:
+  DashboardAPICodeVersion:
     Type: String
     Default: latest
   URLCollectorCodeVersion:
@@ -144,9 +144,9 @@ Resources:
                   - !GetAtt DynamoDBWriterDeadLetterQueue.Arn
                   - !GetAtt SnapshotGeneratorDeadLetterQueue.Arn
                   - !GetAtt DailyDigestDeadLetterQueue.Arn
-                  - !GetAtt ScraperDeadLetterQueue.Arn
+                  - !GetAtt DashboardAPIDeadLetterQueue.Arn
 
-  # Simplified IAM Role for Scraper (removed CloudWatch metrics and Step Functions permissions)
+  # Simplified IAM Role for URL collection and property processing functions
   ScraperExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -195,9 +195,9 @@ Resources:
                 Action:
                   - sqs:SendMessage
                 Resource:
-                  - !GetAtt ScraperDeadLetterQueue.Arn
                   - !GetAtt URLCollectorDeadLetterQueue.Arn
                   - !GetAtt PropertyProcessorDeadLetterQueue.Arn
+                  - !GetAtt DashboardAPIDeadLetterQueue.Arn
 
   # DynamoDB Table for Real Estate Analysis
   RealEstateAnalysisDB:
@@ -459,32 +459,27 @@ Resources:
           EMAIL_TO: !Ref EmailTo
           LEAN_MODE: !Ref LeanMode
 
-  # Simplified Scraper Function
-  ScraperFunction:
+  # Dashboard API Function
+  DashboardAPIFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${AWS::StackName}-scraper'
+      FunctionName: !Sub '${AWS::StackName}-dashboard-api'
       Runtime: python3.12
-      Handler: main_scraper.lambda_handler  # Updated handler path
-      Role: !GetAtt ScraperExecutionRole.Arn  # Use simplified role
+      Handler: app.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
       Code:
         S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/scraper.zip
-        S3ObjectVersion: !Ref ScraperCodeVersion
-      Timeout: 900  # 15 minutes - scraping can take time
-      MemorySize: 2048
+        S3Key: functions/dashboard_api.zip
+        S3ObjectVersion: !Ref DashboardAPICodeVersion
+      Timeout: 30  # API Gateway timeout limit
+      MemorySize: 512
       Layers:
         - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
       DeadLetterConfig:
-        TargetArn: !GetAtt ScraperDeadLetterQueue.Arn
+        TargetArn: !GetAtt DashboardAPIDeadLetterQueue.Arn
       Environment:
         Variables:
-          OUTPUT_BUCKET: !Ref OutputBucket
           DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
-          MAX_PROPERTIES: '0'  # 0 = unlimited
-          MAX_THREADS: '1'     # Single-threaded for anti-bot protection
-          AREAS: ''            # Empty = auto-detect all areas
-          # Removed: BATCH_SIZE, AI_WORKFLOW_ARN, and other unnecessary variables
 
   # URL Collector Lambda Function
   URLCollectorFunction:
@@ -974,27 +969,6 @@ Resources:
               "date": "$$.State.EnteredTime"
             }
 
-  # Daily scraper rule (separate from AI analysis)
-  DailyScraperRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub '${AWS::StackName}-daily-scraper'
-      Description: 'Run scraper daily at 17:00 UTC (02:00 JST)'
-      ScheduleExpression: 'cron(0 17 * * ? *)'
-      State: ENABLED
-      Targets:
-        - Arn: !GetAtt ScraperFunction.Arn
-          Id: 'ScraperTarget'
-
-  # Lambda permission for EventBridge to invoke scraper
-  ScraperEventPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref ScraperFunction
-      Action: lambda:InvokeFunction
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt DailyScraperRule.Arn
-
   # Daily snapshot generation rule (08:55 JST = 23:55 UTC)
   DailySnapshotRule:
     Type: AWS::Events::Rule
@@ -1114,10 +1088,10 @@ Resources:
       QueueName: !Sub '${AWS::StackName}-daily-digest-dlq'
       MessageRetentionPeriod: 1209600  # 14 days
 
-  ScraperDeadLetterQueue:
+  DashboardAPIDeadLetterQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub '${AWS::StackName}-scraper-dlq'
+      QueueName: !Sub '${AWS::StackName}-dashboard-api-dlq'
       MessageRetentionPeriod: 1209600  # 14 days
 
   URLCollectorDeadLetterQueue:
@@ -1183,11 +1157,11 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}-DailyDigestFunctionArn'
 
-  ScraperFunctionArn:
-    Description: 'ARN of the Scraper Lambda function'
-    Value: !GetAtt ScraperFunction.Arn
+  DashboardAPIFunctionArn:
+    Description: 'ARN of the Dashboard API Lambda function'
+    Value: !GetAtt DashboardAPIFunction.Arn
     Export:
-      Name: !Sub '${AWS::StackName}-ScraperFunctionArn'
+      Name: !Sub '${AWS::StackName}-DashboardAPIFunctionArn'
 
   URLCollectorFunctionArn:
     Description: 'ARN of the URL Collector Lambda function'

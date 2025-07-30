@@ -132,17 +132,17 @@ REPORT_SENDER_VERSION="latest"
 DYNAMODB_WRITER_VERSION="latest"
 SNAPSHOT_GENERATOR_VERSION="latest"
 DAILY_DIGEST_VERSION="latest"
-SCRAPER_VERSION="latest"
 URL_COLLECTOR_VERSION="latest"
 PROPERTY_PROCESSOR_VERSION="latest"
+DASHBOARD_API_VERSION="latest"
 
-for func in etl prompt_builder llm_batch report_sender dynamodb_writer snapshot_generator daily_digest scraper url_collector property_processor; do
+for func in etl prompt_builder llm_batch report_sender dynamodb_writer snapshot_generator daily_digest url_collector property_processor dashboard_api; do
     [ -d "lambda/$func" ] || error "Function directory lambda/$func not found"
     
     info "Packaging $func..."
     
-    # Handle scraper-specific dependencies (and new scraper functions)
-    if [ "$func" = "scraper" ] || [ "$func" = "url_collector" ] || [ "$func" = "property_processor" ]; then
+    # Handle scraper-specific dependencies
+    if [ "$func" = "url_collector" ] || [ "$func" = "property_processor" ]; then
         info "Installing scraper dependencies..."
         
         # Create temporary directory for dependencies
@@ -197,7 +197,7 @@ def create_zip(func_name, output_zip):
                     file_path = os.path.join(root, file)
                     
                     # Handle deps directory specially for scraper functions
-                    if func_name in ['scraper', 'url_collector', 'property_processor'] and '/deps/' in file_path:
+                    if func_name in ['url_collector', 'property_processor'] and '/deps/' in file_path:
                         # Put deps contents at root level for imports
                         arc_name = os.path.relpath(file_path, os.path.join(func_dir, 'deps'))
                     else:
@@ -261,21 +261,21 @@ print('Created $func.zip with shared modules')
         daily_digest)
             DAILY_DIGEST_VERSION="$OBJECT_VERSION"
             ;;
-        scraper)
-            SCRAPER_VERSION="$OBJECT_VERSION"
-            ;;
         url_collector)
             URL_COLLECTOR_VERSION="$OBJECT_VERSION"
             ;;
         property_processor)
             PROPERTY_PROCESSOR_VERSION="$OBJECT_VERSION"
             ;;
+        dashboard_api)
+            DASHBOARD_API_VERSION="$OBJECT_VERSION"
+            ;;
     esac
     
     rm $func.zip
     
     # Clean up scraper dependencies
-    if [ "$func" = "scraper" ] || [ "$func" = "url_collector" ] || [ "$func" = "property_processor" ]; then
+    if [ "$func" = "url_collector" ] || [ "$func" = "property_processor" ]; then
         rm -rf "lambda/$func/deps"
         info "Cleaned up $func dependencies"
     fi
@@ -340,9 +340,9 @@ aws cloudformation deploy \
       DynamoDBWriterCodeVersion=$DYNAMODB_WRITER_VERSION \
       SnapshotGeneratorCodeVersion=$SNAPSHOT_GENERATOR_VERSION \
       DailyDigestCodeVersion=$DAILY_DIGEST_VERSION \
-      ScraperCodeVersion=$SCRAPER_VERSION \
       URLCollectorCodeVersion=$URL_COLLECTOR_VERSION \
       PropertyProcessorCodeVersion=$PROPERTY_PROCESSOR_VERSION \
+      DashboardAPICodeVersion=$DASHBOARD_API_VERSION \
       OpenAILayerObjectVersion=$LAYER_OBJECT_VERSION
 
 status "✅ CloudFormation stack deployed"
@@ -361,10 +361,10 @@ ETL_FUNCTION_ARN=$(aws cloudformation describe-stacks \
     --query 'Stacks[0].Outputs[?OutputKey==`ETLFunctionArn`].OutputValue' \
     --output text 2>/dev/null)
 
-SCRAPER_FUNCTION_ARN=$(aws cloudformation describe-stacks \
+DASHBOARD_API_FUNCTION_ARN=$(aws cloudformation describe-stacks \
     --stack-name $STACK_NAME \
     --region $REGION \
-    --query 'Stacks[0].Outputs[?OutputKey==`ScraperFunctionArn`].OutputValue' \
+    --query 'Stacks[0].Outputs[?OutputKey==`DashboardAPIFunctionArn`].OutputValue' \
     --output text 2>/dev/null)
 
 URL_COLLECTOR_FUNCTION_ARN=$(aws cloudformation describe-stacks \
@@ -392,16 +392,16 @@ echo ""
 echo "🔧 Stack Resources:"
 echo "  State Machine: $STATE_MACHINE_ARN"
 echo "  ETL Function: $ETL_FUNCTION_ARN"
-echo "  Scraper Function: $SCRAPER_FUNCTION_ARN"
 echo "  URL Collector Function: $URL_COLLECTOR_FUNCTION_ARN"
 echo "  Property Processor Function: $PROPERTY_PROCESSOR_FUNCTION_ARN"
+echo "  Dashboard API Function: $DASHBOARD_API_FUNCTION_ARN"
 echo ""
 echo "🧪 Test Commands:"
 echo "  # Test ETL function"
 echo "  aws lambda invoke --function-name $STACK_NAME-etl --payload '{\"date\":\"$(date +%Y-%m-%d)\"}' test-response.json --region $REGION"
 echo ""
-echo "  # Test Scraper function"
-echo "  aws lambda invoke --function-name $STACK_NAME-scraper --payload '{\"max_properties\":5}' scraper-response.json --region $REGION"
+echo "  # Test Dashboard API function"
+echo "  aws lambda invoke --function-name $STACK_NAME-dashboard-api --payload '{}' dashboard-api-response.json --region $REGION"
 echo ""
 echo "  # Test URL Collector function"
 echo "  aws lambda invoke --function-name $STACK_NAME-url-collector --payload '{\"areas\":\"chofu-city\"}' url-collector-response.json --region $REGION"
