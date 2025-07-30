@@ -22,7 +22,10 @@
       "Bash(./trigger_ai_workflow.sh:*)",
       "Bash(sudo docker:*)",
       "Bash(aws cloudformation:*)",
-      "Bash(aws dynamodb wait:*)"
+      "Bash(aws dynamodb wait:*)",
+      "Bash(mkdir:*)",
+      "Bash(pip install:*)",
+      "Bash(aws lambda update-function-code:*)"
     ],
     "deny": []
   }

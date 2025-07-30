@@ -62,7 +62,7 @@ def create_session(logger=None):
     return session
 
 def parse_price_from_text(price_text):
-    """Parse price text like '1,980万円' to numeric value in man-yen"""
+    """Parse price text like '32,000万円' or '32,000' to numeric value in man-yen"""
     if not price_text:
         return 0
     
@@ -72,15 +72,15 @@ def parse_price_from_text(price_text):
         
         # Handle different formats
         if '万円' in price_clean:
-            # Format: "1,980万円" -> 1980
+            # Format: "32,000万円" -> 32000
             number_part = price_clean.replace('万円', '').replace(',', '')
             return int(float(number_part))
-        elif '円' in price_clean:
-            # Format: "19,800,000円" -> 1980
+        elif '円' in price_clean and '万円' not in price_clean:
+            # Format: "320,000,000円" -> 32000 (convert from yen to man-yen)
             number_part = price_clean.replace('円', '').replace(',', '')
             return int(float(number_part) / 10000)  # Convert to man-yen
         else:
-            # Try to extract just numbers
+            # Format: "32,000" (assuming it's already in man-yen) -> 32000
             number_part = price_clean.replace(',', '')
             if number_part.isdigit():
                 return int(number_part)
@@ -101,63 +101,118 @@ def extract_listing_urls_from_html(html_content):
     return list(unique_listings)
 
 def extract_listings_with_prices_from_html(html_content):
-    """Extract listing URLs with prices using regex only - no BeautifulSoup"""
+    """Extract listing URLs with prices from HTML structure where price number and unit are in separate elements"""
     listings = []
     seen_urls = set()
     
-    # Method 1: Find URL and price in proximity (most reliable)
-    # This regex looks for a URL followed by a price within ~200 characters
-    pattern = re.compile(
-        r'(/mansion/b-\d+/?)[^<]*(?:<[^>]*>[^<]*)*?(\d{1,4}(?:,\d{3})*万円)',
-        re.DOTALL
-    )
+    # Method 1: Look for the specific HTML structure with separate price elements
+    # Pattern: <td class="price"><span class="num">32,000</span>万円</td>
+    price_pattern = r'<td[^>]*class="price"[^>]*><span[^>]*class="num"[^>]*>([\d,]+)</span>万円</td>'
+    url_pattern = r'/mansion/b-(\d+)/?'
     
-    for match in pattern.finditer(html_content):
-        url = match.group(1)
-        price_text = match.group(2)
+    # Find all price matches with their positions
+    price_matches = list(re.finditer(price_pattern, html_content))
+    url_matches = list(re.finditer(url_pattern, html_content))
+    
+    # For each URL, find the nearest price within reasonable distance
+    for url_match in url_matches:
+        url = url_match.group(0)
+        url_pos = url_match.start()
         
-        if url not in seen_urls:
-            seen_urls.add(url)
-            absolute_url = f"https://www.homes.co.jp{url.rstrip('/')}"
-            listings.append({
-                'url': absolute_url,
-                'price': parse_price_from_text(price_text),
-                'price_text': price_text
-            })
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
+        
+        # Find the closest price match (within 1000 characters)
+        closest_price = None
+        min_distance = float('inf')
+        
+        for price_match in price_matches:
+            price_pos = price_match.start()
+            distance = abs(price_pos - url_pos)
+            
+            # Price should be reasonably close to URL (within 1000 chars)
+            if distance < 1000 and distance < min_distance:
+                min_distance = distance
+                closest_price = price_match.group(1)
+        
+        # Create price text and parse it
+        if closest_price:
+            price_text = f"{closest_price}万円"
+            price = parse_price_from_text(price_text)
+        else:
+            price_text = ''
+            price = 0
+        
+        absolute_url = f"https://www.homes.co.jp{url.rstrip('/')}"
+        listings.append({
+            'url': absolute_url,
+            'price': price,
+            'price_text': price_text
+        })
     
-    # Method 2: If method 1 finds too few, try alternate pattern
-    if len(listings) < 10:  # Suspiciously few listings
-        # Clear and try different approach
+    # Method 2: Fallback to simpler patterns if method 1 finds too few
+    if len(listings) < 10:
         listings.clear()
         seen_urls.clear()
         
-        # Find all URLs first
-        urls = re.findall(r'/mansion/b-\d+/?', html_content)
+        # Try simpler proximity-based matching
+        pattern = re.compile(
+            r'(/mansion/b-\d+/?)[^<]*(?:<[^>]*>[^<]*)*?(\d{1,4}(?:,\d{3})*万円)',
+            re.DOTALL
+        )
         
-        for url in set(urls):
-            absolute_url = f"https://www.homes.co.jp{url.rstrip('/')}"
+        for match in pattern.finditer(html_content):
+            url = match.group(1)
+            price_text = match.group(2)
             
-            # Find price after this URL (within 500 chars)
-            url_pos = html_content.find(url)
-            if url_pos != -1:
-                search_text = html_content[url_pos:url_pos + 500]
-                price_match = re.search(r'(\d{1,4}(?:,\d{3})*万円)', search_text)
+            if url not in seen_urls:
+                seen_urls.add(url)
+                absolute_url = f"https://www.homes.co.jp{url.rstrip('/')}"
+                listings.append({
+                    'url': absolute_url,
+                    'price': parse_price_from_text(price_text),
+                    'price_text': price_text
+                })
+        
+        # Method 3: If still too few, find all URLs and try to match prices
+        if len(listings) < 10:
+            listings.clear()
+            seen_urls.clear()
+            
+            urls = re.findall(r'/mansion/b-\d+/?', html_content)
+            
+            for url in set(urls):
+                absolute_url = f"https://www.homes.co.jp{url.rstrip('/')}"
                 
-                if price_match:
-                    price_text = price_match.group(1)
-                    price = parse_price_from_text(price_text)
+                # Find price after this URL (within 500 chars)
+                url_pos = html_content.find(url)
+                if url_pos != -1:
+                    search_text = html_content[url_pos:url_pos + 500]
+                    
+                    # Try different price patterns
+                    price_match = re.search(r'<span[^>]*class="num"[^>]*>([\d,]+)</span>万円', search_text)
+                    if not price_match:
+                        price_match = re.search(r'(\d{1,4}(?:,\d{3})*万円)', search_text)
+                    
+                    if price_match:
+                        if 'num' in price_match.group(0):  # First pattern matched
+                            price_text = f"{price_match.group(1)}万円"
+                        else:  # Second pattern matched
+                            price_text = price_match.group(1)
+                        price = parse_price_from_text(price_text)
+                    else:
+                        price = 0
+                        price_text = ''
                 else:
                     price = 0
                     price_text = ''
-            else:
-                price = 0
-                price_text = ''
-            
-            listings.append({
-                'url': absolute_url,
-                'price': price,
-                'price_text': price_text
-            })
+                
+                listings.append({
+                    'url': absolute_url,
+                    'price': price,
+                    'price_text': price_text
+                })
     
     return listings
 

@@ -378,7 +378,10 @@ def mark_url_processed(url, table, logger=None):
     try:
         table.update_item(
             Key={'url': url},
-            UpdateExpression="SET processed = :processed",
+            UpdateExpression="SET #processed = :processed",
+            ExpressionAttributeNames={
+                '#processed': 'processed'
+            },
             ExpressionAttributeValues={
                 ':processed': 'Y'
             }

@@ -428,52 +428,11 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
                     if any(pattern in src.lower() for pattern in ['photo', 'image', 'pic', 'img']):
                         image_urls.add(src)
         
-        # Limit to 10 images per property
-        urls = list(image_urls)[:10]
+        # Limit to 5 images per property (reduced from 10 for better performance)
+        urls = list(image_urls)[:5]
         
-        # Download and process images
-        for i, img_url in enumerate(urls):
-            try:
-                img_response = session.get(img_url, timeout=10)
-                if img_response.status_code == 200:
-                    content_type = img_response.headers.get('content-type', 'image/jpeg')
-                    
-                    if 'image' in content_type:
-                        # Skip tiny images
-                        if len(img_response.content) < 1000:
-                            continue
-                        
-                        # Convert and resize image
-                        img = Image.open(io.BytesIO(img_response.content))
-                        
-                        if img.mode not in ('RGB', 'L'):
-                            img = img.convert('RGB')
-                        
-                        img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
-                        
-                        output_buffer = io.BytesIO()
-                        img.save(output_buffer, format='JPEG', quality=85, optimize=True)
-                        output_buffer.seek(0)
-                        processed_image_bytes = output_buffer.getvalue()
-                        
-                        # Upload to S3
-                        if bucket and property_id:
-                            s3_key = upload_image_to_s3(
-                                processed_image_bytes, 
-                                bucket, 
-                                property_id, 
-                                i, 
-                                logger=logger
-                            )
-                            if s3_key:
-                                s3_keys.append(s3_key)
-                        
-                        time.sleep(0.2)  # Small delay between downloads
-                        
-            except Exception as e:
-                if logger:
-                    logger.debug(f"Failed to download image {i}: {str(e)}")
-                continue
+        # Download and process images in parallel
+        s3_keys = download_images_parallel(urls, session, bucket, property_id, logger)
 
         return s3_keys
         
@@ -481,6 +440,84 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
         if logger:
             logger.error(f"Image extraction error: {str(e)}")
         return []
+
+def download_single_image(session, img_url, index, bucket, property_id, logger):
+    """Download and process a single image"""
+    try:
+        img_response = session.get(img_url, timeout=10)
+        if img_response.status_code == 200:
+            content_type = img_response.headers.get('content-type', 'image/jpeg')
+            
+            if 'image' in content_type:
+                # Skip tiny images
+                if len(img_response.content) < 1000:
+                    return None
+                
+                # Convert and resize image
+                img = Image.open(io.BytesIO(img_response.content))
+                
+                if img.mode not in ('RGB', 'L'):
+                    img = img.convert('RGB')
+                
+                img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+                
+                output_buffer = io.BytesIO()
+                img.save(output_buffer, format='JPEG', quality=85, optimize=True)
+                output_buffer.seek(0)
+                processed_image_bytes = output_buffer.getvalue()
+                
+                # Upload to S3
+                if bucket and property_id:
+                    s3_key = upload_image_to_s3(
+                        processed_image_bytes, 
+                        bucket, 
+                        property_id, 
+                        index, 
+                        logger=logger
+                    )
+                    return s3_key
+        
+        return None
+        
+    except Exception as e:
+        if logger:
+            logger.debug(f"Failed to download image {index}: {str(e)}")
+        return None
+
+def download_images_parallel(image_urls, session, bucket, property_id, logger):
+    """Download images in parallel with limited concurrency"""
+    if not image_urls:
+        return []
+    
+    s3_keys = []
+    max_workers = min(3, len(image_urls))  # Limit to 3-5 concurrent downloads as requested
+    
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all download tasks
+            future_to_index = {}
+            for i, img_url in enumerate(image_urls):
+                future = executor.submit(
+                    download_single_image, 
+                    session, img_url, i, bucket, property_id, logger
+                )
+                future_to_index[future] = i
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_index):
+                try:
+                    s3_key = future.result()
+                    if s3_key:
+                        s3_keys.append(s3_key)
+                except Exception as e:
+                    if logger:
+                        logger.debug(f"Image download future failed: {str(e)}")
+    
+    except Exception as e:
+        if logger:
+            logger.debug(f"Parallel image download failed: {str(e)}")
+    
+    return s3_keys
 
 def upload_image_to_s3(image_content, bucket, property_id, image_index, logger=None):
     """Upload image to S3"""

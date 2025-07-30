@@ -88,7 +88,7 @@ def parse_lambda_event(event):
         'max_concurrent_areas': event.get('max_concurrent_areas', int(os.environ.get('MAX_CONCURRENT_AREAS', '5'))),
         'areas': event.get('areas', os.environ.get('AREAS', '')),
         'dynamodb_table': event.get('dynamodb_table', os.environ.get('DYNAMODB_TABLE', 'tokyo-real-estate-ai-analysis-db')),
-        'url_tracking_table': event.get('url_tracking_table', os.environ.get('URL_TRACKING_TABLE', 'tokyo-real-estate-urls')),
+        'url_tracking_table': event.get('url_tracking_table', os.environ.get('URL_TRACKING_TABLE', 'tokyo-real-estate-ai-urls')),
         'log_level': event.get('log_level', os.environ.get('LOG_LEVEL', 'INFO'))
     }
 
@@ -106,7 +106,7 @@ def get_collector_config(args):
     
     return config
 
-def collect_area_urls_parallel_worker(area, existing_properties, rate_limiter, logger=None):
+def collect_area_urls_parallel_worker(area, existing_properties, existing_urls, rate_limiter, logger=None):
     """Worker function for parallel area URL collection - no real-time DB updates"""
     try:
         if logger:
@@ -145,30 +145,33 @@ def collect_area_urls_parallel_worker(area, existing_properties, rate_limiter, l
                 url = listing['url']
                 list_page_price = listing['price']
                 
-                raw_property_id = extract_property_id_from_url(url)
-                if not raw_property_id:
-                    new_urls.append(url)
-                    continue
-                
-                if raw_property_id in existing_properties:
-                    existing_property = existing_properties[raw_property_id]
-                    stored_price = existing_property.get('price', 0)
-                    
-                    # Compare prices
-                    if list_page_price > 0 and stored_price > 0 and list_page_price != stored_price:
-                        # Store price change info for batch update
-                        price_changes.append({
-                            'property_id': existing_property['property_id'],
-                            'url': url,
-                            'old_price': stored_price,
-                            'new_price': list_page_price
-                        })
+                # First check: Is this URL already in the tracking table?
+                if url in existing_urls:
+                    # URL exists in tracking table, check for price changes
+                    raw_property_id = extract_property_id_from_url(url)
+                    if raw_property_id and raw_property_id in existing_properties:
+                        # Property has been scraped, check for price changes
+                        existing_property = existing_properties[raw_property_id]
+                        stored_price = existing_property.get('price', 0)
+                        
+                        if list_page_price > 0 and stored_price > 0 and list_page_price != stored_price:
+                            # Price changed
+                            price_changes.append({
+                                'property_id': existing_property['property_id'],
+                                'url': url,
+                                'old_price': stored_price,
+                                'new_price': list_page_price
+                            })
+                        else:
+                            # Price unchanged
+                            unchanged_urls.append(url)
                     else:
+                        # URL tracked but not yet scraped (no price comparison possible)
                         unchanged_urls.append(url)
                     
                     already_tracked_count += 1
                 else:
-                    # New property
+                    # Truly new URL - not in tracking table
                     new_urls.append(url)
             
             rate_limiter.record_success()
@@ -229,12 +232,15 @@ def collect_urls_and_track_new(areas, config, logger=None):
         logger.info(f"Starting parallel URL collection for {len(areas)} areas")
     
     try:
-        # Load existing properties (thread-safe read-only access)
+        # Load existing properties (for price comparison)
         dynamodb, table = setup_dynamodb_client(logger)
         existing_properties = load_all_existing_properties(table, logger)
         
         # Setup URL tracking table
         _, url_tracking_table = setup_url_tracking_table(config['url_tracking_table'], logger)
+        
+        # Load existing URLs from tracking table (for new URL detection)
+        existing_urls = load_all_urls_from_tracking_table(url_tracking_table, logger)
         
         # Get parallel processing configuration
         max_concurrent = config.get('max_concurrent_areas', 5)
@@ -258,6 +264,7 @@ def collect_urls_and_track_new(areas, config, logger=None):
                     collect_area_urls_parallel_worker, 
                     area, 
                     existing_properties, 
+                    existing_urls,
                     rate_limiter, 
                     logger
                 ): area for area in areas

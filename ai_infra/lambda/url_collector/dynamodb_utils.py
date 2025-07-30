@@ -51,7 +51,7 @@ def create_property_id_key(raw_property_id, date_str=None):
     return f"PROP#{date_str}_{raw_property_id}"
 
 def load_all_existing_properties(table, logger=None):
-    """Load all existing properties from DynamoDB"""
+    """Load all existing properties from DynamoDB with robust ID extraction"""
     if logger:
         logger.info("Loading existing properties from DynamoDB...")
     
@@ -69,16 +69,35 @@ def load_all_existing_properties(table, logger=None):
             
             for item in items:
                 property_id = item.get('property_id', '')
+                raw_property_id = None
+                
+                # Method 1: Extract from property_id field (format: PROP#YYYYMMDD_123456)
                 if property_id and '#' in property_id and '_' in property_id:
-                    raw_property_id = property_id.split('#')[1].split('_')[1]
-                    if raw_property_id:
-                        existing_properties[raw_property_id] = {
-                            'property_id': item.get('property_id'),
-                            'price': int(item.get('price', 0)),
-                            'listing_url': item.get('listing_url', ''),
-                            'analysis_date': item.get('analysis_date', '')
-                        }
-                        items_processed += 1
+                    try:
+                        # Split on '#' and then on '_' to get the raw ID
+                        parts = property_id.split('#')
+                        if len(parts) >= 2:
+                            date_and_id = parts[1]  # Get "YYYYMMDD_123456"
+                            if '_' in date_and_id:
+                                raw_property_id = date_and_id.split('_', 1)[1]  # Get "123456"
+                    except (IndexError, ValueError):
+                        pass
+                
+                # Method 2: Fallback to extracting from listing_url if property_id extraction failed
+                if not raw_property_id:
+                    listing_url = item.get('listing_url', '')
+                    if listing_url:
+                        raw_property_id = extract_property_id_from_url(listing_url)
+                
+                # If we successfully extracted an ID, add it to the dictionary
+                if raw_property_id:
+                    existing_properties[raw_property_id] = {
+                        'property_id': item.get('property_id'),
+                        'price': int(item.get('price', 0)),
+                        'listing_url': item.get('listing_url', ''),
+                        'analysis_date': item.get('analysis_date', '')
+                    }
+                    items_processed += 1
             
             if 'LastEvaluatedKey' not in response:
                 break
@@ -86,6 +105,9 @@ def load_all_existing_properties(table, logger=None):
         
         if logger:
             logger.debug(f"Loaded {items_processed} existing properties")
+            # Debug: Show sample IDs being loaded
+            sample_ids = list(existing_properties.keys())[:10]
+            logger.debug(f"Sample existing IDs: {sample_ids}")
         
         return existing_properties
         
@@ -275,7 +297,7 @@ def process_listings_with_existing_check(listings, existing_properties, logger=N
 
 # URL Tracking Table (DYDB2) Functions
 
-def setup_url_tracking_table(table_name='tokyo-real-estate-urls', logger=None):
+def setup_url_tracking_table(table_name='tokyo-real-estate-ai-urls', logger=None):
     """Setup URL tracking table reference"""
     try:
         dynamodb = boto3.resource('dynamodb', region_name='ap-northeast-1')
