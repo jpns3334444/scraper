@@ -13,6 +13,7 @@ import boto3
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Queue
+import resource
 
 # Import analysis modules
 try:
@@ -40,6 +41,12 @@ except ImportError as e:
         def __init__(self, stage): pass
         def __enter__(self): return self
         def __exit__(self, *args): pass
+
+def get_memory_usage():
+    """Get current memory usage in MB"""
+    # For Lambda, use resource module
+    usage = resource.getrusage(resource.RUSAGE_SELF)
+    return usage.ru_maxrss / 1024  # Convert to MB
 
 class SessionLogger:
     """Simple logger that automatically includes session_id in all messages"""
@@ -86,6 +93,9 @@ class SessionPool:
             ]
             session.headers['Accept-Language'] = random.choice(lang_variations)
             
+            # Add creation timestamp for cleanup
+            session._created_at = time.time()
+            
             self.sessions.put(session)
     
     def get_session(self):
@@ -100,6 +110,46 @@ class SessionPool:
             # Pool is full, close the session
             session.close()
     
+    def get_pool_stats(self):
+        """Get current pool statistics"""
+        return {
+            'available': self.sessions.qsize(),
+            'total': self.sessions.maxsize,
+            'in_use': self.sessions.maxsize - self.sessions.qsize()
+        }
+
+    def cleanup_stale_sessions(self):
+        """Remove and recreate stale sessions"""
+        cleaned = 0
+        temp_sessions = []
+        
+        # Extract all sessions
+        while not self.sessions.empty():
+            try:
+                session = self.sessions.get_nowait()
+                # Check if session is still healthy (you can add more checks)
+                if hasattr(session, '_created_at') and (time.time() - session._created_at) > 300:  # 5 minutes
+                    session.close()
+                    cleaned += 1
+                else:
+                    temp_sessions.append(session)
+            except:
+                break
+        
+        # Put healthy sessions back
+        for session in temp_sessions:
+            self.sessions.put(session)
+        
+        # Create new sessions to replace cleaned ones
+        if cleaned > 0:
+            from core_scraper import create_session
+            for _ in range(cleaned):
+                session = create_session()
+                session._created_at = time.time()
+                self.sessions.put(session)
+        
+        return cleaned
+
     def close_all(self):
         """Close all sessions in the pool"""
         while not self.sessions.empty():
@@ -214,9 +264,12 @@ def write_job_summary(summary_data):
     except Exception as e:
         print(f"Failed to write summary: {e}")
 
-def process_single_url(url, session_pool, rate_limiter, url_tracking_table, config, logger, image_rate_limiter, enrichment_context=None):
+def process_single_url(url, session_pool, rate_limiter, url_tracking_table, config, logger, image_rate_limiter, enrichment_context=None, processed_urls=None):
     """Process a single URL with rate limiting, error handling, and enrichment"""
     session = None
+    if processed_urls is None:
+        processed_urls = set()
+    
     try:
         # Acquire rate limit token
         rate_limiter.acquire()
@@ -321,7 +374,10 @@ def process_single_url(url, session_pool, rate_limiter, url_tracking_table, conf
         return result
         
     except Exception as e:
-        logger.error(f"Error processing {url}: {str(e)}")
+        # Duplicate error prevention
+        if url not in processed_urls:
+            logger.error(f"Error processing {url}: {str(e)}")
+            processed_urls.add(url)
         
         # Still mark as processed to avoid retry loops
         try:
@@ -344,6 +400,8 @@ def process_urls_parallel(urls, config, logger, job_start_time, max_runtime_seco
     # Setup parallel processing infrastructure
     session_pool = SessionPool(size=max_workers * 2)  # 2x workers for better utilization
     rate_limiter = RateLimiter(rate=requests_per_second)
+    last_cleanup_time = time.time()
+    processed_urls = set()  # Track processed URLs to prevent duplicate error logs
     
     # Create separate rate limiter for images with higher rate (for burst downloads per property)
     image_requests_per_second = requests_per_second * 2  # Allow 2x rate for images
@@ -354,6 +412,7 @@ def process_urls_parallel(urls, config, logger, job_start_time, max_runtime_seco
     
     results = []
     completed_count = 0
+    last_cleanup_time = time.time()
     
     try:
         logger.info(f"Starting parallel processing: {max_workers} workers, {requests_per_second} req/s (property), {image_requests_per_second} req/s (images)")
@@ -364,7 +423,7 @@ def process_urls_parallel(urls, config, logger, job_start_time, max_runtime_seco
             for url in urls:
                 future = executor.submit(
                     process_single_url, 
-                    url, session_pool, rate_limiter, url_tracking_table, config, logger, image_rate_limiter, enrichment_context
+                    url, session_pool, rate_limiter, url_tracking_table, config, logger, image_rate_limiter, enrichment_context, processed_urls
                 )
                 future_to_url[future] = url
             
@@ -391,7 +450,29 @@ def process_urls_parallel(urls, config, logger, job_start_time, max_runtime_seco
                         elapsed = (datetime.now() - job_start_time).total_seconds()
                         rate = completed_count / elapsed if elapsed > 0 else 0
                         progress_pct = (completed_count / len(urls)) * 100
-                        logger.info(f"Progress: {completed_count}/{len(urls)} ({progress_pct:.1f}%) - {rate:.1f} req/s")
+                        
+                        # Get pool stats
+                        pool_stats = session_pool.get_pool_stats()
+                        
+                        # Periodic session cleanup
+                        if time.time() - last_cleanup_time > 60:  # Every minute
+                            cleaned = session_pool.cleanup_stale_sessions()
+                            if cleaned > 0:
+                                logger.info(f"Cleaned {cleaned} stale sessions")
+                            last_cleanup_time = time.time()
+                        
+                        # Enhanced progress logging
+                        eta_seconds = int((len(urls) - completed_count) / rate) if rate > 0 else 0
+                        eta_str = f"{eta_seconds//60}m {eta_seconds%60}s" if eta_seconds > 0 else "calculating..."
+                        
+                        logger.info(f"Progress: {completed_count}/{len(urls)} ({progress_pct:.1f}%) - "
+                                   f"{rate:.1f} req/s - ETA: {eta_str} - "
+                                   f"Sessions: {pool_stats['in_use']}/{pool_stats['total']} in use")
+                        
+                        # Memory monitoring every 50 URLs
+                        if completed_count % 50 == 0:
+                            memory_mb = get_memory_usage()
+                            logger.info(f"Memory usage: {memory_mb:.1f} MB")
                 
                 except Exception as e:
                     logger.error(f"Future failed for {url}: {str(e)}")
@@ -415,6 +496,16 @@ def process_urls_in_batches(urls, config, logger, job_start_time, max_runtime_se
     failed_saves = []  # Track failed DynamoDB saves for retries
     total_saved = 0
     
+    # Add error tracking at the beginning of the function
+    error_stats = {
+        'http_404': 0,
+        'http_other': 0,
+        'dynamodb_errors': 0,
+        'parse_errors': 0,
+        'timeout_errors': 0,
+        'total_errors': 0
+    }
+    
     # Setup enrichment context if lean mode is enabled
     enrichment_context = None
     if LEAN_MODULES_AVAILABLE:
@@ -422,8 +513,8 @@ def process_urls_in_batches(urls, config, logger, job_start_time, max_runtime_se
             # Check if lean mode is enabled
             lean_mode_enabled = is_lean_mode()
             if not lean_mode_enabled:
-                # Try environment variable fallback
-                lean_mode_enabled = os.environ.get('LEAN_MODE', '0').lower() in ('1', 'true', 'yes', 'on', 'enabled')
+                # Try environment variable fallback (default to True)
+                lean_mode_enabled = os.environ.get('LEAN_MODE', '1').lower() in ('1', 'true', 'yes', 'on', 'enabled')
             
             if lean_mode_enabled:
                 logger.info("Lean mode enabled - setting up enrichment context")
@@ -510,12 +601,28 @@ def process_urls_in_batches(urls, config, logger, job_start_time, max_runtime_se
                 if 'error' not in result and result.get('price_per_sqm'):
                     enrichment_context['all_properties'].append(result)
         
-        # Track metrics and candidates
+        # Track metrics and candidates with enhanced error categorization
+        success_count = 0
+        error_count = 0
         for result in batch_results:
             if 'error' in result:
+                error_msg = str(result.get('error', '')).lower()
+                error_stats['total_errors'] += 1
+                
+                if 'http 404' in error_msg:
+                    error_stats['http_404'] += 1
+                elif 'http' in error_msg:
+                    error_stats['http_other'] += 1
+                elif 'timeout' in error_msg:
+                    error_stats['timeout_errors'] += 1
+                else:
+                    error_stats['parse_errors'] += 1
+                    
                 metrics['ProcessingErrors'] += 1
+                error_count += 1
             else:
                 metrics['PropertiesProcessed'] += 1
+                success_count += 1
                 
                 # Track score distribution
                 verdict = result.get('verdict', '')
@@ -546,9 +653,17 @@ def process_urls_in_batches(urls, config, logger, job_start_time, max_runtime_se
                         logger.warning(f"Batch {batch_num}: {unsaved_count} properties failed to save, adding to retry list")
                         failed_saves.extend(successful_properties[batch_saved:])  # Add unsaved items to retry list
                     
-                    logger.info(f"Batch {batch_num}: {batch_saved}/{len(successful_properties)} properties saved to DynamoDB (total: {total_saved})")
+                    logger.info(f"Batch {batch_num} complete: "
+                               f"{success_count} success, {error_count} errors "
+                               f"(404: {error_stats['http_404']}, HTTP: {error_stats['http_other']}, "
+                               f"Timeout: {error_stats['timeout_errors']}, Parse: {error_stats['parse_errors']}) - "
+                               f"{batch_saved}/{len(successful_properties)} saved to DynamoDB (total: {total_saved})")
                 else:
-                    logger.info(f"Batch {batch_num}: No successful properties to save")
+                    logger.info(f"Batch {batch_num} complete: "
+                               f"{success_count} success, {error_count} errors "
+                               f"(404: {error_stats['http_404']}, HTTP: {error_stats['http_other']}, "
+                               f"Timeout: {error_stats['timeout_errors']}, Parse: {error_stats['parse_errors']}) - "
+                               f"No successful properties to save")
                     
             except Exception as e:
                 logger.error(f"Batch {batch_num}: DynamoDB save failed completely: {str(e)}")

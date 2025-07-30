@@ -26,7 +26,7 @@ class LeanConfig:
         logger.info("Loading Lean v1.3 configuration...")
         
         # Master flags
-        self._cache['LEAN_MODE'] = self._get_bool_from_env('LEAN_MODE', default=False)
+        self._cache['LEAN_MODE'] = self._get_bool_from_env('LEAN_MODE', default=True)
         self._cache['LEAN_SCORING'] = self._get_bool_from_env('LEAN_SCORING', default=True)
         self._cache['LEAN_PROMPT'] = self._get_bool_from_env('LEAN_PROMPT', default=True)
         self._cache['LEAN_SCHEMA_ENFORCE'] = self._get_bool_from_env('LEAN_SCHEMA_ENFORCE', default=True)

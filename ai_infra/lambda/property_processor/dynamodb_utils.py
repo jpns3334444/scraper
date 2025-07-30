@@ -6,6 +6,31 @@ import boto3
 import re
 from datetime import datetime
 import time
+from decimal import Decimal
+
+def convert_to_decimal(value):
+    """Convert numeric values to Decimal for DynamoDB"""
+    if isinstance(value, float):
+        # Convert float to string first to avoid precision issues
+        return Decimal(str(value))
+    elif isinstance(value, int):
+        return Decimal(value)
+    return value
+
+def prepare_for_dynamodb(record):
+    """Recursively convert all numeric values to Decimal for DynamoDB"""
+    def convert_value(v):
+        if isinstance(v, float):
+            return Decimal(str(v))
+        elif isinstance(v, int):
+            return Decimal(v)
+        elif isinstance(v, dict):
+            return {k: convert_value(val) for k, val in v.items()}
+        elif isinstance(v, list):
+            return [convert_value(item) for item in v]
+        return v
+    
+    return {k: convert_value(v) for k, v in record.items()}
 
 def setup_dynamodb_client(logger=None):
     """Setup DynamoDB client and table reference"""
@@ -120,6 +145,8 @@ def save_complete_properties_to_dynamodb(properties_data, config, logger=None):
                     record = create_complete_property_record(property_data, config, logger)
                     
                     if record and record.get('property_id') and record.get('sort_key'):
+                        # Ensure all values are DynamoDB-compatible
+                        record = prepare_for_dynamodb(record)
                         batch.put_item(Item=record)
                         saved_count += 1
                         
@@ -256,7 +283,8 @@ def create_complete_property_record(property_data, config, logger=None):
         # Remove empty values and None
         record = {k: v for k, v in record.items() if v is not None and v != '' and v != []}
         
-        return record
+        # Convert all numeric values to Decimal before returning
+        return prepare_for_dynamodb(record)
         
     except Exception as e:
         if logger:
