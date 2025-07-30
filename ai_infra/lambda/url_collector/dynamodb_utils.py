@@ -423,3 +423,100 @@ def mark_url_processed(url, table, logger=None):
         if logger:
             logger.error(f"Failed to mark URL processed {url}: {str(e)}")
         return False
+
+def batch_update_price_changes(price_changes, table, logger=None):
+    """Batch update all price changes with proper DynamoDB operations"""
+    successful_updates = 0
+    failed_updates = 0
+    now = datetime.now()
+    
+    if not price_changes:
+        return 0
+    
+    try:
+        # Process updates one by one (update_item can't be batched)
+        # But we can batch the history records
+        history_records = []
+        
+        for change in price_changes:
+            try:
+                property_id = change['property_id']
+                old_price = change['old_price']
+                new_price = change['new_price']
+                
+                # Update META record (must be done individually)
+                try:
+                    table.update_item(
+                        Key={
+                            'property_id': property_id,
+                            'sort_key': 'META'
+                        },
+                        UpdateExpression="SET price = :new_price, analysis_date = :now, listing_status = :status",
+                        ExpressionAttributeValues={
+                            ':new_price': new_price,
+                            ':now': now.isoformat(),
+                            ':status': 'price_updated'
+                        },
+                        ConditionExpression="attribute_exists(property_id)"  # Only update if exists
+                    )
+                    
+                    # If update successful, prepare history record
+                    price_change_amt = new_price - old_price
+                    price_change_pct = (price_change_amt / old_price * 100) if old_price > 0 else 0
+                    
+                    history_records.append({
+                        'property_id': property_id,
+                        'sort_key': f"HIST#{now.strftime('%Y-%m-%d_%H:%M:%S')}_{successful_updates:04d}",
+                        'price': new_price,
+                        'previous_price': old_price,
+                        'price_change_amount': price_change_amt,
+                        'price_drop_pct': price_change_pct,
+                        'listing_status': 'price_updated',
+                        'analysis_date': now.isoformat(),
+                        'ttl_epoch': int(time.time()) + 60*60*24*365  # 1 year TTL
+                    })
+                    
+                    successful_updates += 1
+                    
+                except Exception as e:
+                    if 'ConditionalCheckFailedException' in str(e):
+                        if logger:
+                            logger.warning(f"Property {property_id} not found in META records")
+                    else:
+                        if logger:
+                            logger.error(f"Failed to update META for {property_id}: {str(e)}")
+                    failed_updates += 1
+                    
+            except Exception as e:
+                failed_updates += 1
+                if logger:
+                    logger.error(f"Error processing price change: {str(e)}")
+        
+        # Batch write history records
+        if history_records:
+            try:
+                with table.batch_writer() as batch:
+                    for record in history_records:
+                        batch.put_item(Item=record)
+                        
+                        # Log progress every 25 records
+                        if len(history_records) > 25 and (history_records.index(record) + 1) % 25 == 0:
+                            if logger:
+                                logger.debug(f"Batch history write progress: {history_records.index(record) + 1}/{len(history_records)}")
+                
+                if logger:
+                    logger.info(f"Successfully wrote {len(history_records)} history records")
+                    
+            except Exception as e:
+                if logger:
+                    logger.error(f"Failed to batch write history records: {str(e)}")
+        
+        if logger:
+            logger.info(f"Price update complete: {successful_updates} successful, {failed_updates} failed out of {len(price_changes)} total")
+        
+        return successful_updates
+        
+    except Exception as e:
+        if logger:
+            logger.error(f"Fatal error in batch price update: {str(e)}")
+        return successful_updates

@@ -76,7 +76,7 @@ from core_scraper import (
 )
 from dynamodb_utils import (
     setup_dynamodb_client, load_all_existing_properties,
-    extract_property_id_from_url, update_listing_with_price_change,
+    extract_property_id_from_url, batch_update_price_changes,
     setup_url_tracking_table, put_urls_batch_to_tracking_table,
     load_all_urls_from_tracking_table
 )
@@ -106,27 +106,14 @@ def get_collector_config(args):
     
     return config
 
-def collect_area_urls_parallel_worker(area, existing_properties, existing_urls_in_tracking, url_tracking_table, logger=None):
-    """Worker function for parallel area URL collection with price change detection"""
+def collect_area_urls_parallel_worker(area, existing_properties, rate_limiter, logger=None):
+    """Worker function for parallel area URL collection - no real-time DB updates"""
     try:
-        # Validate area parameter early
-        if not area or not area.strip():
-            error_msg = f"Invalid area parameter: '{area}' - area cannot be empty or None"
-            if logger:
-                logger.error(error_msg)
-            return {
-                'area': area,
-                'success': False,
-                'new_urls': [],
-                'price_changed_urls': [],
-                'unchanged_urls': [],
-                'already_tracked_urls': [],
-                'error': error_msg
-            }
-        
-        area = area.strip()
         if logger:
             logger.info(f"Starting area processing: {area}")
+        
+        # Apply rate limiting
+        rate_limiter.wait()
         
         # Create session for this thread
         session = create_session(logger)
@@ -142,20 +129,17 @@ def collect_area_urls_parallel_worker(area, existing_properties, existing_urls_i
                     'area': area,
                     'success': True,
                     'new_urls': [],
-                    'price_changed_urls': [],
+                    'price_changes': [],  # Return price changes for batch processing
                     'unchanged_urls': [],
-                    'already_tracked_urls': [],
+                    'already_tracked_count': 0,
                     'error': None
                 }
             
-            # Check against existing properties and categorize URLs
+            # Categorize URLs (NO database operations here)
             new_urls = []
-            price_changed_urls = []
+            price_changes = []  # Collect for batch update later
             unchanged_urls = []
-            already_tracked_urls = []
-            
-            # Setup DynamoDB for price updates
-            dynamodb, table = setup_dynamodb_client(logger)
+            already_tracked_count = 0
             
             for listing in area_listings:
                 url = listing['url']
@@ -163,70 +147,51 @@ def collect_area_urls_parallel_worker(area, existing_properties, existing_urls_i
                 
                 raw_property_id = extract_property_id_from_url(url)
                 if not raw_property_id:
-                    # Cannot determine property ID, check if URL exists in tracking table
-                    if url in existing_urls_in_tracking:
-                        already_tracked_urls.append(url)
-                    else:
-                        new_urls.append(url)
+                    new_urls.append(url)
                     continue
                 
-                # First, check if URL exists in the URL tracking table
-                if url in existing_urls_in_tracking:
-                    # URL already tracked, check if it's in analysis table
-                    if raw_property_id in existing_properties:
-                        existing_property = existing_properties[raw_property_id]
-                        stored_price = existing_property.get('price', 0)
-                        
-                        # Compare prices - only if we extracted a valid price from list page
-                        if list_page_price > 0 and stored_price > 0 and list_page_price != stored_price:
-                            # Price changed - update DYDB1
-                            try:
-                                success = update_listing_with_price_change(
-                                    existing_property, list_page_price, table, logger
-                                )
-                                if success:
-                                    price_changed_urls.append(url)
-                                    if logger:
-                                        logger.debug(f"Updated price for {raw_property_id}: {stored_price} -> {list_page_price}")
-                                else:
-                                    unchanged_urls.append(url)  # Failed to update, treat as unchanged
-                            except Exception as e:
-                                if logger:
-                                    logger.error(f"Failed to update price for {raw_property_id}: {str(e)}")
-                                unchanged_urls.append(url)
-                        else:
-                            # Price unchanged or couldn't determine price
-                            unchanged_urls.append(url)
+                if raw_property_id in existing_properties:
+                    existing_property = existing_properties[raw_property_id]
+                    stored_price = existing_property.get('price', 0)
+                    
+                    # Compare prices
+                    if list_page_price > 0 and stored_price > 0 and list_page_price != stored_price:
+                        # Store price change info for batch update
+                        price_changes.append({
+                            'property_id': existing_property['property_id'],
+                            'url': url,
+                            'old_price': stored_price,
+                            'new_price': list_page_price
+                        })
                     else:
-                        # URL is tracked but not analyzed yet (maybe failed processing or pending)
-                        already_tracked_urls.append(url)
+                        unchanged_urls.append(url)
+                    
+                    already_tracked_count += 1
                 else:
-                    # URL is truly new - doesn't exist in tracking table
+                    # New property
                     new_urls.append(url)
             
-            # Add new URLs to tracking table
-            if new_urls:
-                urls_added = put_urls_batch_to_tracking_table(new_urls, url_tracking_table, logger)
-                if logger:
-                    logger.debug(f"Added {urls_added} new URLs from {area} to tracking table")
-            
-            # Request completed successfully
+            rate_limiter.record_success()
             
             if logger:
-                logger.info(f"Area {area} completed: {len(new_urls)} new, {len(price_changed_urls)} price changes, {len(unchanged_urls)} unchanged, {len(already_tracked_urls)} already tracked")
+                logger.info(f"Area {area} completed: {len(new_urls)} new, {len(price_changes)} price changes, {len(unchanged_urls)} unchanged, {already_tracked_count} already tracked")
             
             return {
                 'area': area,
                 'success': True,
                 'new_urls': new_urls,
-                'price_changed_urls': price_changed_urls,
+                'price_changes': price_changes,  # Return for batch processing
                 'unchanged_urls': unchanged_urls,
-                'already_tracked_urls': already_tracked_urls,
+                'already_tracked_count': already_tracked_count,
                 'error': None
             }
             
         except Exception as e:
-            # Log error for monitoring
+            # Check if it's a rate limiting or anti-bot error
+            error_msg = str(e).lower()
+            is_rate_limit = any(code in error_msg for code in ['429', '403', 'rate limit', 'anti-bot'])
+            
+            rate_limiter.record_error(is_rate_limit)
             
             if logger:
                 logger.error(f"Error processing area {area}: {str(e)}")
@@ -235,9 +200,9 @@ def collect_area_urls_parallel_worker(area, existing_properties, existing_urls_i
                 'area': area,
                 'success': False,
                 'new_urls': [],
-                'price_changed_urls': [],
+                'price_changes': [],
                 'unchanged_urls': [],
-                'already_tracked_urls': [],
+                'already_tracked_count': 0,
                 'error': str(e)
             }
         
@@ -252,14 +217,14 @@ def collect_area_urls_parallel_worker(area, existing_properties, existing_urls_i
             'area': area,
             'success': False,
             'new_urls': [],
-            'price_changed_urls': [],
+            'price_changes': [],
             'unchanged_urls': [],
-            'already_tracked_urls': [],
+            'already_tracked_count': 0,
             'error': f"Critical error: {str(e)}"
         }
 
 def collect_urls_and_track_new(areas, config, logger=None):
-    """Collect URLs from all areas and track new ones in URL tracking table"""
+    """Collect URLs from all areas and batch update everything at the end"""
     if logger:
         logger.info(f"Starting parallel URL collection for {len(areas)} areas")
     
@@ -268,20 +233,21 @@ def collect_urls_and_track_new(areas, config, logger=None):
         dynamodb, table = setup_dynamodb_client(logger)
         existing_properties = load_all_existing_properties(table, logger)
         
-        # Setup URL tracking table and load existing URLs
+        # Setup URL tracking table
         _, url_tracking_table = setup_url_tracking_table(config['url_tracking_table'], logger)
-        existing_urls_in_tracking = load_all_urls_from_tracking_table(url_tracking_table, logger)
         
         # Get parallel processing configuration
         max_concurrent = config.get('max_concurrent_areas', 5)
         if logger:
             logger.info(f"Using {max_concurrent} concurrent workers for area processing")
         
+        # Create shared rate limiter
+        rate_limiter = RateLimiter(min_delay=1.0, max_delay=3.0)
+        
         # Collect results
         all_new_urls = []
-        all_price_changed_urls = []
+        all_price_changes = []  # Collect all price changes
         all_unchanged_urls = []
-        all_already_tracked_urls = []
         failed_areas = []
         
         # Use ThreadPoolExecutor for parallel processing
@@ -292,8 +258,7 @@ def collect_urls_and_track_new(areas, config, logger=None):
                     collect_area_urls_parallel_worker, 
                     area, 
                     existing_properties, 
-                    existing_urls_in_tracking,
-                    url_tracking_table,
+                    rate_limiter, 
                     logger
                 ): area for area in areas
             }
@@ -309,13 +274,12 @@ def collect_urls_and_track_new(areas, config, logger=None):
                     
                     if result['success']:
                         all_new_urls.extend(result['new_urls'])
-                        all_price_changed_urls.extend(result['price_changed_urls'])
+                        all_price_changes.extend(result['price_changes'])  # Collect price changes
                         all_unchanged_urls.extend(result['unchanged_urls'])
-                        all_already_tracked_urls.extend(result['already_tracked_urls'])
                         
                         if logger:
                             progress_pct = (completed_count / len(areas)) * 100
-                            logger.info(f"Progress: {completed_count}/{len(areas)} ({progress_pct:.1f}%) - {area}: {len(result['new_urls'])} new, {len(result['price_changed_urls'])} price changes, {len(result['unchanged_urls'])} unchanged, {len(result['already_tracked_urls'])} already tracked")
+                            logger.info(f"Progress: {completed_count}/{len(areas)} ({progress_pct:.1f}%) - {area}: {len(result['new_urls'])} new, {len(result['price_changes'])} price changes, {len(result['unchanged_urls'])} unchanged")
                     else:
                         failed_areas.append({'area': area, 'error': result['error']})
                         if logger:
@@ -326,6 +290,26 @@ def collect_urls_and_track_new(areas, config, logger=None):
                     if logger:
                         logger.error(f"Exception processing result for area {area}: {str(e)}")
         
+        # BATCH OPERATIONS START HERE
+        if logger:
+            logger.info("Starting batch database operations...")
+        
+        # Batch 1: Add new URLs to tracking table
+        if all_new_urls:
+            urls_added = put_urls_batch_to_tracking_table(all_new_urls, url_tracking_table, logger)
+            if logger:
+                logger.info(f"Batch added {urls_added} new URLs to tracking table")
+        
+        # Batch 2: Update all price changes at once
+        if all_price_changes:
+            if logger:
+                logger.info(f"Batch updating {len(all_price_changes)} price changes...")
+            
+            price_updates_successful = batch_update_price_changes(all_price_changes, table, logger)
+            
+            if logger:
+                logger.info(f"Successfully updated {price_updates_successful} prices")
+        
         # Report results
         success_count = len(areas) - len(failed_areas)
         if logger:
@@ -334,18 +318,17 @@ def collect_urls_and_track_new(areas, config, logger=None):
                 logger.warning(f"Failed areas: {[f['area'] for f in failed_areas]}")
         
         summary = {
-            'total_urls_found': len(all_new_urls) + len(all_price_changed_urls) + len(all_unchanged_urls) + len(all_already_tracked_urls),
+            'total_urls_found': len(all_new_urls) + len(all_price_changes) + len(all_unchanged_urls),
             'new_urls_tracked': len(all_new_urls),
             'existing_listings': len(all_unchanged_urls),
-            'price_changed_listings': len(all_price_changed_urls),
-            'already_tracked_listings': len(all_already_tracked_urls),
+            'price_changed_listings': len(all_price_changes),
             'successful_areas': success_count,
             'failed_areas': len(failed_areas),
             'failed_area_details': failed_areas
         }
         
         if logger:
-            logger.info(f"URL collection complete: {summary['new_urls_tracked']} new URLs added to tracking table, {summary['price_changed_listings']} price changes detected, {summary['already_tracked_listings']} URLs already tracked")
+            logger.info(f"URL collection complete: {summary['new_urls_tracked']} new URLs added to tracking table, {summary['price_changed_listings']} price changes detected")
         
         return summary
         
@@ -413,14 +396,13 @@ def main(event=None):
             "new_urls_tracked": collection_summary.get('new_urls_tracked', 0),
             "existing_listings": collection_summary.get('existing_listings', 0),
             "price_changed_listings": collection_summary.get('price_changed_listings', 0),
-            "already_tracked_listings": collection_summary.get('already_tracked_listings', 0),
             "status": "SUCCESS" if collection_summary.get('new_urls_tracked', 0) >= 0 else "FAILED"
         }
         
         write_job_summary(summary_data)
         
         logger.info(f"URL collection completed!")
-        logger.info(f"Results: {summary_data['new_urls_tracked']} new URLs tracked, {summary_data['price_changed_listings']} price changes, {summary_data['existing_listings']} unchanged, {summary_data['already_tracked_listings']} already tracked")
+        logger.info(f"Results: {summary_data['new_urls_tracked']} new URLs tracked, {summary_data['price_changed_listings']} price changes, {summary_data['existing_listings']} unchanged")
         logger.info(f"Duration: {duration:.1f} seconds")
         
         return summary_data
@@ -456,7 +438,6 @@ def lambda_handler(event, context):
                 'new_urls_tracked': result.get('new_urls_tracked', 0),
                 'existing_listings': result.get('existing_listings', 0),
                 'price_changed_listings': result.get('price_changed_listings', 0),
-                'already_tracked_listings': result.get('already_tracked_listings', 0),
                 'timestamp': datetime.now().isoformat()
             })
         }

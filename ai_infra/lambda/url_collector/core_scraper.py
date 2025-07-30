@@ -6,11 +6,8 @@ import time
 import requests
 import random
 import re
-from bs4 import BeautifulSoup
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from PIL import Image
-import io
 import boto3
 
 # Simplified browser profiles
@@ -104,83 +101,63 @@ def extract_listing_urls_from_html(html_content):
     return list(unique_listings)
 
 def extract_listings_with_prices_from_html(html_content):
-    """Extract listing URLs with prices from HTML content"""
-    from bs4 import BeautifulSoup
-    
-    soup = BeautifulSoup(html_content, 'html.parser')
+    """Extract listing URLs with prices using regex only - no BeautifulSoup"""
     listings = []
+    seen_urls = set()
     
-    # Look for listing containers - these may vary, so we'll try multiple selectors
-    listing_selectors = [
-        '.mod-mergeTable tr',  # Common table row format
-        '.property-item',      # Property item containers
-        '.listing-item',       # Alternative listing format
-        '.searchResult-item',  # Search result items
-        'tr[class*="item"]',   # Table rows with "item" in class
-        '.bukken-item'         # Property (bukken) items
-    ]
+    # Method 1: Find URL and price in proximity (most reliable)
+    # This regex looks for a URL followed by a price within ~200 characters
+    pattern = re.compile(
+        r'(/mansion/b-\d+/?)[^<]*(?:<[^>]*>[^<]*)*?(\d{1,4}(?:,\d{3})*万円)',
+        re.DOTALL
+    )
     
-    for selector in listing_selectors:
-        items = soup.select(selector)
-        if items:
-            for item in items:
-                # Find URL
-                url_link = item.find('a', href=re.compile(r'/mansion/b-\d+/?'))
-                if not url_link:
-                    continue
-                
-                relative_url = url_link.get('href')
-                if not relative_url:
-                    continue
-                
-                absolute_url = f"https://www.homes.co.jp{relative_url.rstrip('/')}"
-                
-                # Find price - try multiple approaches
-                price = 0
-                price_text = ""
-                
-                # Try different price selectors
-                price_selectors = [
-                    '.price',
-                    '.price-value', 
-                    '.bukken-price',
-                    '.mod-price',
-                    '[class*="price"]',
-                    'td[class*="price"]',
-                    '.searchResult-price'
-                ]
-                
-                for price_sel in price_selectors:
-                    price_elem = item.select_one(price_sel)
-                    if price_elem:
-                        price_text = price_elem.get_text(strip=True)
-                        break
-                
-                # If no dedicated price element, search for price patterns in text
-                if not price_text:
-                    item_text = item.get_text()
-                    price_match = re.search(r'(\d{1,4}(?:,\d{3})*万円)', item_text)
-                    if price_match:
-                        price_text = price_match.group(1)
-                
-                # Parse the price
-                if price_text:
-                    price = parse_price_from_text(price_text)
-                
-                listings.append({
-                    'url': absolute_url,
-                    'price': price,
-                    'price_text': price_text
-                })
+    for match in pattern.finditer(html_content):
+        url = match.group(1)
+        price_text = match.group(2)
+        
+        if url not in seen_urls:
+            seen_urls.add(url)
+            absolute_url = f"https://www.homes.co.jp{url.rstrip('/')}"
+            listings.append({
+                'url': absolute_url,
+                'price': parse_price_from_text(price_text),
+                'price_text': price_text
+            })
+    
+    # Method 2: If method 1 finds too few, try alternate pattern
+    if len(listings) < 10:  # Suspiciously few listings
+        # Clear and try different approach
+        listings.clear()
+        seen_urls.clear()
+        
+        # Find all URLs first
+        urls = re.findall(r'/mansion/b-\d+/?', html_content)
+        
+        for url in set(urls):
+            absolute_url = f"https://www.homes.co.jp{url.rstrip('/')}"
             
-            # If we found listings with this selector, use them
-            if listings:
-                break
-    
-    # Fallback to URL-only extraction if no prices found
-    if not listings:
-        urls = extract_listing_urls_from_html(html_content)
-        listings = [{'url': url, 'price': 0, 'price_text': ''} for url in urls]
+            # Find price after this URL (within 500 chars)
+            url_pos = html_content.find(url)
+            if url_pos != -1:
+                search_text = html_content[url_pos:url_pos + 500]
+                price_match = re.search(r'(\d{1,4}(?:,\d{3})*万円)', search_text)
+                
+                if price_match:
+                    price_text = price_match.group(1)
+                    price = parse_price_from_text(price_text)
+                else:
+                    price = 0
+                    price_text = ''
+            else:
+                price = 0
+                price_text = ''
+            
+            listings.append({
+                'url': absolute_url,
+                'price': price,
+                'price_text': price_text
+            })
     
     return listings
 
@@ -219,13 +196,23 @@ def collect_area_listings_with_prices(area_name, max_pages=None, session=None, l
         if "pardon our interruption" in response.text.lower():
             raise Exception(f"Anti-bot protection detected on {area_name}")
         
-        # Parse pagination info
-        soup = BeautifulSoup(response.content, 'html.parser')
-        total_element = soup.select_one('.totalNum')
-        total_count = int(total_element.text) if total_element else 0
-        
-        page_links = soup.select('a[data-page]')
-        total_pages = max([int(link.get('data-page', 1)) for link in page_links]) if page_links else 1
+        # Parse pagination info using regex
+        # Extract total count
+        total_count_match = re.search(r'<span[^>]*class="totalNum"[^>]*>(\d+)</span>', response.text)
+        total_count = int(total_count_match.group(1)) if total_count_match else 0
+
+        # Extract page numbers from data-page attributes
+        page_numbers = re.findall(r'data-page="(\d+)"', response.text)
+        total_pages = max([int(p) for p in page_numbers]) if page_numbers else 1
+
+        # Alternative: Look for the last page link
+        if not page_numbers:
+            # Try to find pagination links with page numbers in href
+            page_href_matches = re.findall(r'[?&]page=(\d+)', response.text)
+            if page_href_matches:
+                total_pages = max([int(p) for p in page_href_matches])
+            else:
+                total_pages = 1
         
         if max_pages:
             total_pages = min(total_pages, max_pages)
@@ -283,233 +270,11 @@ def collect_area_listings_with_prices(area_name, max_pages=None, session=None, l
         if should_close_session:
             session.close()
 
-def extract_property_details(session, property_url, referer_url, retries=3, config=None, logger=None):
-    """Extract detailed property information with retry logic"""
-    last_error = None
-    output_bucket = config.get('output_bucket', '') if config else ''
-    
-    for attempt in range(retries + 1):
-        try:
-            # Set referer and add delay
-            session.headers['Referer'] = referer_url
-            time.sleep(random.uniform(1, 2))
-            
-            response = session.get(property_url, timeout=15)
-            
-            if response.status_code != 200:
-                if attempt == retries:
-                    raise Exception(f"HTTP {response.status_code}")
-                time.sleep((2 ** attempt) + random.uniform(0, 1))
-                continue
-            
-            if "pardon our interruption" in response.text.lower():
-                raise Exception("Anti-bot protection detected")
-            
-            soup = BeautifulSoup(response.content, 'html.parser')
-            data = {
-                "url": property_url,
-                "extraction_timestamp": datetime.now().isoformat()
-            }
-            
-            # Extract property ID from URL
-            property_id = "unknown"
-            patterns = [
-                r'/mansion/b-(\d+)/?',
-                r'/b-(\d+)/?',
-                r'property[_-]?id[=:](\d+)',
-                r'mansion[_-]?(\d{8,})',
-                r'/(\d{10,})/'
-            ]
-            
-            for pattern in patterns:
-                match = re.search(pattern, property_url)
-                if match:
-                    property_id = match.group(1)
-                    break
-            
-            data["id"] = property_id
-            data["property_id"] = f"PROP#{datetime.now().strftime('%Y%m%d')}_{property_id}"
-            
-            # Extract title
-            h1_elements = soup.select('h1')
-            for h1 in h1_elements:
-                if h1.text.strip() and ('マンション' in h1.text or '万円' in h1.text):
-                    data["title"] = h1.text.strip()
-                    break
-            
-            # Extract price
-            price_pattern = re.search(r'(\d{1,4}(?:,\d{3})*万円)', response.text)
-            if price_pattern:
-                data["price"] = price_pattern.group(1)
-            
-            # Extract property details from tables
-            tables = soup.find_all('table')
-            for table in tables:
-                rows = table.find_all('tr')
-                if len(rows) > 10:
-                    for row in rows:
-                        cells = row.find_all(['th', 'td'])
-                        if len(cells) >= 2:
-                            key = cells[0].text.strip()
-                            value = cells[1].text.strip()
-                            if key and value and len(key) < 30:
-                                data[key] = value
-                    break
-            
-            # Extract images
-            try:
-                s3_keys = extract_property_images(
-                    soup, session, "https://www.homes.co.jp", 
-                    bucket=output_bucket, property_id=property_id,
-                    config=config, logger=logger
-                )
-                if s3_keys:
-                    data["photo_filenames"] = "|".join(s3_keys)
-                    data["image_count"] = len(s3_keys)
-                    
-            except Exception as e:
-                if logger:
-                    logger.debug(f"Image extraction failed: {str(e)}")
-            
-            return data
-            
-        except Exception as e:
-            last_error = e
-            if logger:
-                logger.debug(f"Attempt {attempt + 1} failed: {str(e)}")
-            
-            if attempt == retries:
-                break
-                
-            # Exponential backoff
-            time.sleep((2 ** attempt) + random.uniform(0, 1))
-    
-    if last_error:
-        raise last_error
-    else:
-        raise Exception("Max retries exceeded")
 
-def extract_property_images(soup, session, base_url, bucket=None, property_id=None, config=None, logger=None):
-    """Extract property images and upload to S3"""
-    s3_keys = []
-    image_urls = set()
-    
-    try:
-        # Image selectors
-        selectors = [
-            '.mainPhoto img',
-            '.detailPhoto img', 
-            '.gallery-item img',
-            '.photo-gallery img',
-            '.property-photos img',
-            '.mansion-photos img',
-            'img[src*="/photo/"]',
-            'img[src*="/image/"]',
-            'img[data-src*="photo"]',
-            '[class*="photo"] img'
-        ]
-        
-        for selector in selectors:
-            for img in soup.select(selector):
-                src = (img.get('src') or 
-                      img.get('data-src') or 
-                      img.get('data-original') or 
-                      img.get('data-lazy-src'))
-                
-                if src:
-                    # Convert to absolute URL
-                    if src.startswith('//'):
-                        src = 'https:' + src
-                    elif src.startswith('/'):
-                        src = base_url + src
-                    elif not src.startswith('http'):
-                        src = base_url + '/' + src.lstrip('/')
-                    
-                    # Filter out non-property images
-                    exclude_patterns = ['icon', 'logo', 'btn', 'button', 'arrow', 'banner']
-                    if any(pattern in src.lower() for pattern in exclude_patterns):
-                        continue
-                        
-                    if any(pattern in src.lower() for pattern in ['photo', 'image', 'pic', 'img']):
-                        image_urls.add(src)
-        
-        # Limit to 10 images per property
-        urls = list(image_urls)[:10]
-        
-        # Download and process images
-        for i, img_url in enumerate(urls):
-            try:
-                img_response = session.get(img_url, timeout=10)
-                if img_response.status_code == 200:
-                    content_type = img_response.headers.get('content-type', 'image/jpeg')
-                    
-                    if 'image' in content_type:
-                        # Skip tiny images
-                        if len(img_response.content) < 1000:
-                            continue
-                        
-                        # Convert and resize image
-                        img = Image.open(io.BytesIO(img_response.content))
-                        
-                        if img.mode not in ('RGB', 'L'):
-                            img = img.convert('RGB')
-                        
-                        img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
-                        
-                        output_buffer = io.BytesIO()
-                        img.save(output_buffer, format='JPEG', quality=85, optimize=True)
-                        output_buffer.seek(0)
-                        processed_image_bytes = output_buffer.getvalue()
-                        
-                        # Upload to S3
-                        if bucket and property_id:
-                            s3_key = upload_image_to_s3(
-                                processed_image_bytes, 
-                                bucket, 
-                                property_id, 
-                                i, 
-                                logger=logger
-                            )
-                            if s3_key:
-                                s3_keys.append(s3_key)
-                        
-                        time.sleep(0.2)  # Small delay between downloads
-                        
-            except Exception as e:
-                if logger:
-                    logger.debug(f"Failed to download image {i}: {str(e)}")
-                continue
 
-        return s3_keys
-        
-    except Exception as e:
-        if logger:
-            logger.error(f"Image extraction error: {str(e)}")
-        return []
-
-def upload_image_to_s3(image_content, bucket, property_id, image_index, logger=None):
-    """Upload image to S3"""
-    try:
-        date_str = datetime.now().strftime('%Y-%m-%d')
-        s3_key = f"raw/{date_str}/images/{property_id}_{image_index}.jpg"
-        
-        s3 = boto3.client("s3")
-        s3.put_object(
-            Bucket=bucket,
-            Key=s3_key,
-            Body=image_content,
-            ContentType='image/jpeg'
-        )
-        
-        return s3_key
-        
-    except Exception as e:
-        if logger:
-            logger.debug(f"S3 upload failed: {str(e)}")
-        return None
 
 def discover_tokyo_areas(logger=None):
-    """Discover all Tokyo area URLs"""
+    """Discover all Tokyo area URLs using regex"""
     session = create_session(logger)
     city_listing_url = "https://www.homes.co.jp/mansion/chuko/tokyo/city/"
     
@@ -518,41 +283,63 @@ def discover_tokyo_areas(logger=None):
         if response.status_code != 200:
             raise Exception(f"Failed to access city listing: HTTP {response.status_code}")
         
-        soup = BeautifulSoup(response.content, 'html.parser')
         area_links = []
         
-        # Find area links
-        for link in soup.find_all('a', href=True):
-            href = link['href']
-            if '/mansion/chuko/tokyo/' in href and href.endswith('/list/'):
-                area_part = href.split('/mansion/chuko/tokyo/')[-1].replace('/list/', '')
-                # More robust validation to prevent empty or invalid areas
-                if area_part and area_part.strip() and area_part != 'city' and '/' not in area_part:
-                    clean_area = area_part.strip()
-                    if clean_area:  # Double check after stripping
-                        area_links.append(clean_area)
+        # Find area links using regex
+        # Pattern: /mansion/chuko/tokyo/AREA_NAME/list/
+        pattern = re.compile(r'/mansion/chuko/tokyo/([^/]+)/list/')
+        matches = pattern.findall(response.text)
         
-        # Use fallback list if no links found
-        if not area_links:
+        for area_name in matches:
+            # Clean and validate area name
+            area_name = area_name.strip()
+            # Skip invalid entries
+            if (area_name and 
+                area_name != 'city' and 
+                not area_name.startswith('.') and
+                not area_name.startswith('#') and
+                len(area_name) < 50):  # Reasonable length limit
+                area_links.append(area_name)
+        
+        # Remove duplicates and sort
+        area_links = sorted(list(set(area_links)))
+        
+        # Use fallback list if no links found or too few
+        if len(area_links) < 10:
+            if logger:
+                logger.warning(f"Only found {len(area_links)} areas, using fallback list")
             area_links = [
-                'shibuya-ku', 'shinjuku-ku', 'minato-ku', 'chiyoda-ku', 'chuo-ku',
-                'setagaya-ku', 'nerima-ku', 'suginami-ku', 'nakano-ku', 'itabashi-ku',
-                'chofu-city', 'mitaka-city', 'musashino-city', 'tachikawa-city'
+                'adachi-city', 'akiruno-city', 'akishima-city', 'arakawa-city',
+                'bunkyo-city', 'chiyoda-city', 'chofu-city', 'chuo-city',
+                'edogawa-city', 'fuchu-city', 'fussa-city', 'hachioji-city',
+                'hamura-city', 'higashikurume-city', 'higashimurayama-city',
+                'higashiyamato-city', 'hino-city', 'hinode-town', 'hinohara-village',
+                'inagi-city', 'itabashi-city', 'katsushika-city', 'kita-city',
+                'kiyose-city', 'kodaira-city', 'koganei-city', 'kokubunji-city',
+                'komae-city', 'koto-city', 'kunitachi-city', 'machida-city',
+                'meguro-city', 'minato-city', 'mitaka-city', 'mizuho-town',
+                'musashimurayama-city', 'musashino-city', 'nakano-city',
+                'nerima-city', 'nishitokyo-city', 'ome-city', 'ota-city',
+                'okutama-town', 'setagaya-city', 'shibuya-city', 'shinagawa-city',
+                'shinjuku-city', 'suginami-city', 'sumida-city', 'tachikawa-city',
+                'taito-city', 'tama-city', 'toshima-city'
             ]
         
-        valid_areas = sorted(list(set(area_links)))
-        
         if logger:
-            logger.debug(f"Discovered {len(valid_areas)} Tokyo areas")
+            logger.debug(f"Discovered {len(area_links)} Tokyo areas")
         
-        return valid_areas
+        return area_links
         
     except Exception as e:
         if logger:
             logger.error(f"Failed to discover areas: {str(e)}")
         
-        # Return fallback list
-        return ['chofu-city', 'shibuya-ku', 'shinjuku-ku', 'setagaya-ku']
+        # Return comprehensive fallback list
+        return [
+            'chofu-city', 'shibuya-city', 'shinjuku-city', 'setagaya-city',
+            'minato-city', 'chiyoda-city', 'chuo-city', 'meguro-city',
+            'ota-city', 'shinagawa-city', 'nerima-city', 'suginami-city'
+        ]
     
     finally:
         session.close()
