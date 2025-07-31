@@ -89,6 +89,59 @@ def parse_price_from_text(price_text):
     
     return 0
 
+def normalize_ward_name(area_name):
+    """Convert URL area names to standard ward names"""
+    # Handle both -ku and -city patterns
+    ward_map = {
+        'chiyoda-ku': '千代田区',
+        'chuo-ku': '中央区', 
+        'minato-ku': '港区',
+        'shinjuku-ku': '新宿区',
+        'bunkyo-ku': '文京区',
+        'taito-ku': '台東区',
+        'sumida-ku': '墨田区',
+        'koto-ku': '江東区',
+        'shinagawa-ku': '品川区',
+        'meguro-ku': '目黒区',
+        'ota-ku': '大田区',
+        'setagaya-ku': '世田谷区',
+        'shibuya-ku': '渋谷区',
+        'nakano-ku': '中野区',
+        'suginami-ku': '杉並区',
+        'toshima-ku': '豊島区',
+        'kita-ku': '北区',
+        'arakawa-ku': '荒川区',
+        'itabashi-ku': '板橋区',
+        'nerima-ku': '練馬区',
+        'adachi-ku': '足立区',
+        'katsushika-ku': '葛飾区',
+        'edogawa-ku': '江戸川区',
+        # Add cities
+        'hachioji-city': '八王子市',
+        'tachikawa-city': '立川市',
+        'musashino-city': '武蔵野市',
+        'mitaka-city': '三鷹市',
+        'chofu-city': '調布市',
+        'fuchu-city': '府中市',
+        'machida-city': '町田市',
+        'koganei-city': '小金井市',
+        'kodaira-city': '小平市',
+        'hino-city': '日野市',
+        'higashimurayama-city': '東村山市',
+        'kokubunji-city': '国分寺市',
+        'kunitachi-city': '国立市',
+        'nishitokyo-city': '西東京市',
+        'tanashi-city': '田無市',
+        'akishima-city': '昭島市',
+        'inagi-city': '稲城市',
+        'hamura-city': '羽村市',
+        'akiruno-city': 'あきる野市',
+        'fukutomi-city': '福生市'
+    }
+    
+    # Return the Japanese name if mapping found, otherwise return the English name
+    return ward_map.get(area_name, area_name)
+
 def extract_listing_urls_from_html(html_content):
     """Extract unique listing URLs from HTML content"""
     relative_urls = re.findall(r'/mansion/b-\d+/?', html_content)
@@ -272,9 +325,13 @@ def collect_area_listings_with_prices(area_name, max_pages=None, session=None, l
         if max_pages:
             total_pages = min(total_pages, max_pages)
         
+        # Normalize ward name from area_name
+        ward = normalize_ward_name(area_name)
+        
         # Extract listings with prices from page 1
         page1_listings = extract_listings_with_prices_from_html(response.text)
         for listing in page1_listings:
+            listing['ward'] = ward  # Add ward to each listing
             all_listings[listing['url']] = listing
         
         # Set referer for subsequent requests
@@ -301,6 +358,7 @@ def collect_area_listings_with_prices(area_name, max_pages=None, session=None, l
                 
                 page_listings = extract_listings_with_prices_from_html(response.text)
                 for listing in page_listings:
+                    listing['ward'] = ward  # Add ward to each listing
                     all_listings[listing['url']] = listing
                 
                 session.headers['Referer'] = page_url

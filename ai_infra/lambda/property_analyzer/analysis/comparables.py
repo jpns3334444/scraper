@@ -44,10 +44,10 @@ class ComparablesFilter:
         """
         Find and format comparable properties for the target.
         
-        Filtering criteria:
-        - Price per sqm: ±30% of target
-        - Size: ±25% of target  
-        - Age: ±10 years of target
+        Filtering criteria (relaxed):
+        - Price per sqm: ±40% of target (relaxed from ±30%)
+        - Size: ±35% of target (relaxed from ±25%)
+        - Age: ±15 years of target (relaxed from ±10 years, optional if missing)
         
         Args:
             target_property: Property to find comparables for
@@ -72,13 +72,13 @@ class ComparablesFilter:
         valid_count = sum(1 for p in candidate_properties if p.get('price_per_sqm', 0) > 0 and p.get('size_sqm', 0) > 0)
         logger.debug(f"Properties with valid price_per_sqm and size_sqm: {valid_count}/{len(candidate_properties)}")
         
-        # Calculate filtering thresholds
-        ppsm_min = target_ppsm * 0.7   # -30%
-        ppsm_max = target_ppsm * 1.3   # +30%
-        size_min = target_size * 0.75  # -25%
-        size_max = target_size * 1.25  # +25%
-        age_min = max(0, target_age - 10)  # -10 years
-        age_max = target_age + 10          # +10 years
+        # Calculate filtering thresholds (relaxed criteria)
+        ppsm_min = target_ppsm * 0.6   # -40% (relaxed from -30%)
+        ppsm_max = target_ppsm * 1.4   # +40% (relaxed from +30%)
+        size_min = target_size * 0.65  # -35% (relaxed from -25%)
+        size_max = target_size * 1.35  # +35% (relaxed from +25%)
+        age_min = max(0, target_age - 15) if target_age else 0  # -15 years (relaxed from -10), optional if age missing
+        age_max = target_age + 15 if target_age else 999        # +15 years (relaxed from +10), optional if age missing
         
         comparables = []
         
@@ -97,12 +97,13 @@ class ComparablesFilter:
                 logger.debug(f"Skipping property {prop.get('id', 'unknown')}: ppsm={prop_ppsm}, size={prop_size}")
                 continue
             
-            # Apply filters
+            # Apply filters (with relaxed age criteria)
             if not (ppsm_min <= prop_ppsm <= ppsm_max):
                 continue
             if not (size_min <= prop_size <= size_max):
                 continue
-            if not (age_min <= prop_age <= age_max):
+            # Age filter is optional - only apply if both target and prop have age data
+            if target_age and prop_age and not (age_min <= prop_age <= age_max):
                 continue
             
             # Calculate deltas for sorting
@@ -269,7 +270,7 @@ def find_and_format_comparables(target_property: Dict[str, Any],
 def select_comparables(subject: Dict[str, Any], pool: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Return up to 8 comparable listings filtered by:
-      ±30% price_per_sqm, ±25% size, ±10 years age (if age present).
+      ±40% price_per_sqm, ±35% size, ±15 years age (if age present).
     Sorted by absolute price_per_sqm delta then absolute size delta.
     
     Args:
@@ -288,13 +289,13 @@ def select_comparables(subject: Dict[str, Any], pool: List[Dict[str, Any]]) -> L
         logger.warning(f"Subject property {subject_id} missing price_per_sqm or size_sqm")
         return []
     
-    # Calculate filtering thresholds
-    ppsm_min = subject_ppsm * 0.7   # -30%
-    ppsm_max = subject_ppsm * 1.3   # +30%
-    size_min = subject_size * 0.75  # -25%
-    size_max = subject_size * 1.25  # +25%
-    age_min = max(0, subject_age - 10)  # -10 years
-    age_max = subject_age + 10          # +10 years
+    # Calculate filtering thresholds (relaxed criteria)
+    ppsm_min = subject_ppsm * 0.6   # -40% (relaxed from -30%)
+    ppsm_max = subject_ppsm * 1.4   # +40% (relaxed from +30%)
+    size_min = subject_size * 0.65  # -35% (relaxed from -25%)
+    size_max = subject_size * 1.35  # +35% (relaxed from +25%)
+    age_min = max(0, subject_age - 15) if subject_age else 0  # -15 years (relaxed from -10), optional if age missing
+    age_max = subject_age + 15 if subject_age else 999        # +15 years (relaxed from +10), optional if age missing
     
     comps = []
     
@@ -311,12 +312,13 @@ def select_comparables(subject: Dict[str, Any], pool: List[Dict[str, Any]]) -> L
         if not prop_ppsm or not prop_size:
             continue
         
-        # Apply filters
+        # Apply filters (with relaxed age criteria)
         if not (ppsm_min <= prop_ppsm <= ppsm_max):
             continue
         if not (size_min <= prop_size <= size_max):
             continue
-        if not (age_min <= prop_age <= age_max):
+        # Age filter is optional - only apply if both subject and prop have age data
+        if subject_age and prop_age and not (age_min <= prop_age <= age_max):
             continue
         
         # Calculate deltas for sorting

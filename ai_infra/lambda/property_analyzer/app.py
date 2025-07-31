@@ -7,6 +7,7 @@ import os
 import json
 import time
 from datetime import datetime, timedelta
+from decimal import Decimal
 import boto3
 from boto3.dynamodb.conditions import Key, Attr
 import logging
@@ -20,6 +21,7 @@ sys.path.append('../property_processor')
 try:
     from analysis.lean_scoring import LeanScoring, Verdict
     from analysis.comparables import ComparablesFilter, enrich_property_with_comparables
+    from analysis.vision_stub import basic_condition_from_images
     from util.metrics import emit_pipeline_metrics, emit_properties_processed, emit_candidates_enqueued
     ANALYSIS_MODULES_AVAILABLE = True
 except ImportError as e:
@@ -28,6 +30,7 @@ except ImportError as e:
     LeanScoring = None
     ComparablesFilter = None
     enrich_property_with_comparables = lambda x, y: x
+    basic_condition_from_images = lambda x: {'condition_category': 'dated', 'damage_tokens': [], 'summary': 'No vision analysis', 'light': False}
 
 class SessionLogger:
     """Simple logger that automatically includes session_id in all messages"""
@@ -128,7 +131,6 @@ def load_all_properties_from_dynamodb(table, logger=None):
 
 def calculate_ward_medians(properties, logger=None):
     """Calculate ward median price per sqm from properties"""
-    from decimal import Decimal
     ward_data = {}
     
     for prop in properties:
@@ -155,7 +157,7 @@ def calculate_ward_medians(properties, logger=None):
             median_price = sorted_prices[median_idx]
             
             ward_medians[ward] = {
-                'ward_median_price_per_sqm': median_price,
+                'ward_median_price_per_sqm': Decimal(str(median_price)),
                 'ward_property_count': len(prices)
             }
     
@@ -184,16 +186,107 @@ def find_comparables_for_property(target_property, all_properties, logger=None):
             logger.debug(f"Failed to find comparables: {str(e)}")
         return []
 
+def extract_ward_from_text(address_text, logger=None):
+    """Fallback ward extraction for properties missing ward data"""
+    if not address_text:
+        return None
+    
+    address_clean = address_text.strip()
+    
+    # Tokyo 23 wards list
+    tokyo_wards = [
+        '千代田区', '中央区', '港区', '新宿区', '文京区', '台東区',
+        '墨田区', '江東区', '品川区', '目黒区', '大田区', '世田谷区',
+        '渋谷区', '中野区', '杉並区', '豊島区', '北区', '荒川区',
+        '板橋区', '練馬区', '足立区', '葛飾区', '江戸川区'
+    ]
+    
+    # Tokyo cities/municipalities
+    tokyo_cities = [
+        '八王子市', '立川市', '武蔵野市', '三鷹市', '青梅市', '府中市', '昭島市', '調布市',
+        '町田市', '日野市', '国分寺市', '国立市', '福生市', '狛江市', '東久留米市',
+        '武蔵村山市', '多摩市', '稲城市', '羽村市', 'あきる野市', '西東京市',
+        '清瀬市', '東村山市', '小平市'
+    ]
+    
+    # Try exact matches first
+    for ward in tokyo_wards:
+        if ward in address_clean:
+            return ward
+    
+    for city in tokyo_cities:
+        if city in address_clean:
+            return city
+    
+    # Try without 区/市 suffix
+    for ward in tokyo_wards:
+        ward_base = ward.replace('区', '')
+        if ward_base in address_clean and len(ward_base) > 1:
+            return ward
+    
+    for city in tokyo_cities:
+        city_base = city.replace('市', '')
+        if city_base in address_clean and len(city_base) > 1:  
+            return city
+    
+    if logger:
+        logger.debug(f"Could not extract ward from: {address_clean}")
+    
+    return None
+
 def calculate_property_score(property_data, ward_medians, all_properties, logger=None):
-    """Calculate score for a single property"""
+    """Calculate score for a single property with vision analysis and fallback ward detection"""
     try:
         if not ANALYSIS_MODULES_AVAILABLE:
             return None
+        
+        # Fallback ward detection if missing
+        if not property_data.get('ward'):
+            # Try to extract from address, title, or building_name if available
+            address_sources = []
+            for field in ['address', 'title', 'building_name']:
+                if property_data.get(field):
+                    address_sources.append(property_data[field])
+            
+            for address_text in address_sources:
+                ward_result = extract_ward_from_text(address_text, logger)
+                if ward_result:
+                    property_data['ward'] = ward_result
+                    if logger:
+                        logger.debug(f"Fallback ward detected: {ward_result}")
+                    break
+        
+        # Calculate missing price_per_sqm if needed
+        if (property_data.get('price', 0) > 0 and 
+            property_data.get('size_sqm', 0) > 0 and 
+            property_data.get('price_per_sqm', 0) == 0):
+            calculated_price_per_sqm = (property_data['price'] * 10000) / property_data['size_sqm']
+            property_data['price_per_sqm'] = calculated_price_per_sqm
+            if logger:
+                logger.debug(f"Recalculated missing price_per_sqm: {calculated_price_per_sqm:.0f} yen/sqm")
+        
+        # Add vision analysis from images
+        image_sources = property_data.get('photo_filenames', '').split('|') if property_data.get('photo_filenames') else []
+        if not image_sources:
+            # Try alternative image field names
+            image_sources = (property_data.get('image_urls', []) or 
+                           property_data.get('uploaded_image_urls', []) or
+                           property_data.get('interior_photos', []))
+        
+        if image_sources and image_sources != ['']:
+            vision_data = basic_condition_from_images(image_sources)
+            property_data['condition_category'] = vision_data['condition_category']
+            property_data['damage_tokens'] = vision_data['damage_tokens']
+            property_data['vision_light'] = vision_data['light']
+            if logger:
+                logger.debug(f"Vision analysis: {vision_data['condition_category']}, {len(vision_data['damage_tokens'])} damage tokens")
         
         # Add ward median data
         ward = property_data.get('ward')
         if ward and ward in ward_medians:
             property_data.update(ward_medians[ward])
+        elif ward and logger:
+            logger.debug(f"No median data available for ward: {ward}")
         
         # Find comparables
         comparables = find_comparables_for_property(property_data, all_properties, logger)
@@ -235,6 +328,27 @@ def calculate_property_score(property_data, ward_medians, all_properties, logger
             logger.error(f"Failed to calculate score for property {property_data.get('property_id', 'unknown')}: {str(e)}")
         return None
 
+def float_to_decimal(obj):
+    """Convert float values to Decimal for DynamoDB compatibility."""
+    if isinstance(obj, float):
+        # Convert float to Decimal, handling special cases
+        if obj != obj:  # NaN
+            return None
+        elif obj == float('inf'):
+            return None
+        elif obj == float('-inf'):
+            return None
+        else:
+            return Decimal(str(obj))
+    elif isinstance(obj, dict):
+        return {k: float_to_decimal(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [float_to_decimal(v) for v in obj]
+    elif isinstance(obj, tuple):
+        return tuple(float_to_decimal(v) for v in obj)
+    else:
+        return obj
+
 def update_property_in_dynamodb(table, property_id, scoring_data, ward_medians, logger=None):
     """Update property record with scoring data"""
     try:
@@ -257,13 +371,13 @@ def update_property_in_dynamodb(table, property_id, scoring_data, ward_medians, 
             for field in fields_to_update:
                 if field in scoring_data:
                     update_parts.append(f"{field} = :{field}")
-                    expr_attr_values[f":{field}"] = scoring_data[field]
+                    expr_attr_values[f":{field}"] = float_to_decimal(scoring_data[field])
         
         # Add ward median data
         if ward_median_data:
             for field, value in ward_median_data.items():
                 update_parts.append(f"{field} = :{field}")
-                expr_attr_values[f":{field}"] = value
+                expr_attr_values[f":{field}"] = float_to_decimal(value)
         
         # Add analysis timestamp
         update_parts.append("last_analyzed = :last_analyzed")

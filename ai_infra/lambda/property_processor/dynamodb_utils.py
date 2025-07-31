@@ -142,6 +142,9 @@ def save_complete_properties_to_dynamodb(properties_data, config, logger=None):
         if logger:
             logger.info(f"Saving {len(successful_properties)} properties to DynamoDB...")
         
+        # Load existing properties for price change tracking
+        existing_properties = load_all_existing_properties(table, logger)
+        
         # Save in batches  
         if logger:
             logger.debug(f"Starting DynamoDB batch write for {len(successful_properties)} properties")
@@ -169,7 +172,7 @@ def save_complete_properties_to_dynamodb(properties_data, config, logger=None):
         with table.batch_writer() as batch:
             for property_data in successful_properties:
                 try:
-                    record = create_complete_property_record(property_data, config, logger)
+                    record = create_complete_property_record(property_data, config, logger, existing_properties)
                     
                     if record and record.get('property_id') and record.get('sort_key'):
                         # Ensure all values are DynamoDB-compatible
@@ -203,11 +206,13 @@ def save_complete_properties_to_dynamodb(properties_data, config, logger=None):
             logger.error(f"Fatal DynamoDB error: {str(e)}")
         return 0
 
-def create_complete_property_record(property_data, config, logger=None):
-    """Create a complete property record with all enriched fields"""
+def create_complete_property_record(property_data, config, logger=None, existing_properties=None):
+    """Create a complete property record with all enriched fields and price tracking"""
     try:
         # Extract property ID - use existing if available
         property_id = property_data.get('property_id')
+        raw_property_id = None
+        
         if not property_id:
             raw_property_id = extract_property_id_from_url(property_data.get('url', ''))
             if raw_property_id:
@@ -218,6 +223,26 @@ def create_complete_property_record(property_data, config, logger=None):
                     url = property_data.get('url', 'unknown')
                     logger.error(f"No property_id could be created for URL: {url}")
                 return None
+        else:
+            # Extract raw_property_id from existing property_id
+            if '#' in property_id and '_' in property_id:
+                raw_property_id = property_id.split('#')[1].split('_')[1]
+        
+        # Check for existing property to track price changes
+        current_price = int(property_data.get('price', 0)) if property_data.get('price') else 0
+        previous_price = None
+        
+        if existing_properties and raw_property_id and raw_property_id in existing_properties:
+            existing_data = existing_properties[raw_property_id]
+            existing_price = existing_data.get('price', 0)
+            
+            # Only set previous_price if there's actually a price change
+            if existing_price != current_price and existing_price > 0:
+                previous_price = existing_price
+                if logger:
+                    logger.debug(f"Price change detected for {raw_property_id}: {existing_price} -> {current_price}")
+            elif logger:
+                logger.debug(f"No price change for {raw_property_id}: {existing_price}")
         
         # Remove verbose debug logging - only log errors
         # if logger:
@@ -241,7 +266,7 @@ def create_complete_property_record(property_data, config, logger=None):
             'address': property_data.get('address') or property_data.get('所在地', ''),
             
             # Core numeric fields (normalized)
-            'price': int(property_data.get('price', 0)) if property_data.get('price') else 0,
+            'price': current_price,
             'size_sqm': float(property_data.get('size_sqm', 0)) if property_data.get('size_sqm') else 0,
             'price_per_sqm': float(property_data.get('price_per_sqm', 0)) if property_data.get('price_per_sqm') else 0,
             'building_age_years': int(property_data.get('building_age_years', 0)) if property_data.get('building_age_years') is not None else None,
@@ -269,6 +294,10 @@ def create_complete_property_record(property_data, config, logger=None):
             # Single timestamp for all analysis
             'analysis_date': now.isoformat(),
         }
+        
+        # Add previous_price if there was a price change
+        if previous_price is not None:
+            record['previous_price'] = previous_price
         
         # Note: Scoring fields are now handled by PropertyAnalyzer Lambda
         # Removed: final_score, base_score, verdict, ward_medians, comparables, etc.
@@ -372,23 +401,25 @@ def setup_url_tracking_table(table_name='tokyo-real-estate-urls', logger=None):
             logger.error(f"URL tracking table setup failed: {str(e)}")
         raise
 
-def put_url_to_tracking_table(url, table, logger=None):
-    """Add URL to tracking table with processed = empty"""
+def put_url_to_tracking_table(url, table, ward=None, logger=None):
+    """Add URL to tracking table with ward information"""
     try:
-        table.put_item(
-            Item={
-                'url': url,
-                'processed': ''
-            }
-        )
+        item = {
+            'url': url,
+            'processed': '',
+        }
+        if ward:
+            item['ward'] = ward
+        
+        table.put_item(Item=item)
         return True
     except Exception as e:
         if logger:
             logger.error(f"Failed to put URL {url}: {str(e)}")
         return False
 
-def put_urls_batch_to_tracking_table(urls, table, logger=None):
-    """Add multiple URLs to tracking table in batch"""
+def put_urls_batch_to_tracking_table(urls, table, ward=None, logger=None):
+    """Add multiple URLs to tracking table in batch with ward information"""
     if not urls:
         return 0
     
@@ -398,12 +429,14 @@ def put_urls_batch_to_tracking_table(urls, table, logger=None):
         with table.batch_writer() as batch:
             for url in urls:
                 try:
-                    batch.put_item(
-                        Item={
-                            'url': url,
-                            'processed': ''
-                        }
-                    )
+                    item = {
+                        'url': url,
+                        'processed': ''
+                    }
+                    if ward:
+                        item['ward'] = ward
+                    
+                    batch.put_item(Item=item)
                     saved_count += 1
                 except Exception as e:
                     if logger:
@@ -420,8 +453,8 @@ def put_urls_batch_to_tracking_table(urls, table, logger=None):
         return 0
 
 def scan_unprocessed_urls(table, logger=None):
-    """Scan for all URLs where processed is empty"""
-    unprocessed_urls = []
+    """Scan for all URLs where processed is empty, including ward data"""
+    unprocessed_items = []
     
     try:
         scan_kwargs = {
@@ -435,16 +468,20 @@ def scan_unprocessed_urls(table, logger=None):
             for item in items:
                 url = item.get('url')
                 if url:
-                    unprocessed_urls.append(url)
+                    # Return full item with ward if available
+                    unprocessed_items.append({
+                        'url': url,
+                        'ward': item.get('ward')
+                    })
             
             if 'LastEvaluatedKey' not in response:
                 break
             scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
         
         if logger:
-            logger.debug(f"Found {len(unprocessed_urls)} unprocessed URLs")
+            logger.debug(f"Found {len(unprocessed_items)} unprocessed URLs")
         
-        return unprocessed_urls
+        return unprocessed_items
         
     except Exception as e:
         if logger:

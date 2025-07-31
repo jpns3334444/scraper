@@ -238,11 +238,20 @@ def write_job_summary(summary_data):
     except Exception as e:
         print(f"Failed to write summary: {e}")
 
-def process_single_url(url, session_pool, rate_limiter, url_tracking_table, config, logger, image_rate_limiter, processed_urls=None):
-    """Process a single URL with rate limiting and error handling - scraping only"""
+def process_single_url(url_data, session_pool, rate_limiter, url_tracking_table, config, logger, image_rate_limiter, processed_urls=None):
+    """Process a single URL with ward information and rate limiting - scraping only"""
     session = None
     if processed_urls is None:
         processed_urls = set()
+    
+    # Extract URL and ward
+    if isinstance(url_data, dict):
+        url = url_data.get('url')
+        ward = url_data.get('ward')
+    else:
+        # Backward compatibility
+        url = url_data
+        ward = None
     
     try:
         # Acquire rate limit token
@@ -255,11 +264,13 @@ def process_single_url(url, session_pool, rate_limiter, url_tracking_table, conf
         jitter_delay = random.uniform(0.5, 2.0)
         time.sleep(jitter_delay)
         
-        # Extract property details with session pool for images
+        # Extract property details with session pool for images and ward info
         result = extract_property_details(
             session, url, "https://www.homes.co.jp", 
             config=config, logger=logger,
-            session_pool=session_pool, image_rate_limiter=image_rate_limiter
+            session_pool=session_pool, 
+            image_rate_limiter=image_rate_limiter,
+            ward=ward  # ADD THIS
         )
         
         # Validate data
@@ -338,12 +349,12 @@ def process_urls_parallel(urls, config, logger, job_start_time, max_runtime_seco
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all tasks
             future_to_url = {}
-            for url in urls:
+            for url_item in urls:
                 future = executor.submit(
                     process_single_url, 
-                    url, session_pool, rate_limiter, url_tracking_table, config, logger, image_rate_limiter, processed_urls
+                    url_item, session_pool, rate_limiter, url_tracking_table, config, logger, image_rate_limiter, processed_urls
                 )
-                future_to_url[future] = url
+                future_to_url[future] = url_item
             
             # Process completed tasks
             for future in as_completed(future_to_url):
@@ -357,7 +368,8 @@ def process_urls_parallel(urls, config, logger, job_start_time, max_runtime_seco
                             remaining_future.cancel()
                     break
                 
-                url = future_to_url[future]
+                url_item = future_to_url[future]
+                url = url_item.get('url') if isinstance(url_item, dict) else url_item
                 try:
                     result = future.result()
                     results.append(result)
@@ -590,9 +602,9 @@ def main(event=None):
         
         # Get unprocessed URLs
         logger.info("Scanning for unprocessed URLs...")
-        unprocessed_urls = scan_unprocessed_urls(url_tracking_table, logger)
+        unprocessed_items = scan_unprocessed_urls(url_tracking_table, logger)
         
-        if not unprocessed_urls:
+        if not unprocessed_items:
             logger.info("No unprocessed URLs found")
             summary_data = {
                 "status": "SUCCESS_NO_URLS",
@@ -602,20 +614,20 @@ def main(event=None):
             write_job_summary(summary_data)
             return summary_data
         
-        logger.info(f"Found {len(unprocessed_urls)} unprocessed URLs")
+        logger.info(f"Found {len(unprocessed_items)} unprocessed URLs")
         
         # Apply limits
-        urls_to_process = unprocessed_urls
+        items_to_process = unprocessed_items
         if max_properties_limit > 0:
-            urls_to_process = urls_to_process[:max_properties_limit]
-            logger.info(f"Limited to {len(urls_to_process)} properties")
+            items_to_process = items_to_process[:max_properties_limit]
+            logger.info(f"Limited to {len(items_to_process)} properties")
         
         # Process URLs using parallel processing
-        logger.info(f"Processing {len(urls_to_process)} properties with parallel execution...")
+        logger.info(f"Processing {len(items_to_process)} properties with parallel execution...")
         logger.info(f"Configuration: {config['max_workers']} workers, {config['requests_per_second']} req/s, {config['batch_size']} batch size")
         
         listings_data = process_urls_in_batches(
-            urls_to_process, config, logger, job_start_time, max_runtime_seconds
+            items_to_process, config, logger, job_start_time, max_runtime_seconds
         )
         
         # Calculate statistics from results
@@ -669,8 +681,8 @@ def main(event=None):
             "end_time": job_end_time.isoformat(),
             "duration_seconds": duration,
             "session_id": config['session_id'],
-            "unprocessed_urls_found": len(unprocessed_urls),
-            "urls_attempted": len(urls_to_process),
+            "unprocessed_urls_found": len(unprocessed_items),
+            "urls_attempted": len(items_to_process),
             "successful_extractions": success_count,
             "failed_extractions": error_count, 
             "urls_marked_processed": processed_urls,

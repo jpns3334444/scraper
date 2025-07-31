@@ -316,23 +316,25 @@ def setup_url_tracking_table(table_name='tokyo-real-estate-ai-urls', logger=None
             logger.error(f"URL tracking table setup failed: {str(e)}")
         raise
 
-def put_url_to_tracking_table(url, table, logger=None):
-    """Add URL to tracking table with processed = empty"""
+def put_url_to_tracking_table(url, table, ward=None, logger=None):
+    """Add URL to tracking table with ward information"""
     try:
-        table.put_item(
-            Item={
-                'url': url,
-                'processed': ''
-            }
-        )
+        item = {
+            'url': url,
+            'processed': '',
+        }
+        if ward:
+            item['ward'] = ward
+        
+        table.put_item(Item=item)
         return True
     except Exception as e:
         if logger:
             logger.error(f"Failed to put URL {url}: {str(e)}")
         return False
 
-def put_urls_batch_to_tracking_table(urls, table, logger=None):
-    """Add multiple URLs to tracking table in batch"""
+def put_urls_batch_to_tracking_table(urls, table, ward=None, logger=None):
+    """Add multiple URLs to tracking table in batch with ward information"""
     if not urls:
         return 0
     
@@ -342,12 +344,14 @@ def put_urls_batch_to_tracking_table(urls, table, logger=None):
         with table.batch_writer() as batch:
             for url in urls:
                 try:
-                    batch.put_item(
-                        Item={
-                            'url': url,
-                            'processed': ''
-                        }
-                    )
+                    item = {
+                        'url': url,
+                        'processed': ''
+                    }
+                    if ward:
+                        item['ward'] = ward
+                    
+                    batch.put_item(Item=item)
                     saved_count += 1
                 except Exception as e:
                     if logger:

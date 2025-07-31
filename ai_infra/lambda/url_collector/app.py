@@ -144,6 +144,7 @@ def collect_area_urls_parallel_worker(area, existing_properties, existing_urls, 
             for listing in area_listings:
                 url = listing['url']
                 list_page_price = listing['price']
+                ward = listing.get('ward')  # Get ward from listing
                 
                 # First check: Is this URL already in the tracking table?
                 if url in existing_urls:
@@ -172,7 +173,7 @@ def collect_area_urls_parallel_worker(area, existing_properties, existing_urls, 
                     already_tracked_count += 1
                 else:
                     # Truly new URL - not in tracking table
-                    new_urls.append(url)
+                    new_urls.append({'url': url, 'ward': ward})
             
             rate_limiter.record_success()
             
@@ -301,11 +302,26 @@ def collect_urls_and_track_new(areas, config, logger=None):
         if logger:
             logger.info("Starting batch database operations...")
         
-        # Batch 1: Add new URLs to tracking table
+        # Batch 1: Add new URLs to tracking table with ward information
         if all_new_urls:
-            urls_added = put_urls_batch_to_tracking_table(all_new_urls, url_tracking_table, logger)
+            # Group URLs by ward for efficient batch operations
+            urls_by_ward = {}
+            for url_info in all_new_urls:
+                url = url_info['url']
+                ward = url_info.get('ward')
+                if ward not in urls_by_ward:
+                    urls_by_ward[ward] = []
+                urls_by_ward[ward].append(url)
+            
+            total_urls_added = 0
+            for ward, urls in urls_by_ward.items():
+                urls_added = put_urls_batch_to_tracking_table(urls, url_tracking_table, ward=ward, logger=logger)
+                total_urls_added += urls_added
+                if logger and ward:
+                    logger.debug(f"Added {urls_added} URLs for ward {ward}")
+            
             if logger:
-                logger.info(f"Batch added {urls_added} new URLs to tracking table")
+                logger.info(f"Batch added {total_urls_added} new URLs to tracking table across {len(urls_by_ward)} wards")
         
         # Batch 2: Update all price changes at once
         if all_price_changes:

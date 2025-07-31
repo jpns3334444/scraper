@@ -125,7 +125,7 @@ def parse_numeric_field(text, default=None):
     return default
 
 def parse_building_age(text):
-    """Parse building age from 築年月 field (e.g., '1999年3月' or '築25年')"""
+    """Parse building age from 築年月 field with enhanced era and format support"""
     if not text:
         return None
     
@@ -142,6 +142,35 @@ def parse_building_age(text):
             current_year = datetime.now().year
             age = current_year - built_year
             return age if age >= 0 else None
+        
+        # Pattern 3: Japanese era years (平成, 昭和, 令和)
+        # 平成 era: 1989-2019 (平成1年 = 1989)
+        heisei_match = re.search(r'平成(\d+)年', text)
+        if heisei_match:
+            heisei_year = int(heisei_match.group(1))
+            built_year = 1988 + heisei_year  # 平成1年 = 1989
+            current_year = datetime.now().year
+            age = current_year - built_year
+            return age if age >= 0 else None
+        
+        # 昭和 era: 1926-1989 (昭和1年 = 1926)
+        showa_match = re.search(r'昭和(\d+)年', text)
+        if showa_match:
+            showa_year = int(showa_match.group(1))
+            built_year = 1925 + showa_year  # 昭和1年 = 1926
+            current_year = datetime.now().year
+            age = current_year - built_year
+            return age if age >= 0 else None
+        
+        # 令和 era: 2019-present (令和1年 = 2019)
+        reiwa_match = re.search(r'令和(\d+)年', text)
+        if reiwa_match:
+            reiwa_year = int(reiwa_match.group(1))
+            built_year = 2018 + reiwa_year  # 令和1年 = 2019
+            current_year = datetime.now().year
+            age = current_year - built_year
+            return age if age >= 0 else None
+            
     except (ValueError, TypeError):
         pass
     
@@ -169,15 +198,15 @@ def parse_floor_info(text):
     
     return None, None
 
-def extract_ward_and_district(address_text):
-    """Extract ward and district from Japanese address"""
+def extract_ward_and_district(address_text, logger=None):
+    """Extract ward and district from Japanese address with improved fallback patterns"""
     if not address_text:
         return None, None
     
     # Clean up the address text
     address_clean = address_text.strip()
     
-    # Tokyo 23 wards list
+    # Tokyo 23 wards list with romaji variations
     tokyo_wards = [
         '千代田区', '中央区', '港区', '新宿区', '文京区', '台東区',
         '墨田区', '江東区', '品川区', '目黒区', '大田区', '世田谷区',
@@ -185,21 +214,36 @@ def extract_ward_and_district(address_text):
         '板橋区', '練馬区', '足立区', '葛飾区', '江戸川区'
     ]
     
+    # Add ward names without 区 suffix for better matching
+    ward_variations = tokyo_wards.copy()
+    for ward in tokyo_wards:
+        ward_variations.append(ward.replace('区', ''))
+    
     # Tokyo cities/municipalities (Tama area)
     tokyo_cities = [
         '八王子市', '立川市', '武蔵野市', '三鷹市', '青梅市', '府中市', '昭島市', '調布市',
-        '樺田市', '日野市', '国分寺市', '国立市', '福生市', '狛江市', '東久留米市',
+        '町田市', '日野市', '国分寺市', '国立市', '福生市', '狛江市', '東久留米市',
         '武蔵村山市', '多摩市', '稲城市', '羽村市', 'あきる野市', '西東京市',
         '清瀬市', '東村山市', '小平市', '日の出市', '横田市'
     ]
     
+    # Add city names without 市 suffix
+    city_variations = tokyo_cities.copy()
+    for city in tokyo_cities:
+        city_variations.append(city.replace('市', ''))
+    
     ward = None
     district = None
     
-    # First try to find Tokyo 23 wards
+    if logger:
+        logger.debug(f"Extracting ward from address: '{address_clean}'")
+    
+    # First try to find Tokyo 23 wards (prioritize full names with 区)
     for w in tokyo_wards:
         if w in address_clean:
             ward = w
+            if logger:
+                logger.debug(f"Found ward: {ward}")
             # Extract district (text after ward, before first number)
             try:
                 after_ward = address_clean.split(w)[1]
@@ -215,11 +259,33 @@ def extract_ward_and_district(address_text):
                 pass
             break
     
+    # Try ward variations without 区 if no exact match
+    if not ward:
+        for w_base in [w.replace('区', '') for w in tokyo_wards]:
+            if w_base in address_clean and len(w_base) > 1:
+                ward = w_base + '区'
+                if logger:
+                    logger.debug(f"Found ward via variation: {ward}")
+                # Extract district
+                try:
+                    after_ward = address_clean.split(w_base)[1]
+                    district_match = re.search(r'^([^\d０-９]+)', after_ward)
+                    if district_match:
+                        raw_district = district_match.group(1).strip()
+                        raw_district = re.sub(r'[丁目・ー・・T第区]*$', '', raw_district).strip()
+                        if raw_district and len(raw_district) > 0:
+                            district = raw_district
+                except (IndexError, AttributeError):
+                    pass
+                break
+    
     # If no ward found, try Tokyo cities
     if not ward:
         for city in tokyo_cities:
             if city in address_clean:
-                ward = city  # Use city as ward for consistency
+                ward = city
+                if logger:
+                    logger.debug(f"Found city as ward: {ward}")
                 # Extract district/area within the city
                 try:
                     after_city = address_clean.split(city)[1]
@@ -233,6 +299,25 @@ def extract_ward_and_district(address_text):
                     pass
                 break
     
+    # Try city variations without 市 if still no match 
+    if not ward:
+        for city_base in [c.replace('市', '') for c in tokyo_cities]:
+            if city_base in address_clean and len(city_base) > 1:
+                ward = city_base + '市'
+                if logger:
+                    logger.debug(f"Found city via variation: {ward}")
+                try:
+                    after_city = address_clean.split(city_base)[1]
+                    district_match = re.search(r'^([^\d０-９]+)', after_city)
+                    if district_match:
+                        raw_district = district_match.group(1).strip()
+                        raw_district = re.sub(r'[丁目・ー・・T第市]*$', '', raw_district).strip()
+                        if raw_district and len(raw_district) > 0:
+                            district = raw_district
+                except (IndexError, AttributeError):
+                    pass
+                break
+    
     # Final cleanup
     if district:
         # Remove common suffixes and clean up
@@ -240,23 +325,37 @@ def extract_ward_and_district(address_text):
         if not district or len(district) == 0:
             district = None
     
+    if logger and not ward:
+        logger.warning(f"Failed to extract ward from address: '{address_clean}'")
+    
     return ward, district
 
 def parse_station_distance(text):
-    """Parse station distance from 交通 field"""
+    """Parse station distance from 交通 field with enhanced patterns"""
     if not text:
         return None
     
     try:
-        # Pattern: "徒歩5分" or "歩5分"
-        walk_match = re.search(r'[徒歩]+(\d+)分', text)
-        if walk_match:
-            return int(walk_match.group(1))
+        # Multiple patterns for station distance extraction
+        patterns = [
+            r'[徒歩]+(\d+)分',              # "徒歩5分"
+            r'[歩]+(\d+)分',               # "歩5分"  
+            r'駅まで[^\d]*(\d+)分',        # "駅まで徒歩5分"
+            r'駅から[^\d]*(\d+)分',        # "駅から徒歩5分"
+            r'(?:最寄|最寄り)[^\d]*(\d+)分', # "最寄駅徒歩5分"
+            r'(?:駅|Station)[^\d]*(\d+)分', # "XX駅徒歩5分"
+            r'(\d+)分[^\d]*(?:駅|歩行)',    # "5分で駅"
+            r'(\d+)分',                   # Just "5分" as fallback
+        ]
         
-        # Pattern: "5分" (just minutes)
-        min_match = re.search(r'(\d+)分', text)
-        if min_match:
-            return int(min_match.group(1))
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                distance = int(match.group(1))
+                # Sanity check: reasonable walking distance (1-30 minutes)
+                if 1 <= distance <= 30:
+                    return distance
+        
     except (ValueError, TypeError):
         pass
     
@@ -466,7 +565,7 @@ def collect_area_listings_with_prices(area_name, max_pages=None, session=None, l
         if should_close_session:
             session.close()
 
-def extract_property_details(session, property_url, referer_url, retries=3, config=None, logger=None, session_pool=None, image_rate_limiter=None):
+def extract_property_details(session, property_url, referer_url, retries=3, config=None, logger=None, session_pool=None, image_rate_limiter=None, ward=None):
     """Extract detailed property information with retry logic"""
     last_error = None
     output_bucket = config.get('output_bucket', '') if config else ''
@@ -539,7 +638,19 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                 '間取り': 'layout_text',
                 '建物名': 'building_name',
                 'バルコニー': 'balcony_area_text',
-                '総戸数': 'total_units_text'
+                '総戸数': 'total_units_text',
+                # Additional variations for fees
+                '管理費等': 'management_fee_text',
+                '管理費（月額）': 'management_fee_text',
+                '月額管理費': 'management_fee_text',
+                '修繕費': 'repair_reserve_fee_text',
+                '修繕積立金（月額）': 'repair_reserve_fee_text',
+                '積立金': 'repair_reserve_fee_text',
+                '月額修繕積立金': 'repair_reserve_fee_text',
+                # Additional transportation patterns
+                '最寄駅': 'station_info',
+                'アクセス': 'station_info',
+                '交通アクセス': 'station_info',
             }
             
             tables = soup.find_all('table')
@@ -595,9 +706,22 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                     data['size_sqm'] = size_sqm
                     # Calculate price per sqm if we have both
                     if data.get('price') and data['price'] > 0:
-                        data['price_per_sqm'] = (data['price'] * 10000) / size_sqm  # Convert man-yen to yen
+                        calculated_price_per_sqm = (data['price'] * 10000) / size_sqm  # Convert man-yen to yen
+                        data['price_per_sqm'] = calculated_price_per_sqm
                         if logger:
-                            logger.debug(f"Calculated price_per_sqm: {data['price_per_sqm']:.0f} yen/sqm")
+                            logger.debug(f"Calculated price_per_sqm: {calculated_price_per_sqm:.0f} yen/sqm (price={data['price']} man-yen, size={size_sqm} sqm)")
+                        
+                        # Validation: ensure calculation was successful
+                        if calculated_price_per_sqm == 0:
+                            if logger:
+                                logger.warning(f"Price per sqm calculation resulted in 0: price={data['price']}, size={size_sqm}")
+                    elif data.get('price') and size_sqm:
+                        if logger:
+                            logger.warning(f"Price per sqm not calculated: price={data.get('price')}, size={size_sqm}")
+                elif logger:
+                    logger.debug(f"Failed to parse size from: '{data['size_sqm_text']}'")
+            elif logger:
+                logger.debug("No size_sqm_text field found")
             
             # Building age
             if 'building_age_text' in data:
@@ -613,13 +737,46 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                 if total_floors is not None:
                     data['total_floors'] = total_floors
             
-            # Ward and district from address
-            if 'address' in data:
-                ward, district = extract_ward_and_district(data['address'])
-                if ward:
-                    data['ward'] = ward
-                if district:
-                    data['district'] = district
+            # Ward and district - use provided ward or extract from address
+            extracted_ward, district = None, None
+            
+            # Use ward from URL collection if provided
+            if ward:
+                data['ward'] = ward
+                if logger:
+                    logger.debug(f"Using ward from URL collection: {ward}")
+            else:
+                # Fall back to extraction from address only if ward not provided
+                address_sources = []
+                
+                if 'address' in data:
+                    address_sources.append(('address', data['address']))
+                if 'building_name' in data:
+                    address_sources.append(('building_name', data['building_name']))
+                if 'title' in data:
+                    address_sources.append(('title', data['title']))
+                
+                # Try each source until we find ward info
+                for source_name, address_text in address_sources:
+                    if address_text:
+                        ward_result, district_result = extract_ward_and_district(address_text, logger)
+                        if ward_result:
+                            extracted_ward, district = ward_result, district_result
+                            if logger:
+                                logger.debug(f"Ward extracted from {source_name}: {extracted_ward}")
+                            break
+                
+                if extracted_ward:
+                    data['ward'] = extracted_ward
+            
+            # Always try to extract district from address
+            if not district and 'address' in data:
+                _, district_result = extract_ward_and_district(data['address'], logger)
+                if district_result:
+                    district = district_result
+            
+            if district:
+                data['district'] = district
             
             # Management and repair fees
             if 'management_fee_text' in data:
