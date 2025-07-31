@@ -6,6 +6,7 @@ import time
 import requests
 import random
 import re
+from bs4 import BeautifulSoup
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import boto3
@@ -105,119 +106,59 @@ def extract_listing_urls_from_html(html_content):
     
     return list(unique_listings)
 
+# Alternative: Hybrid approach - use regex for URLs, BeautifulSoup for prices
 def extract_listings_with_prices_from_html(html_content):
-    """Extract listing URLs with prices from HTML structure where price number and unit are in separate elements"""
+    """Hybrid approach: regex for URLs (fast), BeautifulSoup for price extraction (reliable)"""
     listings = []
     seen_urls = set()
     
-    # Method 1: Look for the specific HTML structure with separate price elements
-    # Pattern: <td class="price"><span class="num">32,000</span>万円</td>
-    price_pattern = r'<td[^>]*class="price"[^>]*><span[^>]*class="num"[^>]*>([\d,]+)</span>万円</td>'
+    # Quick regex to find all URLs
     url_pattern = r'/mansion/b-(\d+)/?'
+    url_matches = re.finditer(url_pattern, html_content)
     
-    # Find all price matches with their positions
-    price_matches = list(re.finditer(price_pattern, html_content))
-    url_matches = list(re.finditer(url_pattern, html_content))
+    # Parse HTML once
+    soup = BeautifulSoup(html_content, 'lxml')
     
-    # For each URL, find the nearest price within reasonable distance
     for url_match in url_matches:
         url = url_match.group(0)
-        url_pos = url_match.start()
-        
         if url in seen_urls:
             continue
         seen_urls.add(url)
         
-        # Find the closest price match (within 1000 characters)
-        closest_price = None
-        min_distance = float('inf')
-        
-        for price_match in price_matches:
-            price_pos = price_match.start()
-            distance = abs(price_pos - url_pos)
-            
-            # Price should be reasonably close to URL (within 1000 chars)
-            if distance < 1000 and distance < min_distance:
-                min_distance = distance
-                closest_price = price_match.group(1)
-        
-        # Create price text and parse it
-        if closest_price:
-            price_text = f"{closest_price}万円"
-            price = parse_price_from_text(price_text)
-        else:
-            price_text = ''
-            price = 0
-        
         absolute_url = f"https://www.homes.co.jp{url.rstrip('/')}"
-        listings.append({
-            'url': absolute_url,
-            'price': price,
-            'price_text': price_text
-        })
-    
-    # Method 2: Fallback to simpler patterns if method 1 finds too few
-    if len(listings) < 10:
-        listings.clear()
-        seen_urls.clear()
         
-        # Try simpler proximity-based matching
-        pattern = re.compile(
-            r'(/mansion/b-\d+/?)[^<]*(?:<[^>]*>[^<]*)*?(\d{1,4}(?:,\d{3})*万円)',
-            re.DOTALL
-        )
+        # Find the element containing this URL
+        url_element = soup.find('a', href=re.compile(re.escape(url)))
+        if not url_element:
+            listings.append({'url': absolute_url, 'price': 0, 'price_text': ''})
+            continue
         
-        for match in pattern.finditer(html_content):
-            url = match.group(1)
-            price_text = match.group(2)
-            
-            if url not in seen_urls:
-                seen_urls.add(url)
-                absolute_url = f"https://www.homes.co.jp{url.rstrip('/')}"
-                listings.append({
-                    'url': absolute_url,
-                    'price': parse_price_from_text(price_text),
-                    'price_text': price_text
-                })
-        
-        # Method 3: If still too few, find all URLs and try to match prices
-        if len(listings) < 10:
-            listings.clear()
-            seen_urls.clear()
-            
-            urls = re.findall(r'/mansion/b-\d+/?', html_content)
-            
-            for url in set(urls):
-                absolute_url = f"https://www.homes.co.jp{url.rstrip('/')}"
+        # Navigate up to find the containing structure
+        container = url_element
+        for _ in range(10):  # Look up to 10 levels
+            parent = container.parent
+            if not parent:
+                break
                 
-                # Find price after this URL (within 500 chars)
-                url_pos = html_content.find(url)
-                if url_pos != -1:
-                    search_text = html_content[url_pos:url_pos + 500]
-                    
-                    # Try different price patterns
-                    price_match = re.search(r'<span[^>]*class="num"[^>]*>([\d,]+)</span>万円', search_text)
-                    if not price_match:
-                        price_match = re.search(r'(\d{1,4}(?:,\d{3})*万円)', search_text)
-                    
-                    if price_match:
-                        if 'num' in price_match.group(0):  # First pattern matched
-                            price_text = f"{price_match.group(1)}万円"
-                        else:  # Second pattern matched
-                            price_text = price_match.group(1)
-                        price = parse_price_from_text(price_text)
-                    else:
-                        price = 0
-                        price_text = ''
-                else:
-                    price = 0
-                    price_text = ''
-                
-                listings.append({
-                    'url': absolute_url,
-                    'price': price,
-                    'price_text': price_text
-                })
+            # Check if this container has a price
+            price_td = parent.find('td', class_='price')
+            if price_td:
+                price_span = price_td.find('span', class_='num')
+                if price_span and '万円' in price_td.text:
+                    price_num = price_span.text.strip()
+                    price_text = f"{price_num}万円"
+                    price = parse_price_from_text(price_text)
+                    listings.append({
+                        'url': absolute_url,
+                        'price': price,
+                        'price_text': price_text
+                    })
+                    break
+            
+            container = parent
+        else:
+            # No price found
+            listings.append({'url': absolute_url, 'price': 0, 'price_text': ''})
     
     return listings
 
