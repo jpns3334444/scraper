@@ -2,133 +2,106 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Architecture
+## Project Overview
 
-This is a Tokyo Real Estate Analysis System that scrapes, analyzes, and reports on property listings. The system consists of:
+This is a Tokyo Real Estate AI Analysis system that scrapes property listings, analyzes them with AI, and provides investment recommendations via a dashboard and email reports. The system uses AWS Lambda functions orchestrated by Step Functions, with data stored in DynamoDB and S3.
 
-### Core Components
-
-1. **AI Infrastructure (`ai_infra/`)** - AWS Lambda-based serverless pipeline
-   - Lambda functions for ETL, prompt building, LLM batch processing, reporting
-   - Step Functions orchestration for the full AI workflow
-   - DynamoDB for data storage and dashboard API
-
-2. **Analysis Engine** - Python modules for property evaluation
-   - `analysis/lean_scoring.py` - Deterministic scoring algorithm (Lean v1.3)
-   - `analysis/comparables.py` - Market comparison analysis
-   - `analysis/analyzer.py` - Main analysis coordinator
-
-3. **Data Models (`schemas/`)** - Type definitions and validation
-   - `models.py` - Property, analysis, and snapshot data classes
-   - JSON schema validation for LLM outputs
-
-4. **Dashboard (`dashboard/`)** - Web interface for viewing analyzed properties
-   - Single-page HTML app with AWS Lambda API backend
-   - Real-time filtering and sorting of property data
-
-### Data Flow Architecture
-
-```
-Raw Scraping → ETL Processing → Lean Scoring → LLM Analysis → Daily Digest
-     ↓              ↓              ↓             ↓             ↓
-S3 Storage → DynamoDB Storage → Candidate Filtering → Email Reports → Dashboard
-```
-
-The system implements "Lean v1.3" - an efficiency-focused approach that uses deterministic scoring to filter candidates before expensive LLM analysis, achieving ~99% token reduction.
-
-## Development Commands
+## Common Development Commands
 
 ### Deployment Commands
 ```bash
-# Deploy AI infrastructure (main pipeline)
-cd ai_infra && ./deploy-ai.sh
+# Deploy the entire AI stack
+./deploy-ai.sh
 
-# Deploy dashboard (after AI infrastructure is deployed)
-cd ai_infra && ./deploy-dashboard.sh
+# Deploy dashboard
+cd dashboard && ./deploy-dashboard.sh
 
-# Update scraper Lambda function only
-cd ai_infra && ./update-scraper-lambda.sh
+# Update a specific Lambda function quickly
+./update-lambda.sh property_processor
+./update-lambda.sh property_analyzer
+./update-lambda.sh url_collector
 ```
 
-### Testing Commands
+### Testing Lambda Functions
 ```bash
-# Run Python tests
-pytest tests/ -v
+# Test property processor
+./trigger-lambda.sh --function property-processor --max-properties 5 --sync
 
-# Test individual Lambda functions locally
-cd ai_infra && ./test-local.sh etl test-events/etl-event.json
-cd ai_infra && ./test-local.sh prompt_builder test-events/prompt-builder-event.json
-cd ai_infra && ./test-local.sh llm_batch test-events/llm-batch-event.json
+# Test property analyzer
+./trigger-lambda.sh --function property-analyzer --sync
 
-# Test full AI workflow
-cd ai_infra && ./trigger_ai_workflow.sh [YYYY-MM-DD] [region]
+# Test URL collector
+./trigger-lambda.sh --function url-collector --areas "chofu-city" --sync
+
+# Debug mode with detailed logging
+./trigger-lambda.sh --function property-processor --debug --sync
 ```
 
-### Operational Commands
-```bash
-# Trigger scraper manually
-cd ai_infra && ./trigger_lambda_scraper.sh --max-properties 10 --sync
+## High-Level Architecture
 
-# Monitor AI workflow execution
-cd ai_infra && ./trigger_ai_workflow.sh 2025-01-25 ap-northeast-1 --all
+### Data Flow
+1. **URL Collection**: `url_collector` Lambda scrapes property listing URLs from real estate sites
+2. **Property Processing**: `property_processor` Lambda extracts detailed data from each listing
+3. **Property Analysis**: `property_analyzer` Lambda evaluates properties using LLM for investment potential
+4. **Data Storage**: Properties stored in DynamoDB with verdicts (BUY/WATCH/REJECT)
+5. **Dashboard**: Web interface queries DynamoDB via `dashboard_api` Lambda
+6. **Reports**: Daily digest emails sent with top property recommendations
+
+### Key Lambda Functions
+- **url_collector**: Scrapes listing URLs from configured areas
+- **property_processor**: Extracts property details (price, size, location, images)
+- **property_analyzer**: Uses OpenAI to analyze investment potential
+- **dashboard_api**: Provides filtered/sorted property data to web dashboard
+- **daily_digest**: Sends email summaries of best properties
+
+### Data Storage
+- **DynamoDB**: Primary storage for property data and analysis results
+- **S3 Bucket** (`tokyo-real-estate-ai-data`): Stores scraped images and batch processing data
+
+### Infrastructure as Code
+- **CloudFormation**: `ai-stack.yaml` defines all AWS resources
+- **Lambda Layers**: OpenAI SDK packaged as layer for shared use
+- **Deployment**: `deploy-ai.sh` handles packaging and deployment
+
+## Development Patterns
+
+### Lambda Function Structure
+Each Lambda follows this pattern:
+```python
+# lambda/<function_name>/app.py
+def lambda_handler(event, context):
+    # Main entry point
+    pass
 ```
 
-## Key Implementation Details
-
-### Lean v1.3 Pipeline
-- **Deterministic Scoring**: Properties scored using market data, location factors, and building characteristics
-- **Candidate Gating**: Only high-scoring properties (typically 2-5% of total) proceed to LLM analysis
-- **Token Efficiency**: ~1200 tokens per property vs ~2000+ in legacy mode
-- **Schema Validation**: LLM outputs validated against strict JSON schemas
-
-### Testing Strategy
-- Uses `pytest` with moto for AWS service mocking
-- Test fixtures in `tests/conftest.py` provide sample data
-- Local Lambda testing via `ai_infra/test_runner.py`
-- Integration tests validate end-to-end pipeline behavior
-
-### Configuration
-- Environment variables managed via `.env.json` (not in repo)
-- AWS resources managed via CloudFormation templates
-- OpenAI API key stored in AWS Secrets Manager
-- Email configuration in deployment scripts
-
-### AWS Resources
-- **Lambda Functions**: ETL, prompt builder, LLM batch, report sender, scraper, dashboard API
-- **Step Functions**: Orchestrates the full AI analysis workflow
-- **DynamoDB**: Stores processed property data for dashboard queries
-- **S3**: Raw data, processed outputs, and static dashboard hosting
-- **SES**: Email delivery for daily digest reports
-
-## Data Models
-
-Key data structures are defined in `schemas/models.py`:
-- `PropertyListing` - Raw property data
-- `PropertyAnalysis` - Scored and analyzed property results
-- `GlobalSnapshot`/`WardSnapshot` - Market statistics
-- `DailyDigestData` - Email report structure
-
-## Important Patterns
+### Shared Code
+- `lambda/util/`: Common utilities (config, metrics)
+- `analysis/`: Property analysis logic
+- `schemas/`: Data models and validation
 
 ### Error Handling
-- Lambda functions return structured error responses
-- CloudWatch logs capture detailed execution information
-- Step Functions handle retry logic for transient failures
+- All Lambdas use structured logging with session IDs
+- Errors are logged to CloudWatch with full context
+- Functions return standardized error responses
 
-### Data Validation
-- JSON schema validation for all external data inputs
-- Type hints throughout Python codebase using dataclasses
-- Schema compliance checking for LLM outputs
+### Testing Approach
+- Unit tests in `tests/` using pytest
+- Moto for AWS service mocking
+- Integration tests via Lambda invocation
 
-### Performance Optimization
-- Batch processing for DynamoDB operations
-- S3 object versioning for deployment artifacts
-- Cached OpenAI layer to reduce deployment times
+## Key Configuration
 
-## Logging and Monitoring Considerations
+### Environment Variables
+- `OUTPUT_BUCKET`: S3 bucket for data storage
+- `DYNAMODB_TABLE`: Property data table name
+- `OPENAI_API_KEY`: Stored in AWS Secrets Manager
 
-- **Log Filtering**: We must filter lambda logs for the scraper on sessionID, otherwise we will see logs for multiple runs. We ONLY WANT TO SEE LOGS FOR THE CURRENT EXECUTION.
+### Deployment Parameters
+- Stack name: `tokyo-real-estate-ai`
+- Region: `ap-northeast-1` (Tokyo)
+- Python runtime: 3.12
 
-## Important Coding Guidelines
-
-- **Programming Language Note**: IT IS ALWAYS PYTHON3, NEVER PYTHON
+## Security Considerations
+- OpenAI API key stored in AWS Secrets Manager
+- Lambda functions use IAM roles with least privilege
+- No hardcoded credentials in code

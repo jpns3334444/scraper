@@ -614,6 +614,16 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
             if "pardon our interruption" in response.text.lower():
                 raise Exception("Anti-bot protection detected")
             
+            # ===== ADD WAIT HERE FOR IMAGES TO LOAD =====
+            # This is the key spot - after we get the page but before parsing
+            if logger:
+                logger.debug(f"Waiting 2-3 seconds for JavaScript to load images...")
+            time.sleep(random.uniform(2.0, 3.0))  # Wait 2-3 seconds for JS to execute
+            
+            # Some sites need a second request to get fully loaded content
+            # Try getting the page again after the wait
+            response = session.get(property_url, timeout=15)
+            
             soup = BeautifulSoup(response.content, 'html.parser')
             data = {
                 "url": property_url,
@@ -700,6 +710,15 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
             # Price processing with listing price as primary source
             price_numeric = 0
             
+            # Initialize price_sources for both branches
+            price_sources = []
+            if 'price' in data:  # From regex pattern
+                price_sources.append(('regex_price', data['price']))
+            if 'price_text' in data:  # From table field '価格'
+                price_sources.append(('table_price', data['price_text']))
+            if '価格' in data:  # Direct Japanese field
+                price_sources.append(('japanese_price', data['価格']))
+            
             # First, try to use the listing price if provided
             if listing_price and listing_price > 0:
                 price_numeric = listing_price
@@ -707,14 +726,6 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                     logger.debug(f"Using price from listing page: {listing_price}")
             else:
                 # Fall back to extracting from detail page (existing logic)
-                price_sources = []
-                if 'price' in data:  # From regex pattern
-                    price_sources.append(('regex_price', data['price']))
-                if 'price_text' in data:  # From table field '価格'
-                    price_sources.append(('table_price', data['price_text']))
-                if '価格' in data:  # Direct Japanese field
-                    price_sources.append(('japanese_price', data['価格']))
-                
                 # Try each price source until we get a valid result
                 for source_name, price_value in price_sources:
                     if price_value:
@@ -869,22 +880,46 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                     if logger:
                         logger.warning(f"No valid price found for {property_url}. Available price fields: {[k for k in data.keys() if 'price' in k.lower() or '価格' in k]}")
             
-            # Extract images
+            # Extract images with enhanced debugging
             try:
+                # Debug: Check if bucket is configured
+                if logger:
+                    logger.info(f"=== IMAGE PROCESSING DEBUG for {property_id} ===")
+                    logger.info(f"Output bucket configured: {output_bucket}")
+                    logger.info(f"Config object: {config}")
+                    logger.info(f"Session pool available: {session_pool is not None}")
+                    logger.info(f"Image rate limiter available: {image_rate_limiter is not None}")
+                
                 s3_keys = extract_property_images(
                     soup, session, "https://www.homes.co.jp", 
                     bucket=output_bucket, property_id=property_id,
                     config=config, logger=logger,
                     session_pool=session_pool, image_rate_limiter=image_rate_limiter
                 )
+                
+                if logger:
+                    logger.info(f"Image extraction returned {len(s3_keys) if s3_keys else 0} S3 keys")
+                    if s3_keys:
+                        logger.info(f"S3 keys: {s3_keys[:3]}...")  # Show first 3
+                
                 if s3_keys:
                     data["photo_filenames"] = "|".join(s3_keys)
                     data["image_count"] = len(s3_keys)
+                    if logger:
+                        logger.info(f"Successfully stored {len(s3_keys)} images for property {property_id}")
+                else:
+                    if logger:
+                        logger.warning(f"No images processed for property {property_id}")
+                    data["image_count"] = 0
                     
             except Exception as e:
                 if logger:
-                    logger.debug(f"Image extraction failed: {str(e)}")
+                    logger.error(f"Image extraction failed for {property_id}: {str(e)}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+                data["image_count"] = 0
             
+            # Success! Return the data
             return data
             
         except Exception as e:
@@ -898,103 +933,139 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
             # Exponential backoff
             time.sleep((2 ** attempt) + random.uniform(0, 1))
     
+    # All retries failed
     if last_error:
         raise last_error
     else:
         raise Exception("Max retries exceeded")
 
+# Enhanced extract_property_images function in core_scraper.py:
 def extract_property_images(soup, session, base_url, bucket=None, property_id=None, config=None, logger=None, session_pool=None, image_rate_limiter=None):
-    """Extract property images and upload to S3"""
+    """Extract property images - fixed to handle homes.jp image URLs correctly"""
     s3_keys = []
     image_urls = set()
     
+    if logger:
+        logger.debug(f"=== Starting image extraction for property {property_id} ===")
+        logger.debug(f"Bucket: {bucket}")
+    
     try:
-        # Image selectors
-        selectors = [
-            '.mainPhoto img',
-            '.detailPhoto img', 
-            '.gallery-item img',
-            '.photo-gallery img',
-            '.property-photos img',
-            '.mansion-photos img',
-            'img[src*="/photo/"]',
-            'img[src*="/image/"]',
-            'img[data-src*="photo"]',
-            '[class*="photo"] img'
-        ]
-        
-        for selector in selectors:
-            for img in soup.select(selector):
-                src = (img.get('src') or 
-                      img.get('data-src') or 
-                      img.get('data-original') or 
-                      img.get('data-lazy-src'))
-                
-                if src:
-                    # Convert to absolute URL
-                    if src.startswith('//'):
-                        src = 'https:' + src
-                    elif src.startswith('/'):
-                        src = base_url + src
-                    elif not src.startswith('http'):
-                        src = base_url + '/' + src.lstrip('/')
-                    
-                    # Filter out non-property images
-                    exclude_patterns = ['icon', 'logo', 'btn', 'button', 'arrow', 'banner']
-                    if any(pattern in src.lower() for pattern in exclude_patterns):
-                        if logger:
-                            logger.debug(f"Excluding image (pattern match): {src}")
-                        continue
-                        
-                    # More permissive image detection - check for image file extensions too
-                    if (any(pattern in src.lower() for pattern in ['photo', 'image', 'pic', 'img']) or
-                        any(src.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp'])):
-                        image_urls.add(src)
-                        if logger:
-                            logger.debug(f"Added image URL: {src}")
-                    else:
-                        if logger:
-                            logger.debug(f"Skipping non-image URL: {src}")
-        
-        # Debug logging for image discovery
+        # Find all img tags
+        all_imgs = soup.find_all('img')
         if logger:
-            logger.debug(f"Found {len(image_urls)} potential image URLs for property {property_id}")
-            if len(image_urls) == 0:
-                # Check if we can find any images at all
-                all_imgs = soup.find_all('img')
-                logger.debug(f"Total img tags found: {len(all_imgs)}")
-                if len(all_imgs) > 0:
-                    sample_imgs = all_imgs[:3]
-                    for i, img in enumerate(sample_imgs):
-                        logger.debug(f"Sample img {i}: src={img.get('src')}, data-src={img.get('data-src')}, class={img.get('class')}")
+            logger.debug(f"Total img tags found in page: {len(all_imgs)}")
         
-        # Limit to 5 images per property (reduced from 10 for better performance)
-        urls = list(image_urls)[:5]
+        # Process all images
+        for img in all_imgs:
+            # Get image source (try multiple attributes)
+            src = (img.get('src') or 
+                  img.get('data-src') or 
+                  img.get('data-original') or 
+                  img.get('data-lazy-src'))
+            
+            if not src:
+                continue
+            
+            # Skip obvious non-property images
+            skip_patterns = ['icon', 'logo', 'btn', 'button', 'arrow', 'banner', 
+                            'lifull.com/lh/', 'header-footer', 'temprano/assets', 
+                            'qr-code']  # Added qr-code to skip list
+            
+            if any(pattern in src.lower() for pattern in skip_patterns):
+                continue
+            
+            # IMPORTANT: Accept homes.jp image URLs
+            # These are valid property images even though they go through image.php
+            if any(domain in src for domain in ['image.homes.jp', 'image1.homes.jp', 
+                                                'image2.homes.jp', 'image3.homes.jp', 
+                                                'image4.homes.jp', 'img.homes.jp']):
+                # This is a valid property image!
+                if src.startswith('//'):
+                    src = 'https:' + src
+                elif not src.startswith('http'):
+                    src = 'https:' + src
+                
+                image_urls.add(src)
+                if logger:
+                    logger.debug(f"Added homes.jp image: {src[:100]}...")
+            
+            # Also check for other image patterns
+            elif (any(pattern in src.lower() for pattern in ['photo', 'image', 'pic', 'img', 
+                                                             'mansion', 'bukken', 'property']) or
+                  any(src.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp'])):
+                # Convert to absolute URL
+                if src.startswith('//'):
+                    src = 'https:' + src
+                elif src.startswith('/'):
+                    src = base_url + src
+                elif not src.startswith('http'):
+                    src = base_url + '/' + src.lstrip('/')
+                
+                image_urls.add(src)
+                if logger:
+                    logger.debug(f"Added other image: {src[:100]}...")
         
-        # Download and process images in parallel
+        # Log what we found
+        if logger:
+            logger.info(f"Found {len(image_urls)} valid image URLs for property {property_id}")
+            if image_urls:
+                for i, url in enumerate(list(image_urls)[:3]):
+                    logger.info(f"  Image {i}: {url[:100]}...")
+            else:
+                logger.warning(f"No valid images found for property {property_id}")
+                # Log some sample images that were skipped
+                sample_count = 0
+                for img in all_imgs[:10]:
+                    src = img.get('src', '')
+                    if src and sample_count < 3:
+                        logger.debug(f"  Skipped: {src[:100]}...")
+                        sample_count += 1
+        
+        # Check if bucket is configured
         if not bucket:
             if logger:
-                logger.debug(f"No S3 bucket specified, skipping image download for {len(urls)} URLs")
-            return []  # Return empty list if no bucket for upload
-            
+                logger.warning(f"No S3 bucket configured! Cannot save images.")
+            return []
+        
+        # Limit to 5 images per property
+        urls = list(image_urls)[:5]
+        
+        if not urls:
+            if logger:
+                logger.info("No images to process")
+            return []
+        
+        # Download and process images
+        if logger:
+            logger.info(f"Processing {len(urls)} images for upload to S3")
+        
         if session_pool and image_rate_limiter:
-            # Use session pool and rate limiter for better control
             s3_keys = download_images_parallel(urls, session_pool, bucket, property_id, logger, image_rate_limiter)
         else:
-            # Fallback to single session (for backward compatibility)
             s3_keys = download_images_parallel_fallback(urls, session, bucket, property_id, logger)
+        
+        if logger:
+            logger.info(f"Image processing complete: {len(s3_keys)} images saved to S3")
+            if len(s3_keys) < len(urls):
+                logger.warning(f"Some images failed to upload: {len(urls) - len(s3_keys)} out of {len(urls)}")
 
         return s3_keys
         
     except Exception as e:
         if logger:
             logger.error(f"Image extraction error: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
         return []
 
+# Also update the download function to handle the image.php URLs better
 def download_single_image(session_pool, img_url, index, bucket, property_id, logger, rate_limiter=None):
-    """Download and process a single image using session pool"""
+    """Download and process a single image - handles homes.jp image.php URLs"""
     session = None
     try:
+        if logger:
+            logger.debug(f"Downloading image {index}: {img_url[:100]}...")
+        
         # Apply rate limiting if provided
         if rate_limiter:
             rate_limiter.acquire()
@@ -1002,44 +1073,75 @@ def download_single_image(session_pool, img_url, index, bucket, property_id, log
         # Get session from pool
         session = session_pool.get_session()
         
-        img_response = session.get(img_url, timeout=10)
+        # For homes.jp image.php URLs, we might need to handle redirects
+        img_response = session.get(img_url, timeout=10, allow_redirects=True)
+        
+        if logger:
+            logger.debug(f"Image {index} response: status={img_response.status_code}, "
+                        f"content-type={img_response.headers.get('content-type', 'unknown')}, "
+                        f"size={len(img_response.content)} bytes")
+        
         if img_response.status_code == 200:
             content_type = img_response.headers.get('content-type', 'image/jpeg')
             
-            if 'image' in content_type:
+            # Be more permissive with content types
+            if 'image' in content_type or img_response.content[:4] in [b'\xff\xd8\xff\xe0', b'\xff\xd8\xff\xe1', b'\x89PNG']:
                 # Skip tiny images
                 if len(img_response.content) < 1000:
+                    if logger:
+                        logger.debug(f"Skipping tiny image {index}: {len(img_response.content)} bytes")
                     return None
                 
-                # Convert and resize image
-                img = Image.open(io.BytesIO(img_response.content))
-                
-                if img.mode not in ('RGB', 'L'):
-                    img = img.convert('RGB')
-                
-                img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
-                
-                output_buffer = io.BytesIO()
-                img.save(output_buffer, format='JPEG', quality=85, optimize=True)
-                output_buffer.seek(0)
-                processed_image_bytes = output_buffer.getvalue()
-                
-                # Upload to S3
-                if bucket and property_id:
-                    s3_key = upload_image_to_s3(
-                        processed_image_bytes, 
-                        bucket, 
-                        property_id, 
-                        index, 
-                        logger=logger
-                    )
-                    return s3_key
+                try:
+                    # Convert and resize image
+                    img = Image.open(io.BytesIO(img_response.content))
+                    
+                    if logger:
+                        logger.debug(f"Image {index} opened: size={img.size}, mode={img.mode}")
+                    
+                    if img.mode not in ('RGB', 'L'):
+                        img = img.convert('RGB')
+                    
+                    img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+                    
+                    output_buffer = io.BytesIO()
+                    img.save(output_buffer, format='JPEG', quality=85, optimize=True)
+                    output_buffer.seek(0)
+                    processed_image_bytes = output_buffer.getvalue()
+                    
+                    if logger:
+                        logger.debug(f"Image {index} processed: final size={len(processed_image_bytes)} bytes")
+                    
+                    # Upload to S3
+                    if bucket and property_id:
+                        s3_key = upload_image_to_s3(
+                            processed_image_bytes, 
+                            bucket, 
+                            property_id, 
+                            index, 
+                            logger=logger
+                        )
+                        if s3_key and logger:
+                            logger.debug(f"Image {index} uploaded to S3: {s3_key}")
+                        return s3_key
+                except Exception as e:
+                    if logger:
+                        logger.error(f"Failed to process image {index}: {str(e)}")
+                    return None
+            else:
+                if logger:
+                    logger.debug(f"Skipping non-image content type for image {index}: {content_type}")
+        else:
+            if logger:
+                logger.warning(f"Failed to download image {index}: HTTP {img_response.status_code}")
         
         return None
         
     except Exception as e:
         if logger:
-            logger.debug(f"Failed to download image {index}: {str(e)}")
+            logger.error(f"Failed to download image {index}: {str(e)}")
+            import traceback
+            logger.debug(f"Traceback: {traceback.format_exc()}")
         return None
     
     finally:
@@ -1160,13 +1262,28 @@ def download_images_parallel_fallback(image_urls, session, bucket, property_id, 
     
     return s3_keys
 
+# Enhanced upload_image_to_s3 in core_scraper.py:
 def upload_image_to_s3(image_content, bucket, property_id, image_index, logger=None):
-    """Upload image to S3"""
+    """Enhanced version with debug logging"""
     try:
+        if logger:
+            logger.debug(f"Uploading image to S3: bucket={bucket}, property_id={property_id}, index={image_index}")
+        
         date_str = datetime.now().strftime('%Y-%m-%d')
         s3_key = f"raw/{date_str}/images/{property_id}_{image_index}.jpg"
         
         s3 = boto3.client("s3")
+        
+        # Check if bucket exists and we have access
+        try:
+            s3.head_bucket(Bucket=bucket)
+            if logger:
+                logger.debug(f"S3 bucket '{bucket}' is accessible")
+        except Exception as e:
+            if logger:
+                logger.error(f"S3 bucket '{bucket}' is not accessible: {str(e)}")
+            return None
+        
         s3.put_object(
             Bucket=bucket,
             Key=s3_key,
@@ -1174,12 +1291,18 @@ def upload_image_to_s3(image_content, bucket, property_id, image_index, logger=N
             ContentType='image/jpeg'
         )
         
+        if logger:
+            logger.debug(f"Successfully uploaded image to S3: {s3_key}")
+        
         return s3_key
         
     except Exception as e:
         if logger:
-            logger.debug(f"S3 upload failed: {str(e)}")
+            logger.error(f"S3 upload failed for image {image_index}: {str(e)}")
+            import traceback
+            logger.debug(f"Traceback: {traceback.format_exc()}")
         return None
+
 
 def discover_tokyo_areas(logger=None):
     """Discover all Tokyo area URLs"""

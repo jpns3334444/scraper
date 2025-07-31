@@ -20,6 +20,7 @@ trap cleanup INT
 REGION="${AWS_DEFAULT_REGION:-ap-northeast-1}"
 LOG_LEVEL="INFO" # Default log level
 FUNCTION_NAME=""
+DEFAULT_BUCKET="tokyo-real-estate-ai-data"  # Default S3 bucket
 
 # Function mapping: folder name -> AWS Lambda function name
 declare -A FUNCTION_MAP=(
@@ -42,6 +43,10 @@ SESSION_ID="${FUNCTION_NAME:-lambda}-$(date +%s)-$$"
 # Build payload from arguments
 PAYLOAD="{\"session_id\":\"$SESSION_ID\""
 
+# Add default bucket to payload
+PAYLOAD="$PAYLOAD,\"output_bucket\":\"$DEFAULT_BUCKET\""
+OUTPUT_BUCKET="$DEFAULT_BUCKET"
+
 while [[ $# -gt 0 ]]; do
   case $1 in
     --function)
@@ -53,8 +58,9 @@ while [[ $# -gt 0 ]]; do
         fi
         LAMBDA_FUNCTION="${FUNCTION_MAP[$FUNCTION_NAME]}"
         SESSION_ID="${FUNCTION_NAME}-$(date +%s)-$$"
-        PAYLOAD="{\"session_id\":\"$SESSION_ID\""
+        PAYLOAD="{\"session_id\":\"$SESSION_ID\",\"output_bucket\":\"$DEFAULT_BUCKET\""
         shift 2 ;;
+    --output-bucket) OUTPUT_BUCKET="$2"; PAYLOAD="${PAYLOAD%,\"output_bucket\":*}},\"output_bucket\":\"$2\""; shift 2 ;;
     --max-properties) PAYLOAD="$PAYLOAD,\"max_properties\":$2"; shift 2 ;;
     --areas) PAYLOAD="$PAYLOAD,\"areas\":\"$2\""; shift 2 ;;
     --max-concurrent-areas) PAYLOAD="$PAYLOAD,\"max_concurrent_areas\":$2"; shift 2 ;;
@@ -72,6 +78,7 @@ while [[ $# -gt 0 ]]; do
       echo ""
       echo "Options:"
       echo "  --function FUNC             Lambda function to trigger (required)"
+      echo "  --output-bucket BUCKET      S3 bucket for output (default: $DEFAULT_BUCKET)"
       echo "  --max-properties N          Max properties to process"
       echo "  --areas AREAS               Comma-separated list of areas"
       echo "  --max-concurrent-areas N    Max concurrent area processing"
@@ -100,12 +107,18 @@ PAYLOAD="$PAYLOAD}"
 
 # Trigger Lambda (based on working url-collector pattern)
 echo "🔗 Triggering $FUNCTION_NAME with session: $SESSION_ID (Log level: $LOG_LEVEL)"
+echo "📦 Using S3 bucket: $OUTPUT_BUCKET"
 if [[ "${SYNC_MODE:-false}" == "true" ]]; then
   echo "⏳ Running in synchronous mode..."
   INVOCATION_TYPE="RequestResponse"
 else
   echo "🚀 Running in asynchronous mode..."
   INVOCATION_TYPE="Event"
+fi
+
+# Debug: show payload if in debug mode
+if [[ "$LOG_LEVEL" == "DEBUG" ]]; then
+  echo "📋 Payload: $PAYLOAD"
 fi
 
 aws lambda invoke \

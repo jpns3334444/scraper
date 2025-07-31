@@ -463,7 +463,7 @@ def parse_lambda_event(event):
         'session_id': event.get('session_id', os.environ.get('SESSION_ID', f'property-analyzer-{int(time.time())}')),
         'dynamodb_table': event.get('dynamodb_table', os.environ.get('DYNAMODB_TABLE', 'tokyo-real-estate-ai-analysis-db')),
         'days_back': event.get('days_back', int(os.environ.get('DAYS_BACK', '7'))),
-        'analyze_all': event.get('analyze_all', os.environ.get('ANALYZE_ALL', 'false').lower() == 'true'),
+        'analyze_all': event.get('analyze_all', os.environ.get('ANALYZE_ALL', 'true').lower() == 'true'),
         'log_level': event.get('log_level', os.environ.get('LOG_LEVEL', 'INFO'))
     }
 

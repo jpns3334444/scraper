@@ -45,6 +45,7 @@ class ComparablesFilter:
         Find and format comparable properties for the target.
         
         Filtering criteria (relaxed):
+        - Ward: Same ward only (FIRST filter)
         - Price per sqm: ±40% of target (relaxed from ±30%)
         - Size: ±35% of target (relaxed from ±25%)
         - Age: ±15 years of target (relaxed from ±10 years, optional if missing)
@@ -60,17 +61,29 @@ class ComparablesFilter:
         target_size = target_property.get('size_sqm', 0)
         target_age = target_property.get('building_age_years', 30)
         target_id = target_property.get('id', '')
+        target_ward = target_property.get('ward')
         
         if not target_ppsm or not target_size:
             logger.warning(f"Target property {target_id} missing price_per_sqm ({target_ppsm}) or size_sqm ({target_size}). Available fields: {list(target_property.keys())}")
             return []
         
-        logger.info(f"Finding comparables for {target_id}: ppsm={target_ppsm}, size={target_size}, age={target_age}")
+        if not target_ward:
+            logger.warning(f"Target property {target_id} missing ward. Available fields: {list(target_property.keys())}")
+            return []
+        
+        logger.info(f"Finding comparables for {target_id}: ward={target_ward}, ppsm={target_ppsm}, size={target_size}, age={target_age}")
         logger.debug(f"Candidate pool size: {len(candidate_properties)}")
         
-        # Debug: Count how many properties have valid data
-        valid_count = sum(1 for p in candidate_properties if p.get('price_per_sqm', 0) > 0 and p.get('size_sqm', 0) > 0)
-        logger.debug(f"Properties with valid price_per_sqm and size_sqm: {valid_count}/{len(candidate_properties)}")
+        # FIRST: Filter to same ward only
+        same_ward_properties = [
+            p for p in candidate_properties 
+            if p.get('ward') == target_ward and p.get('id') != target_id
+        ]
+        logger.info(f"Same ward ({target_ward}) candidates: {len(same_ward_properties)}/{len(candidate_properties)}")
+        
+        # Debug: Count how many properties have valid data in same ward
+        valid_count = sum(1 for p in same_ward_properties if p.get('price_per_sqm', 0) > 0 and p.get('size_sqm', 0) > 0)
+        logger.debug(f"Same ward properties with valid price_per_sqm and size_sqm: {valid_count}/{len(same_ward_properties)}")
         
         # Calculate filtering thresholds (relaxed criteria)
         ppsm_min = target_ppsm * 0.6   # -40% (relaxed from -30%)
@@ -82,10 +95,7 @@ class ComparablesFilter:
         
         comparables = []
         
-        for prop in candidate_properties:
-            # Skip the target property itself
-            if prop.get('id') == target_id:
-                continue
+        for prop in same_ward_properties:
             
             prop_ppsm = prop.get('price_per_sqm', 0)
             prop_size = prop.get('size_sqm', 0)
@@ -129,15 +139,15 @@ class ComparablesFilter:
         selected_comps = comparables[:self.max_comparables]
         
         logger.info(f"Found {len(selected_comps)} comparables for {target_id} "
-                   f"(filtered from {len(candidate_properties)} candidates)")
+                   f"(filtered from {len(same_ward_properties)} same-ward candidates, {len(candidate_properties)} total)")
         
         # Debug: If no comparables found, provide more info
-        if len(selected_comps) == 0 and len(candidate_properties) > 0:
-            logger.warning(f"No comparables found. Criteria: ppsm {ppsm_min:.0f}-{ppsm_max:.0f}, size {size_min:.0f}-{size_max:.0f}, age {age_min}-{age_max}")
+        if len(selected_comps) == 0 and len(same_ward_properties) > 0:
+            logger.warning(f"No comparables found in ward {target_ward}. Criteria: ppsm {ppsm_min:.0f}-{ppsm_max:.0f}, size {size_min:.0f}-{size_max:.0f}, age {age_min}-{age_max}")
             # Sample a few properties to see what we're working with
-            sample_props = candidate_properties[:3]  
+            sample_props = same_ward_properties[:3]  
             for i, prop in enumerate(sample_props):
-                logger.debug(f"Sample candidate {i}: id={prop.get('id', 'unknown')}, ppsm={prop.get('price_per_sqm', 0)}, size={prop.get('size_sqm', 0)}, age={prop.get('building_age_years', 'unknown')}")
+                logger.debug(f"Sample same-ward candidate {i}: id={prop.get('id', 'unknown')}, ppsm={prop.get('price_per_sqm', 0)}, size={prop.get('size_sqm', 0)}, age={prop.get('building_age_years', 'unknown')}")
         
         return selected_comps
     
@@ -270,6 +280,7 @@ def find_and_format_comparables(target_property: Dict[str, Any],
 def select_comparables(subject: Dict[str, Any], pool: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Return up to 8 comparable listings filtered by:
+      Same ward (FIRST filter), then 
       ±40% price_per_sqm, ±35% size, ±15 years age (if age present).
     Sorted by absolute price_per_sqm delta then absolute size delta.
     
@@ -284,10 +295,22 @@ def select_comparables(subject: Dict[str, Any], pool: List[Dict[str, Any]]) -> L
     subject_size = subject.get('size_sqm', 0) 
     subject_age = subject.get('building_age_years', 30)
     subject_id = subject.get('id', '')
+    subject_ward = subject.get('ward')
     
     if not subject_ppsm or not subject_size:
         logger.warning(f"Subject property {subject_id} missing price_per_sqm or size_sqm")
         return []
+    
+    if not subject_ward:
+        logger.warning(f"Subject property {subject_id} missing ward")
+        return []
+    
+    # FIRST: Filter to same ward only
+    same_ward_pool = [
+        p for p in pool 
+        if p.get('ward') == subject_ward and p.get('id') != subject_id
+    ]
+    logger.info(f"Same ward ({subject_ward}) pool: {len(same_ward_pool)}/{len(pool)} properties for subject {subject_id}")
     
     # Calculate filtering thresholds (relaxed criteria)
     ppsm_min = subject_ppsm * 0.6   # -40% (relaxed from -30%)
@@ -299,10 +322,7 @@ def select_comparables(subject: Dict[str, Any], pool: List[Dict[str, Any]]) -> L
     
     comps = []
     
-    for prop in pool:
-        # Skip the subject property itself
-        if prop.get('id') == subject_id:
-            continue
+    for prop in same_ward_pool:
             
         prop_ppsm = prop.get('price_per_sqm', 0)
         prop_size = prop.get('size_sqm', 0)
