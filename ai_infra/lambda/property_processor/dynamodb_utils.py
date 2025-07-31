@@ -55,11 +55,11 @@ def setup_dynamodb_client(logger=None):
 def extract_property_id_from_url(url):
     """Extract property ID from listing URL"""
     patterns = [
-        r'/mansion/b-(\d+)/?$',
-        r'/b-(\d+)/?$',
+        r'/mansion/b-(\d+)',  # Remove $ to be more flexible
+        r'/b-(\d+)',          # Remove $ to be more flexible  
         r'property[_-]?id[=:](\d+)',
         r'mansion[_-]?(\d{8,})',
-        r'/(\d{10,})/?$'
+        r'/(\d{10,})'         # Remove $ to be more flexible
     ]
     
     for pattern in patterns:
@@ -67,6 +67,10 @@ def extract_property_id_from_url(url):
         if match:
             return match.group(1)
     
+    # Debug: print URL if no match found (only first few to avoid spam)
+    import random
+    if random.random() < 0.1:  # Only log 10% of failures to avoid spam
+        print(f"DEBUG: Could not extract property ID from URL: {url}")
     return None
 
 def create_property_id_key(raw_property_id, date_str=None):
@@ -138,7 +142,30 @@ def save_complete_properties_to_dynamodb(properties_data, config, logger=None):
         if logger:
             logger.info(f"Saving {len(successful_properties)} properties to DynamoDB...")
         
-        # Save in batches
+        # Save in batches  
+        if logger:
+            logger.debug(f"Starting DynamoDB batch write for {len(successful_properties)} properties")
+        
+        # Check for duplicate property_ids before saving
+        property_ids = []
+        for prop in successful_properties:
+            pid = prop.get('property_id')
+            if pid:
+                property_ids.append(pid)
+        
+        unique_ids = set(property_ids)
+        if len(unique_ids) != len(property_ids):
+            if logger:
+                logger.warning(f"Found duplicate property_ids! {len(property_ids)} total vs {len(unique_ids)} unique")
+                # Find duplicates
+                seen = set()
+                duplicates = set()
+                for pid in property_ids:
+                    if pid in seen:
+                        duplicates.add(pid)
+                    seen.add(pid)
+                logger.warning(f"Duplicate property_ids: {list(duplicates)}")
+        
         with table.batch_writer() as batch:
             for property_data in successful_properties:
                 try:
@@ -155,11 +182,16 @@ def save_complete_properties_to_dynamodb(properties_data, config, logger=None):
                                 logger.debug(f"Progress: {saved_count}/{len(successful_properties)}")
                     else:
                         error_count += 1
+                        if logger:
+                            url = property_data.get('url', 'unknown')
+                            property_id = property_data.get('property_id', 'missing')
+                            logger.error(f"Failed to create valid record for {url} - property_id: {property_id}, record: {record is not None}")
                         
                 except Exception as e:
                     error_count += 1
+                    url = property_data.get('url', 'unknown')
                     if logger:
-                        logger.error(f"Error saving property: {str(e)}")
+                        logger.error(f"Error saving property {url}: {str(e)}")
         
         if logger:
             logger.debug(f"DynamoDB save complete: {saved_count} saved, {error_count} errors")
@@ -174,15 +206,22 @@ def save_complete_properties_to_dynamodb(properties_data, config, logger=None):
 def create_complete_property_record(property_data, config, logger=None):
     """Create a complete property record with all enriched fields"""
     try:
-        # Extract property ID
-        if not property_data.get('property_id'):
-            raw_property_id = extract_property_id_from_url(property_data.get('url', ''))
-            if raw_property_id:
-                property_data['property_id'] = create_property_id_key(raw_property_id)
-        
+        # Extract property ID - use existing if available
         property_id = property_data.get('property_id')
         if not property_id:
-            return None
+            raw_property_id = extract_property_id_from_url(property_data.get('url', ''))
+            if raw_property_id:
+                property_id = create_property_id_key(raw_property_id)
+                property_data['property_id'] = property_id
+            else:
+                if logger:
+                    url = property_data.get('url', 'unknown')
+                    logger.error(f"No property_id could be created for URL: {url}")
+                return None
+        
+        # Remove verbose debug logging - only log errors
+        # if logger:
+        #     logger.debug(f"Using property_id: {property_id} for URL: {property_data.get('url', 'unknown')}")
         
         now = datetime.now()
         
@@ -190,17 +229,16 @@ def create_complete_property_record(property_data, config, logger=None):
         ward = property_data.get('ward', '')
         district_key = f"DIST#{ward.replace(' ', '_')}" if ward else None
         
-        # Create record with all fields
+        # Create record with essential fields only (cleaned up from 50+ to ~30 fields)
         record = {
+            # Primary key
             'property_id': property_id,
             'sort_key': 'META',
+            
+            # Core property data
             'listing_url': property_data.get('url', ''),
-            'listing_status': 'scraped',
-            'scraped_date': now.isoformat(),
-            'analysis_date': now.isoformat(),
-            'data_source': 'scraper_complete',
-            'analysis_yymm': now.strftime('%Y-%m'),
-            'invest_partition': 'SCRAPED',
+            'title': property_data.get('title', ''),
+            'address': property_data.get('address') or property_data.get('所在地', ''),
             
             # Core numeric fields (normalized)
             'price': int(property_data.get('price', 0)) if property_data.get('price') else 0,
@@ -211,7 +249,6 @@ def create_complete_property_record(property_data, config, logger=None):
             'total_floors': int(property_data.get('total_floors', 0)) if property_data.get('total_floors') is not None else None,
             'management_fee': float(property_data.get('management_fee', 0)) if property_data.get('management_fee') else 0,
             'repair_reserve_fee': float(property_data.get('repair_reserve_fee', 0)) if property_data.get('repair_reserve_fee') else 0,
-            'monthly_costs': float(property_data.get('monthly_costs', 0)) if property_data.get('monthly_costs') else 0,
             'total_monthly_costs': float(property_data.get('total_monthly_costs', 0)) if property_data.get('total_monthly_costs') else 0,
             'station_distance_minutes': int(property_data.get('station_distance_minutes', 0)) if property_data.get('station_distance_minutes') is not None else None,
             'num_bedrooms': int(property_data.get('num_bedrooms', 0)) if property_data.get('num_bedrooms') is not None else None,
@@ -221,64 +258,20 @@ def create_complete_property_record(property_data, config, logger=None):
             'district': property_data.get('district', ''),
             'district_key': district_key,  # For GSI queries
             
-            # Property details (raw Japanese text)
-            'price_display': property_data.get('価格', ''),
-            'title': property_data.get('title', ''),
-            'address': property_data.get('address') or property_data.get('所在地', ''),
-            'transportation': property_data.get('station_info') or property_data.get('交通', ''),
-            'building_age': property_data.get('building_age_text') or property_data.get('築年月', ''),
-            'floor_area': property_data.get('size_sqm_text') or property_data.get('専有面積', ''),
-            'balcony_area': property_data.get('balcony_area_text') or property_data.get('バルコニー', ''),
-            'floor_number': property_data.get('floor_text') or property_data.get('所在階', ''),
-            'total_units': property_data.get('total_units_text') or property_data.get('総戸数', ''),
-            'layout': property_data.get('layout_text') or property_data.get('間取り', ''),
-            'layout_type': property_data.get('layout_type', ''),
-            'direction_facing': property_data.get('direction_facing') or property_data.get('向き', ''),
+            # Building details (essential only)
             'building_name': property_data.get('building_name') or property_data.get('建物名', ''),
-            'management_company': property_data.get('管理会社', ''),
-            'management_fee_display': property_data.get('management_fee_text') or property_data.get('管理費', ''),
-            'repair_fund_display': property_data.get('repair_reserve_fee_text') or property_data.get('修繕積立金', ''),
+            'direction_facing': property_data.get('direction_facing') or property_data.get('向き', ''),
             
-            # Scoring and enrichment fields (if available)
-            'final_score': float(property_data.get('final_score', 0)) if property_data.get('final_score') else None,
-            'base_score': float(property_data.get('base_score', 0)) if property_data.get('base_score') else None,
-            'addon_score': float(property_data.get('addon_score', 0)) if property_data.get('addon_score') else None,
-            'adjustment_score': float(property_data.get('adjustment_score', 0)) if property_data.get('adjustment_score') else None,
-            'verdict': property_data.get('verdict', ''),
-            'ward_discount_pct': float(property_data.get('ward_discount_pct', 0)) if property_data.get('ward_discount_pct') else None,
-            'data_quality_penalty': float(property_data.get('data_quality_penalty', 0)) if property_data.get('data_quality_penalty') else None,
-            'is_candidate': property_data.get('is_candidate', False),
-            
-            # Ward median data (if available)
-            'ward_avg_price_per_sqm': float(property_data.get('ward_avg_price_per_sqm', 0)) if property_data.get('ward_avg_price_per_sqm') else None,
-            'ward_property_count': int(property_data.get('ward_property_count', 0)) if property_data.get('ward_property_count') else None,
-            
-            # Building median data (if available)
-            'building_median_price_per_sqm': float(property_data.get('building_median_price_per_sqm', 0)) if property_data.get('building_median_price_per_sqm') else None,
-            'building_property_count': int(property_data.get('building_property_count', 0)) if property_data.get('building_property_count') else None,
-            
-            # Comparables data (if available)
-            'num_comparables': int(property_data.get('num_comparables', 0)) if property_data.get('num_comparables') else 0,
-            'comps_avg_price_per_sqm': float(property_data.get('comps_avg_price_per_sqm', 0)) if property_data.get('comps_avg_price_per_sqm') else None,
-            'comps_min_price_per_sqm': float(property_data.get('comps_min_price_per_sqm', 0)) if property_data.get('comps_min_price_per_sqm') else None,
-            'comps_max_price_per_sqm': float(property_data.get('comps_max_price_per_sqm', 0)) if property_data.get('comps_max_price_per_sqm') else None,
-            
-            # Image data
+            # Image data (essential only)
             'photo_filenames': property_data.get('photo_filenames', ''),
-            'uploaded_image_urls': property_data.get('uploaded_image_urls', []),
-            'interior_photos': property_data.get('interior_photos', []),
             'image_count': property_data.get('image_count', 0),
             
-            # Metadata
-            'extraction_timestamp': property_data.get('extraction_timestamp', now.isoformat()),
-            'scraper_session': config.get('session_id', 'unknown'),
-            'source': property_data.get('source', 'homes_scraper'),
-            'processed_date': property_data.get('processed_date', now.strftime('%Y-%m-%d'))
+            # Single timestamp for all analysis
+            'analysis_date': now.isoformat(),
         }
         
-        # Store scoring components if available
-        if 'scoring_components' in property_data:
-            record['scoring_components'] = property_data['scoring_components']
+        # Note: Scoring fields are now handled by PropertyAnalyzer Lambda
+        # Removed: final_score, base_score, verdict, ward_medians, comparables, etc.
         
         # Remove empty values and None
         record = {k: v for k, v in record.items() if v is not None and v != '' and v != []}

@@ -214,7 +214,7 @@ def lambda_handler(event, context):
         
         # Pagination parameters
         page = int(params.get('page', 1))
-        limit = min(int(params.get('limit', 50)), 100)  # Max 100 items per page
+        limit = min(int(params.get('limit', 50)), 1000)  # Max 1000 items per page
         
         # Build filter expression
         filter_expr, expr_values, expr_names = build_filter_expression(params)

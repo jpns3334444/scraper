@@ -34,6 +34,7 @@ Examples:
     $0 scraper                    # Update scraper lambda
     $0 url_collector              # Update url_collector lambda
     $0 property_processor         # Update property_processor lambda
+    $0 property_analyzer          # Update property_analyzer lambda
     $0 -r us-west-2 analyzer      # Update analyzer lambda in us-west-2
 
 EOF
@@ -286,6 +287,12 @@ case "$LAMBDA_FOLDER" in
         echo ""
         echo "  # Property Processor test:"
         echo "  aws lambda invoke --function-name $FUNCTION_NAME --payload '{\"max_runtime_minutes\":5}' test-response.json --region $REGION"
+        ;;
+    property_analyzer)
+        echo ""
+        echo "  # Property Analyzer test:"
+        echo "  aws lambda invoke --function-name $FUNCTION_NAME --payload '{\"days_back\":7}' test-response.json --region $REGION"
+        echo "  # Or use: ./trigger-lambda.sh --function property-analyzer --sync"
         ;;
 esac
 

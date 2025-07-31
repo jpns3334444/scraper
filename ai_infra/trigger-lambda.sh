@@ -26,6 +26,7 @@ declare -A FUNCTION_MAP=(
     ["scraper"]="tokyo-real-estate-ai-scraper"
     ["url-collector"]="tokyo-real-estate-ai-url-collector" 
     ["property-processor"]="tokyo-real-estate-ai-property-processor"
+    ["property-analyzer"]="tokyo-real-estate-ai-property-analyzer"
     ["etl"]="tokyo-real-estate-ai-etl"
     ["prompt-builder"]="tokyo-real-estate-ai-prompt-builder"
     ["llm-batch"]="tokyo-real-estate-ai-llm-batch"

@@ -134,15 +134,16 @@ SNAPSHOT_GENERATOR_VERSION="latest"
 DAILY_DIGEST_VERSION="latest"
 URL_COLLECTOR_VERSION="latest"
 PROPERTY_PROCESSOR_VERSION="latest"
+PROPERTY_ANALYZER_VERSION="latest"
 DASHBOARD_API_VERSION="latest"
 
-for func in etl prompt_builder llm_batch report_sender dynamodb_writer snapshot_generator daily_digest url_collector property_processor dashboard_api; do
+for func in etl prompt_builder llm_batch report_sender dynamodb_writer snapshot_generator daily_digest url_collector property_processor property_analyzer dashboard_api; do
     [ -d "lambda/$func" ] || error "Function directory lambda/$func not found"
     
     info "Packaging $func..."
     
     # Handle scraper-specific dependencies
-    if [ "$func" = "url_collector" ] || [ "$func" = "property_processor" ]; then
+    if [ "$func" = "url_collector" ] || [ "$func" = "property_processor" ] || [ "$func" = "property_analyzer" ]; then
         info "Installing scraper dependencies..."
         
         # Create temporary directory for dependencies
@@ -197,7 +198,7 @@ def create_zip(func_name, output_zip):
                     file_path = os.path.join(root, file)
                     
                     # Handle deps directory specially for scraper functions
-                    if func_name in ['url_collector', 'property_processor'] and '/deps/' in file_path:
+                    if func_name in ['url_collector', 'property_processor', 'property_analyzer'] and '/deps/' in file_path:
                         # Put deps contents at root level for imports
                         arc_name = os.path.relpath(file_path, os.path.join(func_dir, 'deps'))
                     else:
@@ -267,6 +268,9 @@ print('Created $func.zip with shared modules')
         property_processor)
             PROPERTY_PROCESSOR_VERSION="$OBJECT_VERSION"
             ;;
+        property_analyzer)
+            PROPERTY_ANALYZER_VERSION="$OBJECT_VERSION"
+            ;;
         dashboard_api)
             DASHBOARD_API_VERSION="$OBJECT_VERSION"
             ;;
@@ -275,7 +279,7 @@ print('Created $func.zip with shared modules')
     rm $func.zip
     
     # Clean up scraper dependencies
-    if [ "$func" = "url_collector" ] || [ "$func" = "property_processor" ]; then
+    if [ "$func" = "url_collector" ] || [ "$func" = "property_processor" ] || [ "$func" = "property_analyzer" ]; then
         rm -rf "lambda/$func/deps"
         info "Cleaned up $func dependencies"
     fi
@@ -342,6 +346,7 @@ aws cloudformation deploy \
       DailyDigestCodeVersion=$DAILY_DIGEST_VERSION \
       URLCollectorCodeVersion=$URL_COLLECTOR_VERSION \
       PropertyProcessorCodeVersion=$PROPERTY_PROCESSOR_VERSION \
+      PropertyAnalyzerCodeVersion=$PROPERTY_ANALYZER_VERSION \
       DashboardAPICodeVersion=$DASHBOARD_API_VERSION \
       OpenAILayerObjectVersion=$LAYER_OBJECT_VERSION
 
@@ -379,6 +384,12 @@ PROPERTY_PROCESSOR_FUNCTION_ARN=$(aws cloudformation describe-stacks \
     --query 'Stacks[0].Outputs[?OutputKey==`PropertyProcessorFunctionArn`].OutputValue' \
     --output text 2>/dev/null)
 
+PROPERTY_ANALYZER_FUNCTION_ARN=$(aws cloudformation describe-stacks \
+    --stack-name $STACK_NAME \
+    --region $REGION \
+    --query 'Stacks[0].Outputs[?OutputKey==`PropertyAnalyzerFunctionArn`].OutputValue' \
+    --output text 2>/dev/null)
+
 # Success summary
 echo ""
 status "🎉 Deployment completed successfully!"
@@ -394,6 +405,7 @@ echo "  State Machine: $STATE_MACHINE_ARN"
 echo "  ETL Function: $ETL_FUNCTION_ARN"
 echo "  URL Collector Function: $URL_COLLECTOR_FUNCTION_ARN"
 echo "  Property Processor Function: $PROPERTY_PROCESSOR_FUNCTION_ARN"
+echo "  Property Analyzer Function: $PROPERTY_ANALYZER_FUNCTION_ARN"
 echo "  Dashboard API Function: $DASHBOARD_API_FUNCTION_ARN"
 echo ""
 echo "🧪 Test Commands:"
@@ -409,8 +421,14 @@ echo ""
 echo "  # Test Property Processor function"  
 echo "  aws lambda invoke --function-name $STACK_NAME-property-processor --payload '{\"max_properties\":5}' property-processor-response.json --region $REGION"
 echo ""
+echo "  # Test Property Analyzer function"
+echo "  aws lambda invoke --function-name $STACK_NAME-property-analyzer --payload '{\"days_back\":7}' property-analyzer-response.json --region $REGION"
+echo ""
 echo "  # Run scraper with trigger script"
-echo "  cd $SCRIPT_DIR && ./trigger_lambda_scraper.sh --max-properties 5 --sync"
+echo "  cd $SCRIPT_DIR && ./trigger-lambda.sh --function property-processor --max-properties 5 --sync"
+echo ""
+echo "  # Run property analyzer with trigger script"
+echo "  cd $SCRIPT_DIR && ./trigger-lambda.sh --function property-analyzer --sync"
 echo ""
 echo "  # Run full AI workflow"
 echo "  aws stepfunctions start-execution --state-machine-arn $STATE_MACHINE_ARN --input '{\"date\":\"$(date +%Y-%m-%d)\"}' --region $REGION"

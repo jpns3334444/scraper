@@ -17,8 +17,18 @@ import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
+from decimal import Decimal
 
 logger = logging.getLogger(__name__)
+
+
+def to_float(value: Any) -> float:
+    """Convert value to float, handling Decimal types from DynamoDB."""
+    if isinstance(value, Decimal):
+        return float(value)
+    elif value is None:
+        return 0.0
+    return float(value)
 
 
 class Verdict(Enum):
@@ -110,15 +120,16 @@ def compute_base_and_adjustments(listing: Dict[str, Any],
     components = ScoringComponents()
     
     # Extract key fields
-    price_per_sqm = listing.get('price_per_sqm', 0)
-    current_price = listing.get('price', 0)  # ETL normalizes raw price to 'price' field
-    total_sqm = listing.get('total_sqm', listing.get('size_sqm', 0))
-    building_age = listing.get('building_age_years', 0)
+    price_per_sqm = to_float(listing.get('price_per_sqm', 0))
+    current_price = to_float(listing.get('price', 0))  # ETL normalizes raw price to 'price' field
+    total_sqm = to_float(listing.get('total_sqm', listing.get('size_sqm', 0)))
+    building_age = to_float(listing.get('building_age_years', 0))
     
     # === BASE COMPONENTS (Section 3.2) ===
     
     # 1. Ward Discount (25 points)
     # Linear interpolation: 0 pts at discount ≥ 0%; 25 pts at discount ≤ -20%
+    ward_median_ppm2 = to_float(ward_median_ppm2) if ward_median_ppm2 else 0
     if ward_median_ppm2 and ward_median_ppm2 > 0 and price_per_sqm > 0:
         # Additional safety check to prevent division by zero
         if ward_median_ppm2 == 0:
@@ -143,7 +154,7 @@ def compute_base_and_adjustments(listing: Dict[str, Any],
     
     # 2. Building Discount (10 points)  
     # Linear 0→10 at ≤ -10%; else 0 (no building data available yet in v1.3)
-    building_median = listing.get('building_median_price_per_sqm')
+    building_median = to_float(listing.get('building_median_price_per_sqm', 0))
     if building_median and building_median > 0 and price_per_sqm > 0:
         building_discount_pct = (price_per_sqm - building_median) / building_median
         if building_discount_pct >= 0:
@@ -160,8 +171,8 @@ def compute_base_and_adjustments(listing: Dict[str, Any],
     # Else scale = clamp(((median_comp_ppm2 - subject_ppm2) / (0.05 * subject_ppm2)) * 10, 0, 10)
     if len(comps) >= 4 and price_per_sqm > 0:
         comp_ppm2_values = [
-            comp.get('price_per_sqm', 0) for comp in comps 
-            if comp.get('price_per_sqm', 0) > 0
+            to_float(comp.get('price_per_sqm', 0)) for comp in comps 
+            if to_float(comp.get('price_per_sqm', 0)) > 0
         ]
         
         if comp_ppm2_values:
@@ -210,8 +221,8 @@ def compute_base_and_adjustments(listing: Dict[str, Any],
     # 6. Carry Cost (4 points)
     # If ratio = (hoa_fee+repair_fund)/(price/100) ≤0.12 =>4; 0.12–0.18 linear to 1; >0.18 =>0
     # If fees missing => assume 4
-    hoa_fee = listing.get('hoa_fee_yen')
-    repair_fund = listing.get('repair_fund_yen')
+    hoa_fee = to_float(listing.get('hoa_fee_yen', 0)) if listing.get('hoa_fee_yen') is not None else None
+    repair_fund = to_float(listing.get('repair_fund_yen', 0)) if listing.get('repair_fund_yen') is not None else None
     
     if hoa_fee is None and repair_fund is None:
         components.carry_cost = 4.0  # Missing fees => assume best case
@@ -240,6 +251,7 @@ def compute_base_and_adjustments(listing: Dict[str, Any],
     
     # 1. Price Cut (5 points)
     # If previous_price and ((previous - current)/previous) ≥10% =>5; ≥5% =>3; else 0
+    previous_price = to_float(previous_price) if previous_price else 0
     if previous_price and previous_price > 0 and current_price > 0:
         cut_pct = (previous_price - current_price) / previous_price
         if cut_pct >= 0.10:
@@ -261,7 +273,7 @@ def compute_base_and_adjustments(listing: Dict[str, Any],
     
     # 3. Access (5 points)
     # distance ≤500m =>5; ≤900m =>3; else 0; missing =>3
-    distance_station_m = listing.get('distance_station_m')
+    distance_station_m = to_float(listing.get('distance_station_m')) if listing.get('distance_station_m') is not None else None
     if distance_station_m is None:
         components.access = 3.0
     elif distance_station_m <= 500:
@@ -328,8 +340,8 @@ def compute_base_and_adjustments(listing: Dict[str, Any],
     
     if comps:
         # Check if subject significantly smaller than comparables
-        comp_sizes = [comp.get('total_sqm', comp.get('size_sqm', 0)) 
-                     for comp in comps if comp.get('total_sqm', comp.get('size_sqm', 0)) > 0]
+        comp_sizes = [to_float(comp.get('total_sqm', comp.get('size_sqm', 0))) 
+                     for comp in comps if to_float(comp.get('total_sqm', comp.get('size_sqm', 0))) > 0]
         
         if comp_sizes and total_sqm > 0:
             min_comp_size = min(comp_sizes)
@@ -337,8 +349,8 @@ def compute_base_and_adjustments(listing: Dict[str, Any],
                 overstated_penalty += 5
         
         # Check if subject significantly older than comparables
-        comp_ages = [comp.get('building_age_years', 0) 
-                    for comp in comps if comp.get('building_age_years', 0) > 0]
+        comp_ages = [to_float(comp.get('building_age_years', 0)) 
+                    for comp in comps if to_float(comp.get('building_age_years', 0)) > 0]
         
         if comp_ages and building_age > 0:
             max_comp_age = max(comp_ages)
@@ -416,7 +428,7 @@ class LeanScoring:
             ScoringComponents with all calculations and final verdict
         """
         # Extract related data
-        ward_median = property_data.get('ward_median_price_per_sqm')
+        ward_median = to_float(property_data.get('ward_median_price_per_sqm', 0)) if property_data.get('ward_median_price_per_sqm') else None
         comparables = property_data.get('comparables', [])
         vision_analysis = property_data.get('vision_analysis', {})
         previous_price = property_data.get('previous_price')
