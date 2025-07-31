@@ -244,14 +244,16 @@ def process_single_url(url_data, session_pool, rate_limiter, url_tracking_table,
     if processed_urls is None:
         processed_urls = set()
     
-    # Extract URL and ward
+    # Extract URL, ward, and price
     if isinstance(url_data, dict):
         url = url_data.get('url')
         ward = url_data.get('ward')
+        listing_price = url_data.get('price', 0)  # Get price from tracking table
     else:
         # Backward compatibility
         url = url_data
         ward = None
+        listing_price = 0
     
     try:
         # Acquire rate limit token
@@ -264,13 +266,14 @@ def process_single_url(url_data, session_pool, rate_limiter, url_tracking_table,
         jitter_delay = random.uniform(0.5, 2.0)
         time.sleep(jitter_delay)
         
-        # Extract property details with session pool for images and ward info
+        # Extract property details with session pool for images, ward info, and listing price
         result = extract_property_details(
             session, url, "https://www.homes.co.jp", 
             config=config, logger=logger,
             session_pool=session_pool, 
             image_rate_limiter=image_rate_limiter,
-            ward=ward  # ADD THIS
+            ward=ward,
+            listing_price=listing_price  # Pass the listing price
         )
         
         # Validate data

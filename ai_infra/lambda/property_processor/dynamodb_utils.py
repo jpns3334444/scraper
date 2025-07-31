@@ -252,7 +252,7 @@ def create_complete_property_record(property_data, config, logger=None, existing
         
         # Create district key for GSI
         ward = property_data.get('ward', '')
-        district_key = f"DIST#{ward.replace(' ', '_')}" if ward else None
+        district_key = f"DIST#{ward}" if ward else None
         
         # Create record with essential fields only (cleaned up from 50+ to ~30 fields)
         record = {
@@ -453,7 +453,7 @@ def put_urls_batch_to_tracking_table(urls, table, ward=None, logger=None):
         return 0
 
 def scan_unprocessed_urls(table, logger=None):
-    """Scan for all URLs where processed is empty, including ward data"""
+    """Scan for all URLs where processed is empty, including ward and price data"""
     unprocessed_items = []
     
     try:
@@ -468,10 +468,11 @@ def scan_unprocessed_urls(table, logger=None):
             for item in items:
                 url = item.get('url')
                 if url:
-                    # Return full item with ward if available
+                    # Return full item with ward and price if available
                     unprocessed_items.append({
                         'url': url,
-                        'ward': item.get('ward')
+                        'ward': item.get('ward'),
+                        'price': int(item.get('price', 0))  # Include price
                     })
             
             if 'LastEvaluatedKey' not in response:
@@ -517,7 +518,7 @@ def load_recent_properties_for_comparables(table, ward=None, limit=200, logger=N
     try:
         if ward and ward != 'unknown':
             # Use GSI to query by ward (more efficient)
-            district_key = f"DIST#{ward.replace(' ', '_')}"
+            district_key = f"DIST#{ward}"
             try:
                 response = table.query(
                     IndexName='district-index',

@@ -13,6 +13,60 @@ from PIL import Image
 import io
 import boto3
 
+# Japanese to English ward mapping
+JAPANESE_TO_ENGLISH_WARD = {
+    '千代田区': 'chiyoda-ku',
+    '中央区': 'chuo-ku',
+    '港区': 'minato-ku',
+    '新宿区': 'shinjuku-ku',
+    '文京区': 'bunkyo-ku',
+    '台東区': 'taito-ku',
+    '墨田区': 'sumida-ku',
+    '江東区': 'koto-ku',
+    '品川区': 'shinagawa-ku',
+    '目黒区': 'meguro-ku',
+    '大田区': 'ota-ku',
+    '世田谷区': 'setagaya-ku',
+    '渋谷区': 'shibuya-ku',
+    '中野区': 'nakano-ku',
+    '杉並区': 'suginami-ku',
+    '豊島区': 'toshima-ku',
+    '北区': 'kita-ku',
+    '荒川区': 'arakawa-ku',
+    '板橋区': 'itabashi-ku',
+    '練馬区': 'nerima-ku',
+    '足立区': 'adachi-ku',
+    '葛飾区': 'katsushika-ku',
+    '江戸川区': 'edogawa-ku',
+    # Tokyo cities
+    '八王子市': 'hachioji-city',
+    '立川市': 'tachikawa-city',
+    '武蔵野市': 'musashino-city',
+    '三鷹市': 'mitaka-city',
+    '青梅市': 'ome-city',
+    '府中市': 'fuchu-city',
+    '昭島市': 'akishima-city',
+    '調布市': 'chofu-city',
+    '町田市': 'machida-city',
+    '小金井市': 'koganei-city',
+    '小平市': 'kodaira-city',
+    '日野市': 'hino-city',
+    '東村山市': 'higashimurayama-city',
+    '国分寺市': 'kokubunji-city',
+    '国立市': 'kunitachi-city',
+    '福生市': 'fussa-city',
+    '狛江市': 'komae-city',
+    '東久留米市': 'higashikurume-city',
+    '清瀬市': 'kiyose-city',
+    '東大和市': 'higashiyamato-city',
+    '武蔵村山市': 'musashimurayama-city',
+    '多摩市': 'tama-city',
+    '稲城市': 'inagi-city',
+    '羽村市': 'hamura-city',
+    'あきる野市': 'akiruno-city',
+    '西東京市': 'nishitokyo-city'
+}
+
 # Simplified browser profiles
 BROWSER_PROFILES = [
     {
@@ -198,14 +252,34 @@ def parse_floor_info(text):
     
     return None, None
 
-def extract_ward_and_district(address_text, logger=None):
+def extract_ward_and_district(address_text, provided_ward=None, logger=None):
     """Extract ward and district from Japanese address with improved fallback patterns"""
     if not address_text:
-        return None, None
+        return provided_ward, None
     
     # Clean up the address text
     address_clean = address_text.strip()
     
+    # If a ward was provided from URL collection, use it and just extract district
+    if provided_ward:
+        if logger:
+            logger.debug(f"Using provided ward from URL collection: {provided_ward}")
+        
+        # Extract district from address
+        district = None
+        # Try to find district after parsing address
+        # Remove common patterns and look for area names
+        district_match = re.search(r'([^\d０-９]{2,})', address_clean)
+        if district_match:
+            raw_district = district_match.group(1).strip()
+            # Clean up district name
+            raw_district = re.sub(r'[丁目・ー・・T第区市\s]*$', '', raw_district).strip()
+            if raw_district and len(raw_district) > 0 and raw_district not in provided_ward:
+                district = raw_district
+        
+        return provided_ward, district
+    
+    # If no ward provided, extract from address and convert to English
     # Tokyo 23 wards list with romaji variations
     tokyo_wards = [
         '千代田区', '中央区', '港区', '新宿区', '文京区', '台東区',
@@ -214,23 +288,13 @@ def extract_ward_and_district(address_text, logger=None):
         '板橋区', '練馬区', '足立区', '葛飾区', '江戸川区'
     ]
     
-    # Add ward names without 区 suffix for better matching
-    ward_variations = tokyo_wards.copy()
-    for ward in tokyo_wards:
-        ward_variations.append(ward.replace('区', ''))
-    
     # Tokyo cities/municipalities (Tama area)
     tokyo_cities = [
         '八王子市', '立川市', '武蔵野市', '三鷹市', '青梅市', '府中市', '昭島市', '調布市',
         '町田市', '日野市', '国分寺市', '国立市', '福生市', '狛江市', '東久留米市',
         '武蔵村山市', '多摩市', '稲城市', '羽村市', 'あきる野市', '西東京市',
-        '清瀬市', '東村山市', '小平市', '日の出市', '横田市'
+        '清瀬市', '東村山市', '小平市'
     ]
-    
-    # Add city names without 市 suffix
-    city_variations = tokyo_cities.copy()
-    for city in tokyo_cities:
-        city_variations.append(city.replace('市', ''))
     
     ward = None
     district = None
@@ -241,9 +305,10 @@ def extract_ward_and_district(address_text, logger=None):
     # First try to find Tokyo 23 wards (prioritize full names with 区)
     for w in tokyo_wards:
         if w in address_clean:
-            ward = w
+            # Convert to English using mapping
+            ward = JAPANESE_TO_ENGLISH_WARD.get(w, w)
             if logger:
-                logger.debug(f"Found ward: {ward}")
+                logger.debug(f"Found ward: {w} -> {ward}")
             # Extract district (text after ward, before first number)
             try:
                 after_ward = address_clean.split(w)[1]
@@ -259,33 +324,14 @@ def extract_ward_and_district(address_text, logger=None):
                 pass
             break
     
-    # Try ward variations without 区 if no exact match
-    if not ward:
-        for w_base in [w.replace('区', '') for w in tokyo_wards]:
-            if w_base in address_clean and len(w_base) > 1:
-                ward = w_base + '区'
-                if logger:
-                    logger.debug(f"Found ward via variation: {ward}")
-                # Extract district
-                try:
-                    after_ward = address_clean.split(w_base)[1]
-                    district_match = re.search(r'^([^\d０-９]+)', after_ward)
-                    if district_match:
-                        raw_district = district_match.group(1).strip()
-                        raw_district = re.sub(r'[丁目・ー・・T第区]*$', '', raw_district).strip()
-                        if raw_district and len(raw_district) > 0:
-                            district = raw_district
-                except (IndexError, AttributeError):
-                    pass
-                break
-    
     # If no ward found, try Tokyo cities
     if not ward:
         for city in tokyo_cities:
             if city in address_clean:
-                ward = city
+                # Convert to English using mapping
+                ward = JAPANESE_TO_ENGLISH_WARD.get(city, city)
                 if logger:
-                    logger.debug(f"Found city as ward: {ward}")
+                    logger.debug(f"Found city as ward: {city} -> {ward}")
                 # Extract district/area within the city
                 try:
                     after_city = address_clean.split(city)[1]
@@ -293,25 +339,6 @@ def extract_ward_and_district(address_text, logger=None):
                     if district_match:
                         raw_district = district_match.group(1).strip()
                         raw_district = re.sub(r'[丁目・ー・・T第]*$', '', raw_district).strip()
-                        if raw_district and len(raw_district) > 0:
-                            district = raw_district
-                except (IndexError, AttributeError):
-                    pass
-                break
-    
-    # Try city variations without 市 if still no match 
-    if not ward:
-        for city_base in [c.replace('市', '') for c in tokyo_cities]:
-            if city_base in address_clean and len(city_base) > 1:
-                ward = city_base + '市'
-                if logger:
-                    logger.debug(f"Found city via variation: {ward}")
-                try:
-                    after_city = address_clean.split(city_base)[1]
-                    district_match = re.search(r'^([^\d０-９]+)', after_city)
-                    if district_match:
-                        raw_district = district_match.group(1).strip()
-                        raw_district = re.sub(r'[丁目・ー・・T第市]*$', '', raw_district).strip()
                         if raw_district and len(raw_district) > 0:
                             district = raw_district
                 except (IndexError, AttributeError):
@@ -565,7 +592,7 @@ def collect_area_listings_with_prices(area_name, max_pages=None, session=None, l
         if should_close_session:
             session.close()
 
-def extract_property_details(session, property_url, referer_url, retries=3, config=None, logger=None, session_pool=None, image_rate_limiter=None, ward=None):
+def extract_property_details(session, property_url, referer_url, retries=3, config=None, logger=None, session_pool=None, image_rate_limiter=None, ward=None, listing_price=None):
     """Extract detailed property information with retry logic"""
     last_error = None
     output_bucket = config.get('output_bucket', '') if config else ''
@@ -670,27 +697,33 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                                     data[field_mappings[key]] = value
             
             # Parse extracted fields
-            # Price processing with fallback logic
+            # Price processing with listing price as primary source
             price_numeric = 0
             
-            # Try multiple price sources in order of preference
-            price_sources = []
-            if 'price' in data:  # From regex pattern
-                price_sources.append(('regex_price', data['price']))
-            if 'price_text' in data:  # From table field '価格'
-                price_sources.append(('table_price', data['price_text']))
-            if '価格' in data:  # Direct Japanese field
-                price_sources.append(('japanese_price', data['価格']))
-            
-            # Try each price source until we get a valid result
-            for source_name, price_value in price_sources:
-                if price_value:
-                    parsed_price = parse_price_from_text(price_value)
-                    if parsed_price > 0:
-                        price_numeric = parsed_price
-                        if logger:
-                            logger.debug(f"Price extracted from {source_name}: {price_value} -> {parsed_price}")
-                        break
+            # First, try to use the listing price if provided
+            if listing_price and listing_price > 0:
+                price_numeric = listing_price
+                if logger:
+                    logger.debug(f"Using price from listing page: {listing_price}")
+            else:
+                # Fall back to extracting from detail page (existing logic)
+                price_sources = []
+                if 'price' in data:  # From regex pattern
+                    price_sources.append(('regex_price', data['price']))
+                if 'price_text' in data:  # From table field '価格'
+                    price_sources.append(('table_price', data['price_text']))
+                if '価格' in data:  # Direct Japanese field
+                    price_sources.append(('japanese_price', data['価格']))
+                
+                # Try each price source until we get a valid result
+                for source_name, price_value in price_sources:
+                    if price_value:
+                        parsed_price = parse_price_from_text(price_value)
+                        if parsed_price > 0:
+                            price_numeric = parsed_price
+                            if logger:
+                                logger.debug(f"Price extracted from detail page {source_name}: {price_value} -> {parsed_price}")
+                            break
             
             # Store the numeric price
             data['price'] = price_numeric
@@ -759,7 +792,7 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                 # Try each source until we find ward info
                 for source_name, address_text in address_sources:
                     if address_text:
-                        ward_result, district_result = extract_ward_and_district(address_text, logger)
+                        ward_result, district_result = extract_ward_and_district(address_text, None, logger)
                         if ward_result:
                             extracted_ward, district = ward_result, district_result
                             if logger:
@@ -771,7 +804,7 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
             
             # Always try to extract district from address
             if not district and 'address' in data:
-                _, district_result = extract_ward_and_district(data['address'], logger)
+                _, district_result = extract_ward_and_district(data['address'], data.get('ward'), logger)
                 if district_result:
                     district = district_result
             

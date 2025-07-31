@@ -334,7 +334,7 @@ def put_url_to_tracking_table(url, table, ward=None, logger=None):
         return False
 
 def put_urls_batch_to_tracking_table(urls, table, ward=None, logger=None):
-    """Add multiple URLs to tracking table in batch with ward information"""
+    """Add multiple URLs to tracking table in batch with ward and price information"""
     if not urls:
         return 0
     
@@ -342,11 +342,20 @@ def put_urls_batch_to_tracking_table(urls, table, ward=None, logger=None):
         saved_count = 0
         
         with table.batch_writer() as batch:
-            for url in urls:
+            for url_item in urls:
                 try:
+                    # Handle both string URLs and dict URLs
+                    if isinstance(url_item, dict):
+                        url = url_item.get('url')
+                        price = url_item.get('price', 0)
+                    else:
+                        url = url_item
+                        price = 0
+                    
                     item = {
                         'url': url,
-                        'processed': ''
+                        'processed': '',
+                        'price': price  # Add price to tracking table
                     }
                     if ward:
                         item['ward'] = ward

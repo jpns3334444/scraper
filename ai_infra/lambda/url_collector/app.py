@@ -173,7 +173,11 @@ def collect_area_urls_parallel_worker(area, existing_properties, existing_urls, 
                     already_tracked_count += 1
                 else:
                     # Truly new URL - not in tracking table
-                    new_urls.append({'url': url, 'ward': ward})
+                    new_urls.append({
+                        'url': url,
+                        'ward': ward,
+                        'price': list_page_price  # Include the price from listing page
+                    })
             
             rate_limiter.record_success()
             
@@ -309,9 +313,16 @@ def collect_urls_and_track_new(areas, config, logger=None):
             for url_info in all_new_urls:
                 url = url_info['url']
                 ward = url_info.get('ward')
+                price = url_info.get('price', 0)  # Get price from URL info
+                
                 if ward not in urls_by_ward:
                     urls_by_ward[ward] = []
-                urls_by_ward[ward].append(url)
+                
+                # Store as dict with url and price
+                urls_by_ward[ward].append({
+                    'url': url,
+                    'price': price
+                })
             
             total_urls_added = 0
             for ward, urls in urls_by_ward.items():
