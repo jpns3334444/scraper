@@ -20,7 +20,7 @@ sys.path.append('../property_processor')
 
 try:
     from analysis.lean_scoring import LeanScoring, Verdict
-    from analysis.comparables import ComparablesFilter, enrich_property_with_comparables
+    from analysis.comparables import ComparablesFilter
     from analysis.vision_stub import basic_condition_from_images
     from analysis.enrichments import enrich_property
     from util.metrics import emit_pipeline_metrics, emit_properties_processed, emit_candidates_enqueued
@@ -30,7 +30,6 @@ except ImportError as e:
     ANALYSIS_MODULES_AVAILABLE = False
     LeanScoring = None
     ComparablesFilter = None
-    enrich_property_with_comparables = lambda x, y: x
     basic_condition_from_images = lambda x: {'condition_category': 'dated', 'damage_tokens': [], 'summary': 'No vision analysis', 'light': False}
     enrich_property = lambda x: x
 
@@ -168,24 +167,27 @@ def calculate_ward_medians(properties, logger=None):
     
     return ward_medians
 
-def find_comparables_for_property(target_property, all_properties, logger=None):
-    """Find comparable properties for scoring"""
+def get_ward_properties(target_property, all_properties, logger=None):
+    """Get all properties in the same ward for comparison"""
     try:
-        if not ANALYSIS_MODULES_AVAILABLE:
+        ward = target_property.get('ward')
+        if not ward:
             return []
         
-        # Use the existing comparables logic
-        comparables = enrich_property_with_comparables(target_property, all_properties)
+        target_id = target_property.get('property_id')
+        ward_properties = [
+            prop for prop in all_properties 
+            if prop.get('ward') == ward and prop.get('property_id') != target_id
+        ]
         
-        # Extract comparables data from the enriched property
-        if 'comparables' in comparables:
-            return comparables['comparables']
+        if logger:
+            logger.debug(f"Found {len(ward_properties)} properties in ward {ward}")
         
-        return []
+        return ward_properties
         
     except Exception as e:
         if logger:
-            logger.debug(f"Failed to find comparables: {str(e)}")
+            logger.debug(f"Failed to get ward properties: {str(e)}")
         return []
 
 def extract_ward_from_text(address_text, logger=None):
@@ -259,10 +261,12 @@ def calculate_property_score(property_data, ward_medians, all_properties, logger
                     break
         
         # Calculate missing price_per_sqm if needed
-        if (property_data.get('price', 0) > 0 and 
-            property_data.get('size_sqm', 0) > 0 and 
-            property_data.get('price_per_sqm', 0) == 0):
-            calculated_price_per_sqm = (property_data['price'] * 10000) / property_data['size_sqm']
+        price = float(property_data.get('price', 0)) if property_data.get('price') else 0.0
+        size_sqm = float(property_data.get('size_sqm', 0)) if property_data.get('size_sqm') else 0.0
+        price_per_sqm = float(property_data.get('price_per_sqm', 0)) if property_data.get('price_per_sqm') else 0.0
+        
+        if price > 0 and size_sqm > 0 and price_per_sqm == 0:
+            calculated_price_per_sqm = (price * 10000) / size_sqm
             property_data['price_per_sqm'] = calculated_price_per_sqm
             if logger:
                 logger.debug(f"Recalculated missing price_per_sqm: {calculated_price_per_sqm:.0f} yen/sqm")
@@ -283,17 +287,31 @@ def calculate_property_score(property_data, ward_medians, all_properties, logger
             if logger:
                 logger.debug(f"Vision analysis: {vision_data['condition_category']}, {len(vision_data['damage_tokens'])} damage tokens")
         
-        # Add ward median data
+        # Add ward median data and calculate ward discount percentage
         ward = property_data.get('ward')
         if ward and ward in ward_medians:
             property_data.update(ward_medians[ward])
+            
+            # Ensure ward_discount_pct is calculated
+            price_per_sqm = float(property_data.get('price_per_sqm', 0)) if property_data.get('price_per_sqm') else 0.0
+            ward_median_price_per_sqm_raw = ward_medians[ward].get('ward_median_price_per_sqm', 0)
+            ward_median_price_per_sqm = float(ward_median_price_per_sqm_raw) if ward_median_price_per_sqm_raw else 0.0
+            
+            if price_per_sqm > 0 and ward_median_price_per_sqm > 0:
+                ward_discount_pct = ((price_per_sqm - ward_median_price_per_sqm) / ward_median_price_per_sqm) * 100
+                property_data['ward_discount_pct'] = ward_discount_pct
+                if logger:
+                    logger.debug(f"Calculated ward_discount_pct: {ward_discount_pct:.1f}%")
+            else:
+                property_data['ward_discount_pct'] = 0.0
         elif ward and logger:
             logger.debug(f"No median data available for ward: {ward}")
+            property_data['ward_discount_pct'] = 0.0
         
-        # Find comparables
-        comparables = find_comparables_for_property(property_data, all_properties, logger)
-        property_data['comparables'] = comparables
-        property_data['num_comparables'] = len(comparables)
+        # Get all ward properties for comparison
+        ward_properties = get_ward_properties(property_data, all_properties, logger)
+        property_data['ward_properties'] = ward_properties
+        property_data['num_ward_properties'] = len(ward_properties)
         
         # Apply enrichments
         property_data = enrich_property(property_data)
@@ -324,15 +342,11 @@ def calculate_property_score(property_data, ward_medians, all_properties, logger
                 'vision_negative': scoring_components.vision_negative,
                 'overstated_discount_penalty': scoring_components.overstated_discount_penalty
             },
-            'comparables': comparables,
-            'num_comparables': len(comparables),
+            'num_ward_properties': len(ward_properties),
             # New enrichment fields
             'view_score': property_data.get('view_score'),
             'light_score': property_data.get('light_score'),
             'sunlight_score': property_data.get('sunlight_score'),
-            'efficiency_ratio': property_data.get('efficiency_ratio'),
-            'inefficient_layout': property_data.get('inefficient_layout'),
-            'balcony_score': property_data.get('balcony_score'),
             'earthquake_score': property_data.get('earthquake_score'),
             'days_on_market': property_data.get('days_on_market'),
             'negotiability_score': property_data.get('negotiability_score'),
@@ -382,16 +396,15 @@ def update_property_in_dynamodb(table, property_id, scoring_data, ward_medians, 
             fields_to_update = [
                 'final_score', 'base_score', 'addon_score', 'adjustment_score',
                 'verdict', 'ward_discount_pct', 'data_quality_penalty',
-                'scoring_components', 'comparables', 'num_comparables',
+                'scoring_components', 'num_ward_properties',
                 # New enrichment fields
                 'view_score', 'light_score', 'sunlight_score', 
-                'efficiency_ratio', 'inefficient_layout', 'balcony_score',
                 'earthquake_score', 'days_on_market', 'negotiability_score',
                 'renovation_score', 'smallest_unit_penalty'
             ]
             
             for field in fields_to_update:
-                if field in scoring_data:
+                if field in scoring_data and scoring_data[field] is not None:
                     update_parts.append(f"{field} = :{field}")
                     expr_attr_values[f":{field}"] = float_to_decimal(scoring_data[field])
         

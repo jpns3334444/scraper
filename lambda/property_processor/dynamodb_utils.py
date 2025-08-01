@@ -271,7 +271,7 @@ def create_complete_property_record(property_data, config, logger=None, existing
             'price_per_sqm': float(property_data.get('price_per_sqm', 0)) if property_data.get('price_per_sqm') else 0,
             'building_age_years': int(property_data.get('building_age_years', 0)) if property_data.get('building_age_years') is not None else None,
             'floor': int(property_data.get('floor', 0)) if property_data.get('floor') is not None else None,
-            'total_floors': int(property_data.get('total_floors', 0)) if property_data.get('total_floors') is not None else None,
+            # Remove total_floors - using building_floors instead
             'management_fee': float(property_data.get('management_fee', 0)) if property_data.get('management_fee') else 0,
             'repair_reserve_fee': float(property_data.get('repair_reserve_fee', 0)) if property_data.get('repair_reserve_fee') else 0,
             'total_monthly_costs': float(property_data.get('total_monthly_costs', 0)) if property_data.get('total_monthly_costs') else 0,
@@ -286,10 +286,30 @@ def create_complete_property_record(property_data, config, logger=None, existing
             # Building details (essential only)
             'building_name': property_data.get('building_name') or property_data.get('建物名', ''),
             'direction_facing': property_data.get('direction_facing') or property_data.get('向き', ''),
+            'primary_light': property_data.get('primary_light', ''),
+            'closest_station': property_data.get('closest_station', ''),
             
             # Image data (essential only)
             'photo_filenames': property_data.get('photo_filenames', ''),
             'image_count': property_data.get('image_count', 0),
+            
+            # === ENRICHMENT FIELDS ===
+            # Building structure fields
+            'building_floors': int(property_data.get('building_floors', 0)) if property_data.get('building_floors') is not None else None,
+            'building_year': int(property_data.get('building_year', 0)) if property_data.get('building_year') is not None else None,
+            
+            # Remove usable_area and total_area fields - only use size_sqm
+            'balcony_size_sqm': float(property_data.get('balcony_size_sqm', 0)) if property_data.get('balcony_size_sqm') else None,
+            
+            # View and light fields
+            'orientation': property_data.get('orientation') or property_data.get('direction_facing') or property_data.get('向き', ''),
+            'view_obstructed': property_data.get('view_obstructed', False),
+            'good_lighting': property_data.get('good_lighting', False),
+            
+            # Remove safety fields - has_fire_hatch not providing value
+            
+            # Tracking fields
+            'first_seen_date': property_data.get('first_seen_date') or datetime.now().isoformat(),
             
             # Single timestamp for all analysis
             'analysis_date': now.isoformat(),
@@ -299,11 +319,27 @@ def create_complete_property_record(property_data, config, logger=None, existing
         if previous_price is not None:
             record['previous_price'] = previous_price
         
-        # Note: Scoring fields are now handled by PropertyAnalyzer Lambda
-        # Removed: final_score, base_score, verdict, ward_medians, comparables, etc.
+        # Improved filtering to preserve important fields
+        filtered_record = {}
+        for k, v in record.items():
+            # Always include these fields even if 0 or False
+            preserve_zero_fields = [
+                'floor', 'building_floors', 'price', 'size_sqm', 'price_per_sqm',
+                'management_fee', 'repair_reserve_fee', 'total_monthly_costs',
+                'station_distance_minutes', 'num_bedrooms', 'building_age_years',
+                'building_year', 'image_count', 'good_lighting', 'view_obstructed'
+            ]
+            
+            if k in preserve_zero_fields:
+                # Keep these fields even if 0 or False, but filter out None
+                if v is not None:
+                    filtered_record[k] = v
+            else:
+                # For other fields, filter out None, empty strings, and empty lists
+                if v is not None and v != '' and v != []:
+                    filtered_record[k] = v
         
-        # Remove empty values and None
-        record = {k: v for k, v in record.items() if v is not None and v != '' and v != []}
+        record = filtered_record
         
         # Convert all numeric values to Decimal before returning
         return prepare_for_dynamodb(record)

@@ -93,7 +93,7 @@ def linear_points(value: float, start: float, end: float, max_points: int) -> fl
 
 def compute_base_and_adjustments(listing: Dict[str, Any],
                                  ward_median_ppm2: Optional[float],
-                                 comps: List[Dict[str, Any]],
+                                 ward_properties: List[Dict[str, Any]],
                                  vision: Dict[str, Any],
                                  previous_price: Optional[int]) -> Dict[str, Any]:
     """
@@ -102,7 +102,7 @@ def compute_base_and_adjustments(listing: Dict[str, Any],
     Args:
         listing: Property data dict with required fields
         ward_median_ppm2: Ward median price per sqm (None if missing)
-        comps: List of comparable properties (≤8)
+        ward_properties: List of all properties in the same ward
         vision: Vision analysis dict with condition_category, damage_tokens, etc.
         previous_price: Previous price for price cut calculation (None if unavailable)
         
@@ -167,26 +167,27 @@ def compute_base_and_adjustments(listing: Dict[str, Any],
         components.building_discount = 0.0
     
     # 3. Comps Consistency (10 points)
-    # If ≥4 comps and median(comps_ppm2) ≥ subject_ppm2 * 1.05 ⇒ 10
-    # Else scale = clamp(((median_comp_ppm2 - subject_ppm2) / (0.05 * subject_ppm2)) * 10, 0, 10)
-    if len(comps) >= 4 and price_per_sqm > 0:
-        comp_ppm2_values = [
-            to_float(comp.get('price_per_sqm', 0)) for comp in comps 
-            if to_float(comp.get('price_per_sqm', 0)) > 0
+    # Use all ward properties instead of limited comparables
+    # If ≥4 ward properties and median(ward_ppm2) ≥ subject_ppm2 * 1.05 ⇒ 10
+    # Else scale = clamp(((median_ward_ppm2 - subject_ppm2) / (0.05 * subject_ppm2)) * 10, 0, 10)
+    if len(ward_properties) >= 4 and price_per_sqm > 0:
+        ward_ppm2_values = [
+            to_float(prop.get('price_per_sqm', 0)) for prop in ward_properties 
+            if to_float(prop.get('price_per_sqm', 0)) > 0
         ]
         
-        if comp_ppm2_values:
-            comp_ppm2_values.sort()
-            n = len(comp_ppm2_values)
+        if ward_ppm2_values:
+            ward_ppm2_values.sort()
+            n = len(ward_ppm2_values)
             if n % 2 == 0:
-                median_comp_ppm2 = (comp_ppm2_values[n//2 - 1] + comp_ppm2_values[n//2]) / 2
+                median_ward_ppm2 = (ward_ppm2_values[n//2 - 1] + ward_ppm2_values[n//2]) / 2
             else:
-                median_comp_ppm2 = comp_ppm2_values[n//2]
+                median_ward_ppm2 = ward_ppm2_values[n//2]
             
-            if median_comp_ppm2 >= price_per_sqm * 1.05:
+            if median_ward_ppm2 >= price_per_sqm * 1.05:
                 components.comps_consistency = 10.0
             else:
-                scale = ((median_comp_ppm2 - price_per_sqm) / (0.05 * price_per_sqm)) * 10
+                scale = ((median_ward_ppm2 - price_per_sqm) / (0.05 * price_per_sqm)) * 10
                 components.comps_consistency = max(0.0, min(10.0, scale))
         else:
             components.comps_consistency = 0.0
@@ -319,10 +320,10 @@ def compute_base_and_adjustments(listing: Dict[str, Any],
         dq_penalty += 4
         logger.debug(f"DQ penalty +4: Missing ward median (ward_median_ppm2={ward_median_ppm2})")
         
-    # <4 comps AND no building discount: -3  
-    if len(comps) < 4 and (not building_median or building_median == 0):
+    # <4 ward properties AND no building discount: -3  
+    if len(ward_properties) < 4 and (not building_median or building_median == 0):
         dq_penalty += 3
-        logger.debug(f"DQ penalty +3: <4 comps ({len(comps)}) AND no building discount (building_median={building_median})")
+        logger.debug(f"DQ penalty +3: <4 ward properties ({len(ward_properties)}) AND no building discount (building_median={building_median})")
         
     # Critical null (price OR size): -6
     if not current_price or current_price == 0 or not total_sqm or total_sqm == 0:
@@ -335,26 +336,26 @@ def compute_base_and_adjustments(listing: Dict[str, Any],
         logger.debug(f"Total DQ penalty: -{min(dq_penalty, 8)} (raw: -{dq_penalty})")
     
     # 4. Overstated Discount Penalty (0..-8)
-    # If discount explained mostly by being smallest size among comps or oldest
+    # If discount explained mostly by being smallest size among ward properties or oldest
     overstated_penalty = 0
     
-    if comps:
-        # Check if subject significantly smaller than comparables
-        comp_sizes = [to_float(comp.get('total_sqm', comp.get('size_sqm', 0))) 
-                     for comp in comps if to_float(comp.get('total_sqm', comp.get('size_sqm', 0))) > 0]
+    if ward_properties:
+        # Check if subject significantly smaller than ward properties
+        ward_sizes = [to_float(prop.get('total_sqm', prop.get('size_sqm', 0))) 
+                     for prop in ward_properties if to_float(prop.get('total_sqm', prop.get('size_sqm', 0))) > 0]
         
-        if comp_sizes and total_sqm > 0:
-            min_comp_size = min(comp_sizes)
-            if total_sqm < min_comp_size - 5:  # Small epsilon = 5 sqm
+        if ward_sizes and total_sqm > 0:
+            min_ward_size = min(ward_sizes)
+            if total_sqm < min_ward_size - 5:  # Small epsilon = 5 sqm
                 overstated_penalty += 5
         
-        # Check if subject significantly older than comparables
-        comp_ages = [to_float(comp.get('building_age_years', 0)) 
-                    for comp in comps if to_float(comp.get('building_age_years', 0)) > 0]
+        # Check if subject significantly older than ward properties
+        ward_ages = [to_float(prop.get('building_age_years', 0)) 
+                    for prop in ward_properties if to_float(prop.get('building_age_years', 0)) > 0]
         
-        if comp_ages and building_age > 0:
-            max_comp_age = max(comp_ages)
-            if building_age > max_comp_age:
+        if ward_ages and building_age > 0:
+            max_ward_age = max(ward_ages)
+            if building_age > max_ward_age:
                 overstated_penalty += 5
     
     components.overstated_discount_penalty = -min(overstated_penalty, 8)
@@ -429,13 +430,13 @@ class LeanScoring:
         """
         # Extract related data
         ward_median = to_float(property_data.get('ward_median_price_per_sqm', 0)) if property_data.get('ward_median_price_per_sqm') else None
-        comparables = property_data.get('comparables', [])
+        ward_properties = property_data.get('ward_properties', [])
         vision_analysis = property_data.get('vision_analysis', {})
         previous_price = property_data.get('previous_price')
         
         # Use the core scoring function
         result = compute_base_and_adjustments(
-            property_data, ward_median, comparables, vision_analysis, previous_price
+            property_data, ward_median, ward_properties, vision_analysis, previous_price
         )
         
         # Convert to ScoringComponents for compatibility

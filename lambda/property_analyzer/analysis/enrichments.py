@@ -43,22 +43,22 @@ def calculate_view_score(property_data: Dict[str, Any]) -> float:
 
 def calculate_light_score(property_data: Dict[str, Any]) -> float:
     """
-    Calculate light score based on orientation.
+    Calculate light score based on primary_light.
     南 (south) = 10, 東 (east) or 西 (west) = 7, 北 (north) = 3.
     Bonus +1 if light=True from vision analysis (max 10).
     """
-    orientation = property_data.get('orientation', '')
+    primary_light = property_data.get('primary_light', '')
     light_from_vision = property_data.get('light', False) or property_data.get('vision_light', False)
     
-    # Base score from orientation
-    if '南' in orientation:
+    # Base score from primary_light (Japanese values)
+    if '南' in primary_light:
         base_score = 10.0
-    elif '東' in orientation or '西' in orientation:
+    elif '東' in primary_light or '西' in primary_light:
         base_score = 7.0
-    elif '北' in orientation:
+    elif '北' in primary_light:
         base_score = 3.0
     else:
-        # Default if no orientation data
+        # Default if no primary_light data
         base_score = 5.0
     
     # Add bonus for good light from vision
@@ -76,61 +76,8 @@ def calculate_sunlight_score(light_score: float, view_score: float) -> float:
     return round(light_score * 0.6 + view_score * 0.4, 1)
 
 
-def calculate_efficiency_ratio(property_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Calculate efficiency ratio and flag inefficient layouts.
-    ratio = usable_area / total_area (or size_sqm / total_sqm)
-    inefficient_layout = True if ratio < 0.75
-    """
-    # Try usable_area first, fallback to size_sqm
-    usable_area = to_float(property_data.get('usable_area', 0))
-    total_area = to_float(property_data.get('total_area', 0))
-    
-    if usable_area <= 0 or total_area <= 0:
-        # Fallback to size_sqm / total_sqm
-        usable_area = to_float(property_data.get('size_sqm', 0))
-        total_area = to_float(property_data.get('total_sqm', usable_area))
-    
-    if total_area <= 0:
-        return {
-            'efficiency_ratio': 0.0,
-            'inefficient_layout': True
-        }
-    
-    ratio = usable_area / total_area
-    
-    return {
-        'efficiency_ratio': round(ratio, 3),
-        'inefficient_layout': ratio < 0.75
-    }
 
 
-def calculate_balcony_score(property_data: Dict[str, Any]) -> float:
-    """
-    Calculate balcony score based on size and fire hatch presence.
-    - If size < 2 sqm OR has_fire_hatch = True: score = 2
-    - If size > 4 sqm AND no fire hatch: score = 10
-    - Else: scale linearly between 2 and 10
-    """
-    balcony_size = to_float(property_data.get('balcony_size_sqm', 0))
-    has_fire_hatch = property_data.get('has_fire_hatch', False)
-    
-    # Poor balcony conditions
-    if balcony_size < 2.0 or has_fire_hatch:
-        return 2.0
-    
-    # Excellent balcony
-    if balcony_size > 4.0 and not has_fire_hatch:
-        return 10.0
-    
-    # Linear scale between 2 and 4 sqm
-    if 2.0 <= balcony_size <= 4.0:
-        # Map [2, 4] to [2, 10]
-        return 2.0 + ((balcony_size - 2.0) / 2.0) * 8.0
-    
-    # For sizes > 4 but with fire hatch (already handled above)
-    # This shouldn't be reached but just in case
-    return 5.0
 
 
 def calculate_earthquake_score(property_data: Dict[str, Any]) -> float:
@@ -252,26 +199,20 @@ def enrich_property(property_data: Dict[str, Any]) -> Dict[str, Any]:
         enriched['view_score']
     )
     
-    # 4. Efficiency Ratio
-    efficiency_data = calculate_efficiency_ratio(property_data)
-    enriched['efficiency_ratio'] = efficiency_data['efficiency_ratio']
-    enriched['inefficient_layout'] = efficiency_data['inefficient_layout']
+    # 4. (Removed efficiency ratio and balcony score)
     
-    # 5. Balcony Score
-    enriched['balcony_score'] = calculate_balcony_score(property_data)
-    
-    # 6. Earthquake Score
+    # 5. Earthquake Score
     enriched['earthquake_score'] = calculate_earthquake_score(property_data)
     
-    # 7. Time on Market Enrichments
+    # 6. Time on Market Enrichments
     time_data = calculate_time_on_market_enrichments(property_data)
     enriched['days_on_market'] = time_data['days_on_market']
     enriched['negotiability_score'] = time_data['negotiability_score']
     
-    # 8. Bonus: Renovation Score
+    # 7. Bonus: Renovation Score
     enriched['renovation_score'] = calculate_renovation_score(property_data)
     
-    # 9. Bonus: Smallest Unit Penalty
+    # 8. Bonus: Smallest Unit Penalty
     comparables = property_data.get('comparables', [])
     enriched['smallest_unit_penalty'] = calculate_smallest_unit_penalty(property_data, comparables)
     

@@ -13,6 +13,38 @@ from PIL import Image
 import io
 import boto3
 
+# Overview field mapping for deterministic parsing
+OVERVIEW_FIELD_MAP = {
+    "所在地": "address",
+    "価格": "price_text",
+    "所在階 / 階数": "floor_info",
+    "所在階": "floor_info",
+    "階数": "floor_info",
+    "主要採光面": "primary_light",
+    "向き": "primary_light",
+    "方角": "primary_light",
+    "建物構造": "structure",
+    "築年月": "built_text",
+    "築年数": "built_text",
+    "専有面積": "size_text",
+    "間取り": "layout_text",
+    "管理費": "management_fee_text",
+    "修繕積立金": "repair_reserve_fee_text",
+    "交通": "station_info",
+    "最寄駅": "station_info",
+    "アクセス": "station_info",
+    "バルコニー面積": "balcony_area_text",
+    "駐車場": "parking_text",
+    "総戸数": "total_units_text",
+}
+
+# Orientation mapping from Japanese to English
+ORI_MAP = {
+    "北": "north", "東": "east", "南": "south", "西": "west",
+    "北東": "north-east", "南西": "south-west", 
+    "南東": "south-east", "北西": "north-west"
+}
+
 # Japanese to English ward mapping
 JAPANESE_TO_ENGLISH_WARD = {
     '千代田区': 'chiyoda-ku',
@@ -231,22 +263,51 @@ def parse_building_age(text):
     return None
 
 def parse_floor_info(text):
-    """Parse floor information from '3階/10階建' format"""
+    """Parse floor information from various Japanese floor formats"""
     if not text:
         return None, None
     
     try:
-        # Pattern: "3階/10階建" or "3階/10階"
-        match = re.search(r'(\d+)階[^\d]*(\d+)階', text)
+        # Pattern 1: "5階 / 10階建 (地下1階)" - extract main building info
+        match = re.search(r'(\d+)階\s*/\s*(\d+)階建', text)
         if match:
             floor = int(match.group(1))
             total_floors = int(match.group(2))
             return floor, total_floors
         
-        # Pattern: just "3階"
+        # Pattern 2: "3階/10階" (alternative format without 建)
+        match2 = re.search(r'(\d+)階[^\d]*(\d+)階(?!建)', text)
+        if match2:
+            floor = int(match2.group(1))
+            # This might be "3階/10階" where second number is total floors
+            # Let's assume it's total floors
+            total_floors = int(match2.group(2))
+            return floor, total_floors
+        
+        # Pattern 3: "10階建" alone (building has 10 floors, but property floor unknown)
+        building_match = re.search(r'(\d+)階建', text)
+        if building_match:
+            total_floors = int(building_match.group(1))
+            return None, total_floors
+        
+        # Pattern 4: just "3階" (property is on 3rd floor)
         floor_match = re.search(r'(\d+)階', text)
         if floor_match:
-            return int(floor_match.group(1)), None
+            floor = int(floor_match.group(1))
+            return floor, None
+        
+        # Pattern 5: "地上3階" (above ground 3rd floor)
+        ground_match = re.search(r'地上(\d+)階', text)
+        if ground_match:
+            floor = int(ground_match.group(1))
+            return floor, None
+            
+        # Pattern 6: "B1階" (basement)
+        basement_match = re.search(r'B(\d+)階', text)
+        if basement_match:
+            floor = -int(basement_match.group(1))  # Negative for basement
+            return floor, None
+            
     except (ValueError, TypeError):
         pass
     
@@ -363,16 +424,23 @@ def parse_station_distance(text):
         return None
     
     try:
-        # Multiple patterns for station distance extraction
+        # Look for the first station with walking time (homes.co.jp format)
+        # Example: "JR高崎線 尾久駅 徒歩7分"
+        first_station_match = re.search(r'徒歩(\d+)分', text)
+        if first_station_match:
+            distance = int(first_station_match.group(1))
+            # Sanity check: reasonable walking distance (1-30 minutes)
+            if 1 <= distance <= 30:
+                return distance
+        
+        # Fallback patterns
         patterns = [
-            r'[徒歩]+(\d+)分',              # "徒歩5分"
             r'[歩]+(\d+)分',               # "歩5分"  
             r'駅まで[^\d]*(\d+)分',        # "駅まで徒歩5分"
             r'駅から[^\d]*(\d+)分',        # "駅から徒歩5分"
             r'(?:最寄|最寄り)[^\d]*(\d+)分', # "最寄駅徒歩5分"
             r'(?:駅|Station)[^\d]*(\d+)分', # "XX駅徒歩5分"
             r'(\d+)分[^\d]*(?:駅|歩行)',    # "5分で駅"
-            r'(\d+)分',                   # Just "5分" as fallback
         ]
         
         for pattern in patterns:
@@ -405,6 +473,31 @@ def parse_layout_type(text):
         pass
     
     return layout_type, num_bedrooms
+
+def parse_closest_station(text):
+    """Extract the closest station name from 交通 or 備考 text"""
+    if not text:
+        return None
+    
+    try:
+        # Pattern 1: "JR高崎線 尾久駅 徒歩7分" -> 尾久駅 (extract station name before walking time)
+        station_match = re.search(r'([^\u3000\s]+駅)\s*徒歩(\d+)分', text)
+        if station_match:
+            return station_match.group(1)
+        
+        # Pattern 2: Look for first proper station name (2-6 characters + 駅)
+        # But avoid generic words like "最寄駅" or phrases
+        station_match2 = re.search(r'([ぁ-ん一-龯]{2,6}駅)', text)
+        if station_match2:
+            station_name = station_match2.group(1)
+            # Skip generic terms
+            if station_name not in ['最寄駅', '最寄り駅', '近隣駅']:
+                return station_name
+        
+    except (ValueError, TypeError):
+        pass
+    
+    return None
 
 def extract_building_year(text):
     """Extract building year from 築年月 or building age text"""
@@ -478,6 +571,147 @@ def extract_area_details(text):
         pass
     
     return areas
+
+def parse_overview_section(soup):
+    """Parse property overview from CSS Grid structure and extract detailed info from text patterns"""
+    overview = {}
+    
+    try:
+        # Method 1: Look for CSS Grid containers that hold property details
+        grid_selectors = [
+            'div.grid.grid-cols-max1fr',  # Primary CSS Grid selector
+            'div[class*="grid"][class*="grid-cols"]',  # Alternative grid patterns
+            'div[class*="gap-x"][class*="gap-y"]'  # Grid with gaps
+        ]
+        
+        for selector in grid_selectors:
+            grid_containers = soup.select(selector)
+            
+            for container in grid_containers:
+                # Find span elements that contain property labels and values
+                spans = container.find_all('span')
+                divs = container.find_all('div')
+                all_elements = spans + divs
+                
+                # Process pairs of elements (label, value)
+                for i in range(0, len(all_elements) - 1, 2):
+                    label_elem = all_elements[i]
+                    value_elem = all_elements[i + 1]
+                    
+                    if not label_elem or not value_elem:
+                        continue
+                    
+                    label = label_elem.get_text(strip=True)
+                    value = value_elem.get_text(" ", strip=True)
+                    
+                    if label and value and len(label) < 30:
+                        overview[label] = value
+        
+        # Method 2: Extract detailed property info from text patterns (fallback for missing grid data)
+        all_text = soup.get_text()
+        
+        # Extract floor information from text patterns
+        floor_patterns = [
+            r'所在階\s*/\s*階数([\d階\s/建（）地下]+)',  # "所在階 / 階数 7階 / 10階建"
+            r'(階数[\d階\s/建（）地下]+)',  # "階数7階 / 10階建"
+            r'(\d+階\s*/\s*\d+階建)',  # "7階 / 10階建"
+        ]
+        
+        for pattern in floor_patterns:
+            match = re.search(pattern, all_text)
+            if match:
+                overview['所在階 / 階数'] = match.group(1).strip()
+                break
+        
+        # Extract primary light information
+        light_patterns = [
+            r'主要採光面([^　\s建物構造]{1,4})',  # "主要採光面南東"
+        ]
+        
+        for pattern in light_patterns:
+            match = re.search(pattern, all_text)
+            if match:
+                overview['主要採光面'] = match.group(1).strip()
+                break
+        
+        # Extract station information (get the first/closest station)
+        station_patterns = [
+            r'([^　\s]{2,8}駅)\s*徒歩(\d+)分',  # "桜台駅 徒歩4分"
+        ]
+        
+        for pattern in station_patterns:
+            match = re.search(pattern, all_text)
+            if match:
+                station_name = match.group(1)
+                distance = match.group(2)
+                # Store both station name and create formatted transport info
+                overview['最寄駅'] = station_name
+                overview['交通'] = f"{station_name} 徒歩{distance}分"
+                break
+        
+        # Method 3: Look for specific data-component attributes
+        component_selectors = [
+            '[data-component="occupiedArea"]',  # Floor area
+            '[data-component="floorplan"]',     # Room layout
+            '[data-component="buildingAge"]',   # Building age
+            '[data-component="balconyArea"]',   # Balcony area
+        ]
+        
+        for selector in component_selectors:
+            elements = soup.select(selector)
+            for elem in elements:
+                # Try to get the label from previous sibling or parent context
+                label = None
+                value = elem.get_text(strip=True)
+                
+                # Look for label in previous sibling
+                prev_elem = elem.find_previous_sibling()
+                if prev_elem:
+                    potential_label = prev_elem.get_text(strip=True)
+                    if len(potential_label) < 30 and potential_label:
+                        label = potential_label
+                
+                if label and value:
+                    overview[label] = value
+                elif 'occupiedArea' in selector:
+                    overview['専有面積'] = value
+                elif 'floorplan' in selector:
+                    overview['間取り'] = value
+                elif 'buildingAge' in selector:
+                    overview['築年数'] = value
+                elif 'balconyArea' in selector:
+                    overview['バルコニー面積'] = value
+        
+    except Exception as e:
+        # Fallback to empty dict on any parsing error
+        pass
+    
+    return overview
+
+def normalize_overview(overview):
+    """Convert Japanese property labels to normalized English field names and parse values"""
+    mapped = {}
+    
+    # Map Japanese labels to English field names
+    for japanese_key, english_key in OVERVIEW_FIELD_MAP.items():
+        if japanese_key in overview:
+            mapped[english_key] = overview[japanese_key]
+    
+    # Parse primary light direction if found
+    if 'primary_light' in mapped:
+        light_text = mapped['primary_light'].strip() if mapped['primary_light'] else ''
+        # Keep the Japanese direction as-is for primary_light field
+        mapped['primary_light'] = light_text
+    
+    # Parse floor information if found
+    if 'floor_info' in mapped:
+        floor, building_floors = parse_floor_info(mapped['floor_info'])
+        if floor is not None:
+            mapped['floor'] = floor
+        if building_floors is not None:
+            mapped['building_floors'] = building_floors
+    
+    return mapped
 
 def extract_listing_urls_from_html(html_content):
     """Extract unique listing URLs from HTML content"""
@@ -734,17 +968,44 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
             if price_pattern:
                 data["price"] = price_pattern.group(1)
             
-            # Extract property details from tables with field mapping
+            # Use new deterministic overview parser
+            overview = parse_overview_section(soup)
+            mapped = normalize_overview(overview)
+            
+            # Extract property details from tables with field mapping (FALLBACK for missing fields)
             field_mappings = {
                 '価格': 'price_text',
                 '専有面積': 'size_sqm_text',
                 '築年月': 'building_age_text',
+                # Floor field variations (comprehensive list)
                 '所在階': 'floor_text',
+                '階': 'floor_text', 
+                '階数': 'floor_text',
+                '所在階/階数': 'floor_text',
+                '階/建物階数': 'floor_text',
+                '所在階数': 'floor_text',
+                '建物階数': 'floor_text',
+                '階建': 'floor_text',
+                '所在階/総階数': 'floor_text',
+                '総階数': 'floor_text',
+                '建物総階数': 'floor_text',
+                '階数/総階数': 'floor_text',
+                '層': 'floor_text',  # Alternative kanji for floor
+                '階層': 'floor_text',
+                'フロア': 'floor_text',  # Katakana "floor"
+                'Floor': 'floor_text',  # English
+                '位置': 'floor_text',  # Position/location
                 '所在地': 'address',
                 '管理費': 'management_fee_text',
                 '修繕積立金': 'repair_reserve_fee_text',
                 '交通': 'station_info',
-                '向き': 'direction_facing',
+                '向き': 'primary_light',
+                '方角': 'primary_light',
+                '方位': 'primary_light',
+                'バルコニー向き': 'primary_light',
+                '開口向き': 'primary_light',
+                '主要開口部': 'primary_light',
+                '主要採光面': 'primary_light',
                 '間取り': 'layout_text',
                 '建物名': 'building_name',
                 'バルコニー': 'balcony_area_text',
@@ -765,7 +1026,26 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                 '交通アクセス': 'station_info',
             }
             
+            # First, use the new deterministic parser results
+            if mapped:
+                # Apply mapped fields from overview parser
+                for key, value in mapped.items():
+                    if key.endswith('_text') or key in ['address', 'station_info', 'layout_text', 'building_name']:
+                        data[key] = value
+                    elif key in ['floor', 'building_floors', 'primary_light']:
+                        data[key] = value
+                
+                if logger:
+                    logger.debug(f"Overview parser extracted {len(mapped)} fields: {list(mapped.keys())}")
+            
+            # Fallback to table parsing for any missing fields
             tables = soup.find_all('table')
+            if logger:
+                logger.debug(f"Found {len(tables)} tables to process for fallback")
+            
+            # Debug: Log all extracted fields for floor debugging
+            all_extracted_fields = []
+            
             for table in tables:
                 rows = table.find_all('tr')
                 if len(rows) > 5:  # Reduced threshold for better detection
@@ -775,11 +1055,34 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                             key = cells[0].text.strip()
                             value = cells[1].text.strip()
                             if key and value and len(key) < 30:
-                                # Store raw value
-                                data[key] = value
-                                # Store mapped field if exists
-                                if key in field_mappings:
+                                # Store raw value only if not already found by overview parser
+                                if key not in data:
+                                    data[key] = value
+                                    all_extracted_fields.append(f"{key}={value}")
+                                
+                                # Store mapped field if exists and not already found
+                                if key in field_mappings and field_mappings[key] not in data:
                                     data[field_mappings[key]] = value
+                                    if logger:
+                                        logger.debug(f"Fallback mapped field: {key} -> {field_mappings[key]} = {value}")
+                                # Debug: log potential floor-related fields
+                                elif '階' in key and logger:
+                                    logger.debug(f"Fallback unmapped floor-related field: {key} = {value}")
+                                # Handle primary light field
+                                elif key in ['主要採光面', '向き', '方角'] and 'primary_light' not in data:
+                                    data['primary_light'] = value
+                                    if logger:
+                                        logger.debug(f"Found primary light field: {key} = {value}")
+            
+            # Debug: Log all fields that were extracted
+            if logger:
+                if all_extracted_fields:
+                    logger.debug(f"Fallback extracted fields: {all_extracted_fields[:10]}...")  # Show first 10
+                floor_related = [f for f in all_extracted_fields if '階' in f]
+                if floor_related:
+                    logger.debug(f"Fallback floor-related fields found: {floor_related}")
+                elif not mapped.get('floor_info'):
+                    logger.debug("No floor-related fields found in fallback data")
             
             # Parse extracted fields
             # Price processing with listing price as primary source
@@ -848,14 +1151,43 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                 if age is not None:
                     data['building_age_years'] = age
             
-            # Floor information (enhanced for enrichment)
-            if 'floor_text' in data:
-                floor, total_floors = parse_floor_info(data['floor_text'])
-                if floor is not None:
-                    data['floor'] = floor
-                if total_floors is not None:
-                    data['building_floors'] = total_floors  # Add building_floors field for enrichment
-                    data['total_floors'] = total_floors  # Keep total_floors for compatibility
+            # Floor information - prioritize new parser, fallback to old method
+            if 'floor' not in data and 'building_floors' not in data:
+                # Only process if not already found by overview parser
+                if 'floor_text' in data:
+                    floor, total_floors = parse_floor_info(data['floor_text'])
+                    if floor is not None:
+                        data['floor'] = floor
+                        if logger:
+                            logger.info(f"SUCCESS: Extracted floor from fallback: {floor} from '{data['floor_text']}'")
+                    if total_floors is not None:
+                        data['building_floors'] = total_floors  # Use building_floors as primary field
+                        if logger:
+                            logger.info(f"SUCCESS: Extracted building_floors from fallback: {total_floors} from '{data['floor_text']}'")
+                else:
+                    if logger:
+                        logger.warning("No floor_text field found in extracted data")
+                        # Try to find floor info in any field containing '階'
+                        floor_candidates = {k: v for k, v in data.items() if '階' in str(k) or '階' in str(v)}
+                        if floor_candidates:
+                            logger.info(f"Found potential floor data in other fields: {floor_candidates}")
+                            # Try to extract from any field that looks like floor data
+                            for key, value in floor_candidates.items():
+                                if '階' in str(value):
+                                    floor, total_floors = parse_floor_info(str(value))
+                                    if floor is not None:
+                                        data['floor'] = floor
+                                        data['floor_text'] = str(value)  # Store the source
+                                        if logger:
+                                            logger.info(f"SUCCESS: Extracted floor from {key}: {floor} from '{value}'")
+                                    if total_floors is not None:
+                                        data['building_floors'] = total_floors
+                                        if logger:
+                                            logger.info(f"SUCCESS: Extracted building_floors from {key}: {total_floors} from '{value}'")
+                                    break
+            else:
+                if logger:
+                    logger.info(f"Floor info already extracted by overview parser: floor={data.get('floor')}, building_floors={data.get('building_floors')}")
             
             # Ward and district - use provided ward or extract from address
             extracted_ward, district = None, None
@@ -919,11 +1251,36 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                 data['monthly_costs'] = monthly_costs
                 data['total_monthly_costs'] = monthly_costs
             
-            # Station distance
+            # Station distance and closest station - check multiple sources
+            station_sources = []
             if 'station_info' in data:
-                distance = parse_station_distance(data['station_info'])
-                if distance is not None:
-                    data['station_distance_minutes'] = distance
+                station_sources.append(('station_info', data['station_info']))
+            if '交通' in data:
+                station_sources.append(('direct_transport', data['交通']))
+            if 'remarks' in data:
+                station_sources.append(('remarks', data['remarks']))
+            if '備考' in data:
+                station_sources.append(('direct_remarks', data['備考']))
+            
+            # Try to extract station distance from any available source
+            for source_name, text in station_sources:
+                if text:
+                    distance = parse_station_distance(text)
+                    if distance is not None:
+                        data['station_distance_minutes'] = distance
+                        if logger:
+                            logger.debug(f"Station distance extracted from {source_name}: {distance} minutes")
+                        break
+            
+            # Try to extract closest station name
+            for source_name, text in station_sources:
+                if text:
+                    station = parse_closest_station(text)
+                    if station:
+                        data['closest_station'] = station
+                        if logger:
+                            logger.debug(f"Closest station extracted from {source_name}: {station}")
+                        break
             
             # Layout type and bedrooms
             if 'layout_text' in data:
@@ -933,25 +1290,58 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                 if bedrooms is not None:
                     data['num_bedrooms'] = bedrooms
             
-            # Direction facing / Orientation
-            if 'direction_facing' in data:
-                data['direction_facing'] = data['direction_facing']
-                data['orientation'] = data['direction_facing']  # Add orientation field for enrichment
+            # Primary light - no need for conversion, keep Japanese direction
+            if 'primary_light' not in data:
+                # Fallback: look for direction in other fields
+                if 'direction_facing' in data:
+                    data['primary_light'] = data['direction_facing']
+                    if logger:
+                        logger.debug(f"Using direction_facing as primary_light: {data['direction_facing']}")
+            else:
+                if logger:
+                    logger.debug(f"Primary light already extracted: {data['primary_light']}")
             
-            # Extract enrichment-specific fields from raw HTML content
-            html_text = response.text.lower() if response else ""
+            # Extract enrichment-specific fields from structured table data instead of raw HTML
+            # Search in all extracted fields and table data for better keyword detection
+            all_text = " ".join([str(v) for v in data.values() if isinstance(v, str)])
+            all_text_lower = all_text.lower()
             
-            # View obstruction detection
-            view_obstruction_keywords = ['眺望悪い', '前建てあり', '抜け感なし', '眺望不良', '景観悪い']
-            data['view_obstructed'] = any(keyword in html_text for keyword in view_obstruction_keywords)
+            # View obstruction detection - improved keywords
+            view_obstruction_keywords = [
+                '眺望悪い', '前建てあり', '抜け感なし', '眺望不良', '景観悪い',
+                '眺望なし', '眺望無し', '眺望劣る', '見晴らし悪い', '景観劣る',
+                'ビューなし', '眺望期待できない', '前面建物', '隣接建物',
+                '視界悪い', '見通し悪い', '開放感なし', '圧迫感', '密集',
+                '眺望遮られ', '建物で遮られ', '北向き単身', '1階', '地上階'
+            ]
+            data['view_obstructed'] = any(keyword in all_text_lower for keyword in view_obstruction_keywords)
+            if data['view_obstructed'] and logger:
+                matched_keywords = [kw for kw in view_obstruction_keywords if kw in all_text_lower]
+                logger.debug(f"View obstructed detected with keywords: {matched_keywords}")
             
-            # Light/sunlight detection
+            # Enhanced light detection - use primary_light field and keyword detection
+            light_good = False
+            
+            # Check if primary_light indicates good lighting (south/southeast/southwest facing)
+            if data.get('primary_light'):
+                good_directions = ['南', '南東', '南西', '東南', '西南']
+                light_good = any(direction in data['primary_light'] for direction in good_directions)
+                if logger:
+                    logger.debug(f"Primary light direction: {data['primary_light']}, good lighting: {light_good}")
+            
+            # Also check for explicit light keywords in text
             light_keywords = ['日当たり良好', '陽当たり良い', '日当たり良', '採光良好', '日照良好', '明るい']
-            data['light'] = any(keyword in html_text for keyword in light_keywords)
+            keyword_light_good = any(keyword in all_text_lower for keyword in light_keywords)
             
-            # Fire hatch detection
-            fire_hatch_keywords = ['避難ハッチ', '非常口', '緊急避難', '避難設備']
-            data['has_fire_hatch'] = any(keyword in html_text for keyword in fire_hatch_keywords)
+            # Combine both signals
+            data['good_lighting'] = light_good or keyword_light_good
+            
+            if logger:
+                logger.debug(f"Light detection - direction-based: {light_good}, keyword-based: {keyword_light_good}, final: {data['good_lighting']}")
+            
+            # Remove old light field and fire hatch detection
+            # Old 'light' field replaced with 'good_lighting' above
+            # data['has_fire_hatch'] = False  # Removed as requested
             
             # Extract building year from building_age_text or築年月
             building_year = None
@@ -962,13 +1352,8 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
             if building_year:
                 data['building_year'] = building_year
             
-            # Extract usable area and total area
-            if 'size_sqm_text' in data:
-                areas = extract_area_details(data['size_sqm_text'])
-                if areas.get('usable_area'):
-                    data['usable_area'] = areas['usable_area']
-                if areas.get('total_area'):
-                    data['total_area'] = areas['total_area']
+            # Remove usable_area and total_area extraction - just use size_sqm
+            # This simplifies the data model and avoids confusion
             
             # Extract balcony size
             if 'balcony_area_text' in data:
