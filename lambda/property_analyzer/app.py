@@ -22,6 +22,7 @@ try:
     from analysis.lean_scoring import LeanScoring, Verdict
     from analysis.comparables import ComparablesFilter, enrich_property_with_comparables
     from analysis.vision_stub import basic_condition_from_images
+    from analysis.enrichments import enrich_property
     from util.metrics import emit_pipeline_metrics, emit_properties_processed, emit_candidates_enqueued
     ANALYSIS_MODULES_AVAILABLE = True
 except ImportError as e:
@@ -31,6 +32,7 @@ except ImportError as e:
     ComparablesFilter = None
     enrich_property_with_comparables = lambda x, y: x
     basic_condition_from_images = lambda x: {'condition_category': 'dated', 'damage_tokens': [], 'summary': 'No vision analysis', 'light': False}
+    enrich_property = lambda x: x
 
 class SessionLogger:
     """Simple logger that automatically includes session_id in all messages"""
@@ -293,6 +295,9 @@ def calculate_property_score(property_data, ward_medians, all_properties, logger
         property_data['comparables'] = comparables
         property_data['num_comparables'] = len(comparables)
         
+        # Apply enrichments
+        property_data = enrich_property(property_data)
+        
         # Initialize scorer and calculate
         scorer = LeanScoring()
         scoring_components = scorer.calculate_score(property_data)
@@ -320,7 +325,19 @@ def calculate_property_score(property_data, ward_medians, all_properties, logger
                 'overstated_discount_penalty': scoring_components.overstated_discount_penalty
             },
             'comparables': comparables,
-            'num_comparables': len(comparables)
+            'num_comparables': len(comparables),
+            # New enrichment fields
+            'view_score': property_data.get('view_score'),
+            'light_score': property_data.get('light_score'),
+            'sunlight_score': property_data.get('sunlight_score'),
+            'efficiency_ratio': property_data.get('efficiency_ratio'),
+            'inefficient_layout': property_data.get('inefficient_layout'),
+            'balcony_score': property_data.get('balcony_score'),
+            'earthquake_score': property_data.get('earthquake_score'),
+            'days_on_market': property_data.get('days_on_market'),
+            'negotiability_score': property_data.get('negotiability_score'),
+            'renovation_score': property_data.get('renovation_score'),
+            'smallest_unit_penalty': property_data.get('smallest_unit_penalty')
         }
         
     except Exception as e:
@@ -365,7 +382,12 @@ def update_property_in_dynamodb(table, property_id, scoring_data, ward_medians, 
             fields_to_update = [
                 'final_score', 'base_score', 'addon_score', 'adjustment_score',
                 'verdict', 'ward_discount_pct', 'data_quality_penalty',
-                'scoring_components', 'comparables', 'num_comparables'
+                'scoring_components', 'comparables', 'num_comparables',
+                # New enrichment fields
+                'view_score', 'light_score', 'sunlight_score', 
+                'efficiency_ratio', 'inefficient_layout', 'balcony_score',
+                'earthquake_score', 'days_on_market', 'negotiability_score',
+                'renovation_score', 'smallest_unit_penalty'
             ]
             
             for field in fields_to_update:

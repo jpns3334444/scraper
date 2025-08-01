@@ -308,7 +308,8 @@ def select_comparables(subject: Dict[str, Any], pool: List[Dict[str, Any]]) -> L
     # FIRST: Filter to same ward only
     same_ward_pool = [
         p for p in pool 
-        if p.get('ward') == subject_ward and p.get('id') != subject_id
+        if p.get('ward') and subject_ward and p.get('ward') == subject_ward and p.get('id') != subject_id
+
     ]
     logger.info(f"Same ward ({subject_ward}) pool: {len(same_ward_pool)}/{len(pool)} properties for subject {subject_id}")
     

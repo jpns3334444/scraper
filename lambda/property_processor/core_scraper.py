@@ -406,6 +406,79 @@ def parse_layout_type(text):
     
     return layout_type, num_bedrooms
 
+def extract_building_year(text):
+    """Extract building year from 築年月 or building age text"""
+    if not text:
+        return None
+    
+    try:
+        # Direct year pattern: "1999年3月" -> 1999
+        year_match = re.search(r'(\d{4})年', text)
+        if year_match:
+            return int(year_match.group(1))
+        
+        # Calculate from age: "築25年" -> current_year - 25
+        age_match = re.search(r'築(\d+)年', text)
+        if age_match:
+            age = int(age_match.group(1))
+            return datetime.now().year - age
+        
+        # Japanese era years
+        # 平成 era: 1989-2019 (平成1年 = 1989)
+        heisei_match = re.search(r'平成(\d+)年', text)
+        if heisei_match:
+            heisei_year = int(heisei_match.group(1))
+            return 1988 + heisei_year
+        
+        # 昭和 era: 1926-1989 (昭和1年 = 1926)
+        showa_match = re.search(r'昭和(\d+)年', text)
+        if showa_match:
+            showa_year = int(showa_match.group(1))
+            return 1925 + showa_year
+        
+        # 令和 era: 2019-present (令和1年 = 2019)
+        reiwa_match = re.search(r'令和(\d+)年', text)
+        if reiwa_match:
+            reiwa_year = int(reiwa_match.group(1))
+            return 2018 + reiwa_year
+            
+    except (ValueError, TypeError):
+        pass
+    
+    return None
+
+def extract_area_details(text):
+    """Extract usable area and total area from size text"""
+    areas = {}
+    if not text:
+        return areas
+    
+    try:
+        # Look for patterns like "専有面積：50.5m²（壁芯）" or "専有面積：45.3m²（内法）"
+        # 壁芯 = total registered area, 内法 = usable area
+        
+        # Total area (壁芯)
+        total_match = re.search(r'(\d+\.?\d*)[m²㎡].*?壁芯', text)
+        if total_match:
+            areas['total_area'] = float(total_match.group(1))
+        
+        # Usable area (内法)
+        usable_match = re.search(r'(\d+\.?\d*)[m²㎡].*?内法', text)
+        if usable_match:
+            areas['usable_area'] = float(usable_match.group(1))
+        
+        # If no specific type mentioned, use as general area
+        if not areas:
+            general_match = re.search(r'(\d+\.?\d*)[m²㎡]', text)
+            if general_match:
+                # Assume it's total area if not specified
+                areas['total_area'] = float(general_match.group(1))
+    
+    except (ValueError, TypeError):
+        pass
+    
+    return areas
+
 def extract_listing_urls_from_html(html_content):
     """Extract unique listing URLs from HTML content"""
     relative_urls = re.findall(r'/mansion/b-\d+/?', html_content)
@@ -675,6 +748,8 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                 '間取り': 'layout_text',
                 '建物名': 'building_name',
                 'バルコニー': 'balcony_area_text',
+                'バルコニー面積': 'balcony_area_text',
+                'ベランダ': 'balcony_area_text',
                 '総戸数': 'total_units_text',
                 # Additional variations for fees
                 '管理費等': 'management_fee_text',
@@ -773,13 +848,14 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                 if age is not None:
                     data['building_age_years'] = age
             
-            # Floor information
+            # Floor information (enhanced for enrichment)
             if 'floor_text' in data:
                 floor, total_floors = parse_floor_info(data['floor_text'])
                 if floor is not None:
                     data['floor'] = floor
                 if total_floors is not None:
-                    data['total_floors'] = total_floors
+                    data['building_floors'] = total_floors  # Add building_floors field for enrichment
+                    data['total_floors'] = total_floors  # Keep total_floors for compatibility
             
             # Ward and district - use provided ward or extract from address
             extracted_ward, district = None, None
@@ -857,9 +933,51 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                 if bedrooms is not None:
                     data['num_bedrooms'] = bedrooms
             
-            # Direction facing
+            # Direction facing / Orientation
             if 'direction_facing' in data:
                 data['direction_facing'] = data['direction_facing']
+                data['orientation'] = data['direction_facing']  # Add orientation field for enrichment
+            
+            # Extract enrichment-specific fields from raw HTML content
+            html_text = response.text.lower() if response else ""
+            
+            # View obstruction detection
+            view_obstruction_keywords = ['眺望悪い', '前建てあり', '抜け感なし', '眺望不良', '景観悪い']
+            data['view_obstructed'] = any(keyword in html_text for keyword in view_obstruction_keywords)
+            
+            # Light/sunlight detection
+            light_keywords = ['日当たり良好', '陽当たり良い', '日当たり良', '採光良好', '日照良好', '明るい']
+            data['light'] = any(keyword in html_text for keyword in light_keywords)
+            
+            # Fire hatch detection
+            fire_hatch_keywords = ['避難ハッチ', '非常口', '緊急避難', '避難設備']
+            data['has_fire_hatch'] = any(keyword in html_text for keyword in fire_hatch_keywords)
+            
+            # Extract building year from building_age_text or築年月
+            building_year = None
+            if 'building_age_text' in data and data['building_age_text']:
+                building_year = extract_building_year(data['building_age_text'])
+            if not building_year and '築年月' in data and data['築年月']:
+                building_year = extract_building_year(data['築年月'])
+            if building_year:
+                data['building_year'] = building_year
+            
+            # Extract usable area and total area
+            if 'size_sqm_text' in data:
+                areas = extract_area_details(data['size_sqm_text'])
+                if areas.get('usable_area'):
+                    data['usable_area'] = areas['usable_area']
+                if areas.get('total_area'):
+                    data['total_area'] = areas['total_area']
+            
+            # Extract balcony size
+            if 'balcony_area_text' in data:
+                balcony_size = parse_numeric_field(data['balcony_area_text'].replace('m²', '').replace('㎡', ''))
+                if balcony_size:
+                    data['balcony_size_sqm'] = balcony_size
+            
+            # Check if this is the first time seeing this property (add first_seen_date)
+            data['first_seen_date'] = datetime.now().isoformat()
             
             # Additional fields for compatibility
             data['source'] = 'homes_scraper'
