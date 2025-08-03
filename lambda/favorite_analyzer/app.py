@@ -97,6 +97,7 @@ def build_property_data_package(property_id):
         response = s3_client.get_object(Bucket=bucket, Key=s3_key)
         raw_data = json.loads(response['Body'].read())
     except Exception as e:
+        print(f"Raw property data not found in S3: {s3_key}")
         print(f"Could not load raw data from S3 key {s3_key}: {e}")
     
     # 3. Get image URLs

@@ -136,8 +136,10 @@ URL_COLLECTOR_VERSION="latest"
 PROPERTY_PROCESSOR_VERSION="latest"
 PROPERTY_ANALYZER_VERSION="latest"
 DASHBOARD_API_VERSION="latest"
+FAVORITES_API_VERSION="latest"
+FAVORITE_ANALYZER_VERSION="latest"
 
-for func in etl prompt_builder llm_batch report_sender dynamodb_writer snapshot_generator daily_digest url_collector property_processor property_analyzer dashboard_api; do
+for func in etl prompt_builder llm_batch report_sender dynamodb_writer snapshot_generator daily_digest url_collector property_processor property_analyzer dashboard_api favorites_api favorite_analyzer; do
     [ -d "lambda/$func" ] || error "Function directory lambda/$func not found"
     
     info "Packaging $func..."
@@ -274,6 +276,12 @@ print('Created $func.zip with shared modules')
         dashboard_api)
             DASHBOARD_API_VERSION="$OBJECT_VERSION"
             ;;
+        favorites_api)
+            FAVORITES_API_VERSION="$OBJECT_VERSION"
+            ;;
+        favorite_analyzer)
+            FAVORITE_ANALYZER_VERSION="$OBJECT_VERSION"
+            ;;
     esac
     
     rm $func.zip
@@ -348,6 +356,8 @@ aws cloudformation deploy \
       PropertyProcessorCodeVersion=$PROPERTY_PROCESSOR_VERSION \
       PropertyAnalyzerCodeVersion=$PROPERTY_ANALYZER_VERSION \
       DashboardAPICodeVersion=$DASHBOARD_API_VERSION \
+      FavoritesAPICodeVersion=$FAVORITES_API_VERSION \
+      FavoriteAnalyzerCodeVersion=$FAVORITE_ANALYZER_VERSION \
       OpenAILayerObjectVersion=$LAYER_OBJECT_VERSION
 
 status "✅ CloudFormation stack deployed"

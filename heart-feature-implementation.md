@@ -873,3 +873,132 @@ This implementation provides:
 We already have several legacy systems that do similar things, located in lambda/legacy/. I would recommend you check prompt builder and llm batch lambda functions, for example, for details on how to create and send a prompt to openai API. We already have an API secret created. However, make sure to create new lambda functions, just use those legacy systems for general implementation help.
 
 The system will automatically analyze favorited properties, combining DynamoDB enriched data, S3 raw scraped data, and images to provide comprehensive investment analysis through ChatGPT.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+You are working on a real estate scraping and analysis platform using AWS. The architecture includes multiple Lambdas, an SQS-based async analyzer, and a front-end dashboard. Most features for the favorites and analyzer system are in place, but the implementation is incomplete.
+
+Your task is to **apply the following four critical fixes**:
+
+---
+
+### ✅ Fix #1: Save Raw Property JSONs to S3
+
+In the file `lambda/property_processor/core_scraper.py`, ensure that the `save_property_json_to_s3` function is correctly called after a successful scrape. Look around **lines 1842–1855**. The block is present but currently **commented out or bypassed**.
+
+Update the block so that it actively saves the raw property data to the appropriate key format (`raw/{date}/properties/{property_id}.json`). The function already exists and is named `save_property_json_to_s3`.
+
+```python
+try:
+    if output_bucket and property_id:
+        s3_json_key = save_property_json_to_s3(data, output_bucket, property_id, logger)
+        if s3_json_key:
+            data['s3_json_key'] = s3_json_key
+            if logger:
+                logger.info(f"Property JSON saved to S3: {s3_json_key}")
+except Exception as e:
+    if logger:
+        logger.warning(f"Failed to save property JSON to S3: {e}")
+```
+
+---
+
+### ✅ Fix #2: Add Missing Parameters to `ai-stack.yaml`
+
+In `ai-stack.yaml`, inside the top-level `Parameters:` section, add these two missing entries:
+
+```yaml
+Parameters:
+  FavoritesAPICodeVersion:
+    Type: String
+    Default: latest
+  FavoriteAnalyzerCodeVersion:
+    Type: String
+    Default: latest
+```
+
+These are needed for proper code deployment and Lambda versioning.
+
+---
+
+### ✅ Fix #3: Update `deploy-ai.sh` to Package New Lambdas
+
+In the `deploy-ai.sh` script, update the `for` loop that packages and deploys Lambda functions. Currently, it is missing the new ones. Update it as follows:
+
+```bash
+for func in etl prompt_builder llm_batch report_sender dynamodb_writer snapshot_generator daily_digest url_collector property_processor property_analyzer dashboard_api favorites_api favorite_analyzer; do
+    # existing packaging logic here...
+done
+```
+
+Make sure `favorites_api` and `favorite_analyzer` are properly zipped and pushed to S3.
+
+---
+
+### ✅ Fix #4: Confirm Lambda Role Permissions for Favorites Table
+
+Ensure the `favorites_api` and `favorite_analyzer` Lambda execution roles include the necessary DynamoDB permissions:
+
+```yaml
+- Effect: Allow
+  Action:
+    - dynamodb:GetItem
+    - dynamodb:PutItem
+    - dynamodb:DeleteItem
+    - dynamodb:Query
+    - dynamodb:UpdateItem
+  Resource: !GetAtt UserFavoritesTable.Arn
+```
+
+This should already be in `ai-stack.yaml`, but double-check to confirm.
+
+---
+
+### ✅ Optional Improvement: Add Logging to Analyzer
+
+In `lambda/favorite_analyzer/app.py`, add enhanced logging when a JSON file is missing to make debugging easier:
+
+```python
+logger.warning(f"Raw property data not found in S3: {expected_key}")
+```
+
+---
+
+### 🧠 Objective
+
+These fixes ensure:
+
+* Property JSONs are stored and available to the analyzer
+* New Lambdas are packaged and deployed
+* CloudFormation parameters and permissions are complete
+
+Once you implement these fixes, the favorites-to-analysis system will be fully functional end-to-end.
