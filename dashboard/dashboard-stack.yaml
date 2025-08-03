@@ -1,198 +1,316 @@
-AWSTemplateFormatVersion: '2010-09-09'
-Description: Real Estate Dashboard API Stack
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Tokyo Real Estate Dashboard - Complete backend infrastructure with S3, Lambda, and API Gateway"
 
 Parameters:
-  AIStackName:
+  StackNamePrefix:
     Type: String
-    Default: tokyo-real-estate-ai
-    Description: Name of the AI stack to import resources from
-  DeploymentBucket:
+    Default: "tre-dash"
+    Description: "Prefix for all resource names"
+    
+  S3BucketName:
     Type: String
-    Description: S3 bucket for Lambda deployment packages
-  DashboardAPICodeVersion:
+    Default: ""
+    Description: "S3 bucket name for static site (leave empty for auto-generated)"
+    
+  DynamoDBTableName:
     Type: String
-    Default: latest
-    Description: S3 object version for dashboard API code
+    Default: "properties"
+    Description: "Name of the existing DynamoDB table containing property data"
+
+Conditions:
+  CreateBucketName: !Equals [!Ref S3BucketName, ""]
 
 Resources:
-  # Dashboard API Lambda Function
-  DashboardAPIFunction:
-    Type: AWS::Lambda::Function
+  # S3 Bucket for Static Website
+  StaticSiteBucket:
+    Type: "AWS::S3::Bucket"
     Properties:
-      FunctionName: !Sub '${AWS::StackName}-dashboard-api'
-      Runtime: python3.12
-      Handler: app.lambda_handler
-      Code:
-        S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/dashboard_api.zip
-        S3ObjectVersion: !Ref DashboardAPICodeVersion
-      Environment:
-        Variables:
-          DYNAMODB_TABLE:
-            Fn::ImportValue: !Sub '${AIStackName}-DynamoDBTableName'
-      Timeout: 30
-      MemorySize: 512
-      Role: !GetAtt DashboardAPIRole.Arn
-
-  # IAM Role for Dashboard API Lambda
-  DashboardAPIRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: DynamoDBReadAccess
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - dynamodb:GetItem
-                  - dynamodb:Query
-                  - dynamodb:Scan
-                Resource:
-                  - Fn::ImportValue: !Sub '${AIStackName}-DynamoDBTableArn'
-                  - !Sub 
-                    - '${TableArn}/index/*'
-                    - TableArn:
-                        Fn::ImportValue: !Sub '${AIStackName}-DynamoDBTableArn'
-
-  # API Gateway REST API
-  DashboardAPI:
-    Type: AWS::ApiGateway::RestApi
-    Properties:
-      Name: !Sub '${AWS::StackName}-api'
-      Description: Real Estate Dashboard API
-      EndpointConfiguration:
-        Types:
-          - REGIONAL
-
-  # API Gateway Resource
-  PropertiesResource:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref DashboardAPI
-      ParentId: !GetAtt DashboardAPI.RootResourceId
-      PathPart: properties
-
-  # API Gateway Method - GET
-  PropertiesGetMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref DashboardAPI
-      ResourceId: !Ref PropertiesResource
-      HttpMethod: GET
-      AuthorizationType: NONE
-      Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DashboardAPIFunction.Arn}/invocations'
-      MethodResponses:
-        - StatusCode: 200
-          ResponseParameters:
-            method.response.header.Access-Control-Allow-Origin: true
-
-  # API Gateway Method - OPTIONS (for CORS)
-  PropertiesOptionsMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref DashboardAPI
-      ResourceId: !Ref PropertiesResource
-      HttpMethod: OPTIONS
-      AuthorizationType: NONE
-      Integration:
-        Type: MOCK
-        RequestTemplates:
-          application/json: '{"statusCode": 200}'
-        IntegrationResponses:
-          - StatusCode: 200
-            ResponseParameters:
-              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
-              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
-              method.response.header.Access-Control-Allow-Origin: "'*'"
-            ResponseTemplates:
-              application/json: ''
-      MethodResponses:
-        - StatusCode: 200
-          ResponseParameters:
-            method.response.header.Access-Control-Allow-Headers: true
-            method.response.header.Access-Control-Allow-Methods: true
-            method.response.header.Access-Control-Allow-Origin: true
-
-  # Lambda Permission for API Gateway
-  APIGatewayLambdaPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref DashboardAPIFunction
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${DashboardAPI}/*/*'
-
-  # API Gateway Deployment
-  APIDeployment:
-    Type: AWS::ApiGateway::Deployment
-    DependsOn:
-      - PropertiesGetMethod
-      - PropertiesOptionsMethod
-    Properties:
-      RestApiId: !Ref DashboardAPI
-      StageName: prod
-
-  # S3 Bucket for hosting dashboard HTML
-  DashboardBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub '${AWS::StackName}-dashboard-${AWS::AccountId}'
-      WebsiteConfiguration:
-        IndexDocument: index.html
+      BucketName: !If 
+        - CreateBucketName
+        - !Sub "${StackNamePrefix}-static-${AWS::AccountId}"
+        - !Ref S3BucketName
       PublicAccessBlockConfiguration:
         BlockPublicAcls: false
         BlockPublicPolicy: false
         IgnorePublicAcls: false
         RestrictPublicBuckets: false
+      WebsiteConfiguration:
+        IndexDocument: "index.html"
+        ErrorDocument: "index.html"
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ["*"]
+            AllowedMethods: ["GET", "HEAD"]
+            AllowedOrigins: ["*"]
+            MaxAge: 3600
 
-  # S3 Bucket Policy for public read access
-  DashboardBucketPolicy:
-    Type: AWS::S3::BucketPolicy
+  # S3 Bucket Policy for Public Read Access
+  StaticSiteBucketPolicy:
+    Type: "AWS::S3::BucketPolicy"
     Properties:
-      Bucket: !Ref DashboardBucket
+      Bucket: !Ref StaticSiteBucket
       PolicyDocument:
+        Version: "2012-10-17"
         Statement:
-          - Sid: PublicReadGetObject
-            Effect: Allow
-            Principal: '*'
-            Action:
-              - s3:GetObject
-            Resource: !Sub '${DashboardBucket.Arn}/*'
+          - Sid: "PublicReadGetObject"
+            Effect: "Allow"
+            Principal: "*"
+            Action: "s3:GetObject"
+            Resource: !Sub "${StaticSiteBucket.Arn}/*"
+
+  # IAM Role for Lambda Function
+  FetchPropertiesRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "${StackNamePrefix}-fetch-properties-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "lambda.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: "DynamoDBReadAccess"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "dynamodb:Scan"
+                  - "dynamodb:Query"
+                Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoDBTableName}"
+
+  # CloudWatch Log Group for Lambda
+  FetchPropertiesLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${StackNamePrefix}-fetch-properties"
+      RetentionInDays: 14
+
+  # Lambda Function to Fetch Properties
+  FetchPropertiesFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: !Sub "${StackNamePrefix}-fetch-properties"
+      Runtime: "python3.11"
+      Handler: "index.lambda_handler"
+      Role: !GetAtt FetchPropertiesRole.Arn
+      Timeout: 60
+      MemorySize: 512
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DynamoDBTableName
+          LOG_LEVEL: "INFO"
+          ALLOW_ORIGIN: "*"
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          import logging
+          from decimal import Decimal
+          from boto3.dynamodb.conditions import Attr
+          
+          # Configure logging
+          logger = logging.getLogger()
+          logger.setLevel(os.environ.get('LOG_LEVEL', 'INFO'))
+          
+          # CORS headers for all responses
+          CORS = {
+              "Access-Control-Allow-Origin": "*",
+              "Access-Control-Allow-Headers": "*", 
+              "Access-Control-Allow-Methods": "GET,OPTIONS"
+          }
+          
+          # Initialize DynamoDB client
+          dynamodb = boto3.resource('dynamodb')
+          table_name = os.environ['TABLE_NAME']
+          table = dynamodb.Table(table_name)
+          
+          def lambda_handler(event, context):
+              logger.info(f"Received event: {json.dumps(event)}")
+              
+              try:
+                  # Parse query parameters
+                  params = event.get('queryStringParameters') or {}
+                  limit = min(int(params.get('limit', 500)), 1000)  # Default 500, max 1000
+                  cursor = json.loads(params['cursor']) if 'cursor' in params else None
+                  
+                  logger.info(f"Scanning table '{table_name}' with limit {limit}, cursor: {cursor}")
+                  
+                  # Build scan kwargs with projection expression
+                  scan_kwargs = {
+                      'Limit': limit,
+                      'FilterExpression': Attr('sort_key').eq('META'),
+                      'ProjectionExpression': 'PK, price, size_sqm, total_sqm, ward, ward_discount_pct, img_url, listing_url, #url_attr, verdict, recommendation, property_id, analysis_date, photo_filenames, price_per_sqm, total_monthly_costs, ward_median_price_per_sqm, closest_station, station_distance_minutes, #floor_attr, building_age_years, primary_light',
+                      'ExpressionAttributeNames': {
+                          '#url_attr': 'url',
+                          '#floor_attr': 'floor'
+                      }
+                  }
+                  
+                  if cursor:
+                      scan_kwargs['ExclusiveStartKey'] = cursor
+                  
+                  # Perform scan
+                  response = table.scan(**scan_kwargs)
+                  items = response.get('Items', [])
+                  last_evaluated_key = response.get('LastEvaluatedKey')
+                  
+                  # Format response with necessary transformations
+                  formatted_items = []
+                  for item in items:
+                      # Convert Decimal to float for JSON serialization
+                      property_data = json.loads(json.dumps(item, default=str))
+                      
+                      # Parse numeric strings back to numbers
+                      numeric_fields = ['price', 'size_sqm', 'total_sqm', 'ward_discount_pct', 'price_per_sqm', 
+                                      'total_monthly_costs', 'ward_median_price_per_sqm', 'station_distance_minutes', 
+                                      'floor', 'building_age_years']
+                      for field in numeric_fields:
+                          if field in property_data and property_data[field]:
+                              try:
+                                  property_data[field] = float(property_data[field])
+                              except:
+                                  pass
+                      
+                      # Fix listing URL field mapping
+                      if 'url' in property_data and not property_data.get('listing_url'):
+                          property_data['listing_url'] = property_data['url']
+                      
+                      # Ensure size_sqm exists (some records might have total_sqm instead)
+                      if 'total_sqm' in property_data and 'size_sqm' not in property_data:
+                          property_data['size_sqm'] = property_data['total_sqm']
+                      
+                      formatted_items.append(property_data)
+                  
+                  logger.info(f"Retrieved {len(items)} items, has more: {last_evaluated_key is not None}")
+                  
+                  # Prepare response
+                  body = {
+                      'items': formatted_items,
+                      'cursor': last_evaluated_key
+                  }
+                  
+                  return {
+                      'statusCode': 200,
+                      'headers': CORS,
+                      'body': json.dumps(body)
+                  }
+                  
+              except Exception as e:
+                  logger.error(f"Error processing request: {str(e)}", exc_info=True)
+                  return {
+                      'statusCode': 500,
+                      'headers': CORS,
+                      'body': json.dumps({'error': str(e)})
+                  }
+
+  # API Gateway HTTP API (v2)
+  PropertiesApi:
+    Type: "AWS::ApiGatewayV2::Api"
+    Properties:
+      Name: !Sub "${StackNamePrefix}-api"
+      Description: "API for Tokyo Real Estate Dashboard"
+      ProtocolType: "HTTP"
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowMethods:
+          - GET
+          - OPTIONS
+        AllowHeaders:
+          - "*"
+        MaxAge: 86400
+
+  # API Gateway Stage
+  PropertiesApiStage:
+    Type: "AWS::ApiGatewayV2::Stage"
+    Properties:
+      ApiId: !Ref PropertiesApi
+      StageName: "prod"
+      AutoDeploy: true
+      DefaultRouteSettings:
+        DetailedMetricsEnabled: true
+        ThrottlingBurstLimit: 100
+        ThrottlingRateLimit: 50
+
+  # Lambda Permission for API Gateway
+  ApiGatewayInvokePermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      FunctionName: !Ref FetchPropertiesFunction
+      Action: "lambda:InvokeFunction"
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PropertiesApi}/*/*"
+
+  # API Gateway Integration
+  PropertiesApiIntegration:
+    Type: "AWS::ApiGatewayV2::Integration"
+    Properties:
+      ApiId: !Ref PropertiesApi
+      IntegrationType: "AWS_PROXY"
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FetchPropertiesFunction.Arn}/invocations"
+      PayloadFormatVersion: "2.0"
+      TimeoutInMillis: 30000
+
+  # API Gateway Route for GET /properties
+  PropertiesApiRoute:
+    Type: "AWS::ApiGatewayV2::Route"
+    Properties:
+      ApiId: !Ref PropertiesApi
+      RouteKey: "GET /properties"
+      Target: !Sub "integrations/${PropertiesApiIntegration}"
+
+  # Default route integration for CORS on all unmatched requests (404s, etc.)
+  DefaultRouteIntegration:
+    Type: "AWS::ApiGatewayV2::Integration"
+    Properties:
+      ApiId: !Ref PropertiesApi
+      IntegrationType: "AWS_PROXY"
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FetchPropertiesFunction.Arn}/invocations"
+      PayloadFormatVersion: "2.0"
+      TimeoutInMillis: 30000
+
+  # Default route for unmatched requests
+  DefaultApiRoute:
+    Type: "AWS::ApiGatewayV2::Route"
+    Properties:
+      ApiId: !Ref PropertiesApi
+      RouteKey: "$default"
+      Target: !Sub "integrations/${DefaultRouteIntegration}"
+
 
 Outputs:
-  DashboardAPIEndpoint:
-    Description: API Gateway endpoint URL
-    Value: !Sub 'https://${DashboardAPI}.execute-api.${AWS::Region}.amazonaws.com/prod'
+  ApiEndpoint:
+    Description: "API Gateway endpoint URL"
+    Value: !Sub "https://${PropertiesApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
     Export:
-      Name: !Sub '${AWS::StackName}-APIEndpoint'
+      Name: !Sub "${StackNamePrefix}-api-endpoint"
 
-  DashboardWebsiteURL:
-    Description: Dashboard website URL
-    Value: !GetAtt DashboardBucket.WebsiteURL
+  StaticSiteURL:
+    Description: "S3 static website URL"
+    Value: !Sub "http://${StaticSiteBucket}.s3-website-${AWS::Region}.amazonaws.com"
     Export:
-      Name: !Sub '${AWS::StackName}-WebsiteURL'
+      Name: !Sub "${StackNamePrefix}-static-site-url"
 
-  DashboardBucketName:
-    Description: S3 bucket name for dashboard hosting
-    Value: !Ref DashboardBucket
+  S3BucketName:
+    Description: "S3 bucket name for static files"
+    Value: !Ref StaticSiteBucket
     Export:
-      Name: !Sub '${AWS::StackName}-BucketName'
+      Name: !Sub "${StackNamePrefix}-s3-bucket"
 
-  DashboardAPIFunctionArn:
-    Description: Dashboard API Lambda function ARN
-    Value: !GetAtt DashboardAPIFunction.Arn
+  LambdaFunctionName:
+    Description: "Lambda function name"
+    Value: !Ref FetchPropertiesFunction
     Export:
-      Name: !Sub '${AWS::StackName}-APIFunctionArn'
+      Name: !Sub "${StackNamePrefix}-lambda-function"
+
+  LambdaFunctionArn:
+    Description: "Lambda function ARN"
+    Value: !GetAtt FetchPropertiesFunction.Arn
+    Export:
+      Name: !Sub "${StackNamePrefix}-lambda-arn"

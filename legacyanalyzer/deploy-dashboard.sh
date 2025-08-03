@@ -29,30 +29,75 @@ cd "$SCRIPT_DIR"
 command -v aws >/dev/null || error "AWS CLI not found"
 aws sts get-caller-identity >/dev/null || error "AWS credentials not configured"
 [ -f "$TEMPLATE_FILE" ] || error "CloudFormation template $TEMPLATE_FILE not found"
-[ -f "../dashboard/index.html" ] || error "Dashboard HTML not found"
+[ -f "../lambda/dashboard_api/app.py" ] || error "Dashboard API code not found"
 
 status "Prerequisites OK"
 
-# Check if AI stack exists and get dashboard API function name
+# Check if AI stack exists
 info "Checking AI stack..."
 if ! aws cloudformation describe-stacks --stack-name $AI_STACK_NAME --region $REGION >/dev/null 2>&1; then
     error "AI stack '$AI_STACK_NAME' not found. Please deploy the AI stack first."
 fi
+status "✅ AI stack exists"
 
-# Get the dashboard API function name from the AI stack
-DASHBOARD_API_FUNCTION=$(aws cloudformation describe-stacks \
-    --stack-name $AI_STACK_NAME \
-    --region $REGION \
-    --query 'Stacks[0].Outputs[?OutputKey==`DashboardAPIFunctionName`].OutputValue' \
-    --output text)
+# Package Dashboard API Lambda function
+status "Packaging Dashboard API function..."
 
-if [ -z "$DASHBOARD_API_FUNCTION" ] || [ "$DASHBOARD_API_FUNCTION" = "None" ]; then
-    error "Dashboard API function not found in AI stack. Please ensure the AI stack includes the dashboard_api function."
+# Lambda directory should already exist
+
+# Find working Python command
+PYTHON_CMD=""
+for py_cmd in python3 python py python.exe; do
+    if command -v $py_cmd >/dev/null 2>&1; then
+        if $py_cmd -c "import sys; print('Python works')" >/dev/null 2>&1; then
+            PYTHON_CMD="$py_cmd"
+            info "Using Python command: $py_cmd"
+            break
+        fi
+    fi
+done
+
+if [ -n "$PYTHON_CMD" ]; then
+    # Use Python method
+    $PYTHON_CMD -c "
+import zipfile
+import os
+import sys
+
+def create_zip(source_dir, output_zip):
+    with zipfile.ZipFile(output_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, dirs, files in os.walk(source_dir):
+            # Skip __pycache__ directories
+            dirs[:] = [d for d in dirs if d != '__pycache__']
+            
+            for file in files:
+                # Skip .pyc files
+                if file.endswith('.pyc'):
+                    continue
+                    
+                file_path = os.path.join(root, file)
+                arc_name = os.path.relpath(file_path, source_dir)
+                zipf.write(file_path, arc_name)
+
+create_zip('../lambda/dashboard_api', 'dashboard_api.zip')
+print('Created dashboard_api.zip')
+"
+else
+    # Fallback to zip command
+    warn "Python not found, using zip command"
+    (cd ../lambda/dashboard_api && zip -r ../../dashboard/dashboard_api.zip .)
 fi
 
-status "✅ AI stack exists with dashboard API function: $DASHBOARD_API_FUNCTION"
+[ -f "dashboard_api.zip" ] || error "Failed to create dashboard_api.zip"
 
-# Deploy CloudFormation stack (without duplicate dashboard API function)
+# Upload to S3
+aws s3 cp dashboard_api.zip s3://$BUCKET_NAME/functions/dashboard_api.zip --region $REGION
+DASHBOARD_API_VERSION=$(aws s3api head-object --bucket $BUCKET_NAME --key functions/dashboard_api.zip --region $REGION --query 'VersionId' --output text)
+
+rm dashboard_api.zip
+status "✅ Dashboard API packaged and uploaded (version: $DASHBOARD_API_VERSION)"
+
+# Deploy CloudFormation stack
 status "Deploying dashboard stack..."
 aws cloudformation deploy \
   --template-file $TEMPLATE_FILE \
@@ -61,7 +106,8 @@ aws cloudformation deploy \
   --region $REGION \
   --parameter-overrides \
       AIStackName=$AI_STACK_NAME \
-      DashboardAPIFunctionName=$DASHBOARD_API_FUNCTION
+      DeploymentBucket=$BUCKET_NAME \
+      DashboardAPICodeVersion=$DASHBOARD_API_VERSION
 
 status "✅ CloudFormation stack deployed"
 
@@ -87,16 +133,12 @@ BUCKET_NAME_OUTPUT=$(aws cloudformation describe-stacks \
 
 # Update index.html with API endpoint
 status "Updating dashboard HTML with API endpoint..."
-cp ../dashboard/index.html /tmp/index.html
-sed -i.bak "s|https://YOUR_API_GATEWAY_URL/properties|${API_ENDPOINT}/properties|g" /tmp/index.html
-rm /tmp/index.html.bak
+sed -i.bak "s|https://YOUR_API_GATEWAY_URL/properties|${API_ENDPOINT}/properties|g" index.html
+rm index.html.bak
 
 # Upload dashboard HTML to S3
 status "Uploading dashboard to S3..."
-aws s3 cp /tmp/index.html s3://$BUCKET_NAME_OUTPUT/index.html --region $REGION --content-type text/html
-
-# Clean up temp file
-rm /tmp/index.html
+aws s3 cp index.html s3://$BUCKET_NAME_OUTPUT/index.html --region $REGION --content-type text/html
 
 # Success summary
 echo ""
@@ -107,7 +149,6 @@ echo "  Stack Name: $STACK_NAME"
 echo "  Region: $REGION"
 echo "  API Endpoint: $API_ENDPOINT"
 echo "  Website URL: $WEBSITE_URL"
-echo "  Using existing dashboard API function: $DASHBOARD_API_FUNCTION"
 echo ""
 echo "🌐 Access your dashboard at:"
 echo "  $WEBSITE_URL"

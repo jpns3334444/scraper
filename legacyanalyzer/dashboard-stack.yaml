@@ -1,16 +1,69 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Real Estate Dashboard Web Stack (uses existing API from AI stack)
+Description: Real Estate Dashboard API Stack
 
 Parameters:
   AIStackName:
     Type: String
     Default: tokyo-real-estate-ai
     Description: Name of the AI stack to import resources from
-  DashboardAPIFunctionName:
+  DeploymentBucket:
     Type: String
-    Description: Name of the existing dashboard API function from AI stack
+    Description: S3 bucket for Lambda deployment packages
+  DashboardAPICodeVersion:
+    Type: String
+    Default: latest
+    Description: S3 object version for dashboard API code
 
 Resources:
+  # Dashboard API Lambda Function
+  DashboardAPIFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-dashboard-api'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/dashboard_api.zip
+        S3ObjectVersion: !Ref DashboardAPICodeVersion
+      Environment:
+        Variables:
+          DYNAMODB_TABLE:
+            Fn::ImportValue: !Sub '${AIStackName}-DynamoDBTableName'
+      Timeout: 30
+      MemorySize: 512
+      Role: !GetAtt DashboardAPIRole.Arn
+
+  # IAM Role for Dashboard API Lambda
+  DashboardAPIRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - Fn::ImportValue: !Sub '${AIStackName}-DynamoDBTableArn'
+                  - !Sub 
+                    - '${TableArn}/index/*'
+                    - TableArn:
+                        Fn::ImportValue: !Sub '${AIStackName}-DynamoDBTableArn'
+
   # API Gateway REST API
   DashboardAPI:
     Type: AWS::ApiGateway::RestApi
@@ -40,7 +93,7 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${DashboardAPIFunctionName}/invocations'
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DashboardAPIFunction.Arn}/invocations'
       MethodResponses:
         - StatusCode: 200
           ResponseParameters:
@@ -77,7 +130,7 @@ Resources:
   APIGatewayLambdaPermission:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref DashboardAPIFunctionName
+      FunctionName: !Ref DashboardAPIFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${DashboardAPI}/*/*'
@@ -137,3 +190,9 @@ Outputs:
     Value: !Ref DashboardBucket
     Export:
       Name: !Sub '${AWS::StackName}-BucketName'
+
+  DashboardAPIFunctionArn:
+    Description: Dashboard API Lambda function ARN
+    Value: !GetAtt DashboardAPIFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-APIFunctionArn'

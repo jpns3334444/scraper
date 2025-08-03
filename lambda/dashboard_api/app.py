@@ -198,7 +198,7 @@ def get_sort_key(sort_by):
     return sort_mappings.get(sort_by, ('analysis_date', True))
 
 def lambda_handler(event, context):
-    """Handle API requests for property data"""
+    """Handle API requests for property data with cursor-based pagination"""
     
     # Handle OPTIONS request for CORS
     if event.get('httpMethod') == 'OPTIONS':
@@ -208,99 +208,109 @@ def lambda_handler(event, context):
             'body': ''
         }
     
+    # Handle default route (404 for unmatched paths) - ensure CORS headers
+    route_key = event.get('routeKey', '')
+    raw_path = event.get('rawPath', '')
+    
+    # If this is the $default route (catches all unmatched paths), return 404
+    if route_key == '$default':
+        return {
+            'statusCode': 404,
+            'headers': CORS_HEADERS,
+            'body': json.dumps({'message': 'Not Found'})
+        }
+    
+    # If the path is not exactly /properties, return 404
+    if raw_path and raw_path not in ['/properties', '/prod/properties']:
+        return {
+            'statusCode': 404,
+            'headers': CORS_HEADERS,
+            'body': json.dumps({'message': 'Not Found'})
+        }
+    
     try:
         # Get query parameters
         params = event.get('queryStringParameters', {}) or {}
         
         # Pagination parameters
-        page = int(params.get('page', 1))
-        limit = min(int(params.get('limit', 50)), 1000)  # Max 1000 items per page
+        limit = min(int(params.get('limit', 500)), 1000)  # Default 500, max 1000
+        cursor = json.loads(params['cursor']) if 'cursor' in params else None
         
-        # Build filter expression
-        filter_expr, expr_values, expr_names = build_filter_expression(params)
-        
-        # Query DynamoDB - scan all META items
+        # Build scan kwargs with projection expression
         scan_kwargs = {
-            'FilterExpression': Attr('sort_key').eq('META')
+            'Limit': limit,
+            'FilterExpression': Attr('sort_key').eq('META'),
+            'ProjectionExpression': 'PK, price, size_sqm, total_sqm, ward, ward_discount_pct, img_url, listing_url, url, verdict, recommendation, property_id, analysis_date, photo_filenames, price_per_sqm, total_monthly_costs, ward_median_price_per_sqm, closest_station, station_distance_minutes, floor, building_age_years, primary_light'
         }
         
-        if filter_expr:
-            # Add custom filters
-            scan_kwargs['FilterExpression'] = scan_kwargs['FilterExpression'] & eval(filter_expr.replace(' AND ', ' & ').replace(' OR ', ' | ').replace('=', '.eq(').replace('>=', '.gte(').replace('<=', '.lte(').replace(')', '))'))
+        if cursor:
+            scan_kwargs['ExclusiveStartKey'] = cursor
+        
+        # Perform scan
+        response = table.scan(**scan_kwargs)
+        items = response.get('Items', [])
+        last_evaluated_key = response.get('LastEvaluatedKey')
+        
+        # Format response with necessary transformations
+        formatted_items = []
+        for item in items:
+            # Convert Decimal to float for JSON serialization
+            property_data = json.loads(json.dumps(item, default=str))
             
-        # Perform scan to get all matching items
-        items = []
-        last_evaluated_key = None
-        
-        while True:
-            if last_evaluated_key:
-                scan_kwargs['ExclusiveStartKey'] = last_evaluated_key
-                
-            response = table.scan(**scan_kwargs)
-            items.extend(response.get('Items', []))
+            # Parse numeric strings back to numbers
+            numeric_fields = ['price', 'size_sqm', 'total_sqm', 'ward_discount_pct', 'price_per_sqm', 
+                            'total_monthly_costs', 'ward_median_price_per_sqm', 'station_distance_minutes', 
+                            'floor', 'building_age_years']
+            for field in numeric_fields:
+                if field in property_data and property_data[field]:
+                    try:
+                        property_data[field] = float(property_data[field])
+                    except:
+                        pass
             
-            last_evaluated_key = response.get('LastEvaluatedKey')
-            if not last_evaluated_key:
-                break
-        
-        # Sort items
-        sort_key, reverse = get_sort_key(params.get('sort_by', 'date_desc'))
-        items.sort(key=lambda x: x.get(sort_key, 0), reverse=reverse)
-        
-        # Paginate results
-        total_count = len(items)
-        start_idx = (page - 1) * limit
-        end_idx = start_idx + limit
-        paginated_items = items[start_idx:end_idx]
-        
-        # Get unique values for filters
-        all_wards = sorted(list(set(item.get('ward', '') for item in items if item.get('ward'))))
-        all_districts = sorted(list(set(item.get('district', '') for item in items if item.get('district'))))
-        all_property_types = sorted(list(set(item.get('property_type', '') for item in items if item.get('property_type'))))
-        
-        # Format response with image URLs
-        formatted_properties = []
-        for item in paginated_items:
-            property_data = decimal_to_float(item)
-            # Add image URLs
-            property_data['image_urls'] = generate_image_urls(item)
-            # Fix listing URL field mapping (scraper uses 'url', frontend expects 'listing_url')
+            # Fix listing URL field mapping
             if 'url' in property_data and not property_data.get('listing_url'):
                 property_data['listing_url'] = property_data['url']
             # If listing_url is still empty, try to reconstruct from property_id
             elif not property_data.get('listing_url') and property_data.get('property_id'):
-                # Extract the actual homes.co.jp ID from property_id (format: PROP#YYYYMMDD_XXXXX)
                 prop_id = property_data['property_id']
                 if '#' in prop_id and '_' in prop_id:
-                    # Extract the ID after the underscore
                     homes_id = prop_id.split('_')[-1]
                     if homes_id.isdigit():
                         property_data['listing_url'] = f"https://www.homes.co.jp/mansion/b-{homes_id}"
-            # Ensure price_per_sqm is included (it should already be in DynamoDB)
-            if 'price_per_sqm' not in property_data and 'price' in property_data and 'total_sqm' in property_data:
-                if property_data['total_sqm'] and property_data['total_sqm'] > 0:
-                    property_data['price_per_sqm'] = property_data['price'] / property_data['total_sqm']
-                else:
-                    property_data['price_per_sqm'] = 0
-            formatted_properties.append(property_data)
+            
+            # Ensure size_sqm exists (some records might have total_sqm instead)
+            if 'total_sqm' in property_data and 'size_sqm' not in property_data:
+                property_data['size_sqm'] = property_data['total_sqm']
+            
+            # Add first image URL if available
+            if property_data.get('img_url'):
+                property_data['image_url'] = property_data['img_url']
+            elif property_data.get('photo_filenames'):
+                # Use first photo if available
+                first_photo = property_data['photo_filenames'].split('|')[0].strip()
+                if first_photo:
+                    try:
+                        property_data['image_url'] = s3_client.generate_presigned_url(
+                            'get_object',
+                            Params={'Bucket': s3_bucket, 'Key': first_photo},
+                            ExpiresIn=3600
+                        )
+                    except:
+                        pass
+            
+            formatted_items.append(property_data)
         
-        response_data = {
-            'properties': formatted_properties,
-            'total_count': total_count,
-            'page': page,
-            'limit': limit,
-            'total_pages': (total_count + limit - 1) // limit,
-            'filters': {
-                'wards': all_wards,
-                'districts': all_districts,
-                'property_types': all_property_types
-            }
+        # Prepare response
+        body = {
+            'items': formatted_items,
+            'cursor': last_evaluated_key
         }
         
         return {
             'statusCode': 200,
             'headers': CORS_HEADERS,
-            'body': json.dumps(response_data)
+            'body': json.dumps(body)
         }
         
     except Exception as e:
@@ -308,5 +318,5 @@ def lambda_handler(event, context):
         return {
             'statusCode': 500,
             'headers': CORS_HEADERS,
-            'body': json.dumps({'error': 'Internal server error'})
+            'body': json.dumps({'error': str(e)})
         }

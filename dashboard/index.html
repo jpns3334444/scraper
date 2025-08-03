@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TOKYO_REAL_ESTATE_TERMINAL_v2.7</title>
+    <title>東京 Real Estate</title>
     
-    <!-- Steampunk Hacker Favicon -->
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%23000'/><text x='16' y='24' text-anchor='middle' fill='%23cc3333' font-family='monospace' font-size='20' style='filter: drop-shadow(0 0 4px %23cc3333)'>☠</text></svg>">
+    <!-- Japanese-inspired Favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%23F7F5F2'/><circle cx='16' cy='16' r='10' fill='%23695b8d' opacity='0.8'/></svg>">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+Antique:wght@400;700&family=Noto+Sans+JP:wght@400;700&display=swap');
         
         * {
             box-sizing: border-box;
@@ -17,250 +17,108 @@
         }
         
         body {
-            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
-            background: #0a0a0b;
-            background-image: 
-                radial-gradient(circle at 25% 25%, #0f2619 0%, transparent 50%),
-                radial-gradient(circle at 75% 75%, #1a0f0a 0%, transparent 50%),
-                linear-gradient(135deg, #0a0a0b 0%, #0d0e0f 100%);
-            color: #00ff55;
-            line-height: 1.6;
+            font-family: 'Noto Sans JP', 'Hiragino Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #F7F5F2;
+            color: #222222;
+            line-height: 1.7;
+            font-size: 15px;
             overflow-x: hidden;
             position: relative;
-            font-weight: 500;
+            font-weight: 400;
         }
         
-        /* CRT Screen Effects - Dimmed for readability */
+        /* Subtle Mt. Fuji background */
         body::before {
             content: '';
             position: fixed;
             top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: 
-                repeating-linear-gradient(
-                    0deg,
-                    rgba(0, 255, 85, 0.015) 0px,
-                    rgba(0, 255, 85, 0.015) 1px,
-                    transparent 1px,
-                    transparent 3px
-                );
+            right: 0;
+            width: 600px;
+            height: 400px;
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400"><path d="M300 100 L200 300 L400 300 Z" fill="%23e8e4e0" opacity="0.06"/><path d="M300 100 L250 200 L350 200 Z" fill="%23ffffff" opacity="0.08"/></svg>');
+            background-repeat: no-repeat;
+            background-position: top right;
+            background-size: contain;
             pointer-events: none;
-            z-index: 1000;
-            animation: scanlines 0.1s linear infinite;
-        }
-        
-        body::after {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: 
-                radial-gradient(ellipse at center, transparent 0%, rgba(0, 0, 0, 0.3) 100%),
-                linear-gradient(90deg, transparent 79%, rgba(255, 102, 0, 0.02) 80%, rgba(255, 102, 0, 0.02) 81%, transparent 82%);
-            pointer-events: none;
-            z-index: 999;
-            animation: flicker 2s infinite;
-        }
-        
-        @keyframes scanlines {
-            0% { transform: translateY(0px); }
-            100% { transform: translateY(3px); }
-        }
-        
-        @keyframes flicker {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.98; }
+            z-index: 0;
         }
         
         .container {
-            max-width: 1600px;
-            margin: 0 auto;
-            padding: 30px;
+            max-width: none;
+            width: 100%;
+            margin: 0;
+            padding: 40px 9px;
             position: relative;
             z-index: 10;
-            border: 3px solid #b87333;
-            border-radius: 15px;
-            background: linear-gradient(135deg, rgba(10, 10, 11, 0.95) 0%, rgba(13, 14, 15, 0.95) 100%);
-            box-shadow: 
-                inset 0 0 30px rgba(184, 115, 51, 0.1),
-                0 0 50px rgba(184, 115, 51, 0.2),
-                0 0 100px rgba(0, 255, 65, 0.1);
-        }
-        
-        /* Victorian Corner Decorations - Dimmed */
-        .container::before {
-            content: '┌───────────────────────────────────────────────────────┐';
-            position: absolute;
-            top: -15px;
-            left: 50%;
-            transform: translateX(-50%);
-            color: rgba(205, 127, 50, 0.6);
-            font-size: 12px;
-            text-shadow: 0 0 6px rgba(205, 127, 50, 0.4);
-            white-space: nowrap;
-        }
-        
-        .container::after {
-            content: '└───────────────────────────────────────────────────────┘';
-            position: absolute;
-            bottom: -15px;
-            left: 50%;
-            transform: translateX(-50%);
-            color: rgba(205, 127, 50, 0.6);
-            font-size: 12px;
-            text-shadow: 0 0 6px rgba(205, 127, 50, 0.4);
-            white-space: nowrap;
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(10px);
+            border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
         }
         
         h1 {
-            color: #00ff55;
-            margin-bottom: 30px;
-            font-size: 18px;
-            font-weight: 600;
-            text-align: left;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-            text-shadow: 
-                0 0 3px #00ff55,
-                0 0 6px rgba(0, 255, 85, 0.5),
-                0 0 12px rgba(0, 255, 85, 0.3);
+            color: #222222;
+            margin-bottom: 40px;
+            font-size: 48px;
+            font-weight: 700;
+            text-align: center;
+            font-family: 'Zen Kaku Gothic Antique', serif;
+            letter-spacing: 0.15em;
             position: relative;
-            font-family: 'JetBrains Mono', monospace;
-            background: linear-gradient(90deg, rgba(0, 255, 85, 0.1) 0%, transparent 100%);
-            padding: 15px 20px;
-            border-left: 4px solid #b87333;
-            border-radius: 0 8px 8px 0;
+            padding-bottom: 20px;
         }
         
-        h1::before {
-            content: '> ';
-            color: #cd7f32;
-            font-weight: bold;
-            text-shadow: 0 0 8px #cd7f32;
-        }
-        
+        /* Brushstroke underline */
         h1::after {
-            content: '_';
-            animation: blink 1s infinite;
-            color: #00ff41;
-            margin-left: 5px;
-        }
-        
-        @keyframes blink {
-            0%, 50% { opacity: 1; }
-            51%, 100% { opacity: 0; }
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 120px;
+            height: 3px;
+            background: linear-gradient(90deg, transparent 0%, #695b8d 20%, #695b8d 80%, transparent 100%);
+            border-radius: 2px;
         }
         
         .results-info {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 25px;
-            padding: 12px 20px;
-            background: linear-gradient(90deg, rgba(184, 115, 51, 0.1) 0%, rgba(0, 0, 0, 0.3) 50%, rgba(184, 115, 51, 0.1) 100%);
-            border: 2px solid #b87333;
+            margin-bottom: 30px;
+            padding: 16px 24px;
+            background: #ffffff;
             border-radius: 8px;
-            box-shadow: 
-                inset 0 0 15px rgba(184, 115, 51, 0.1),
-                0 0 20px rgba(0, 255, 65, 0.1);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
             position: relative;
-        }
-        
-        .results-info::before {
-            content: '║';
-            position: absolute;
-            left: 0;
-            top: 50%;
-            transform: translateY(-50%);
-            color: #cd7f32;
-            font-size: 16px;
-            text-shadow: 0 0 8px #cd7f32;
-        }
-        
-        .results-info::after {
-            content: '║';
-            position: absolute;
-            right: 0;
-            top: 50%;
-            transform: translateY(-50%);
-            color: #cd7f32;
-            font-size: 16px;
-            text-shadow: 0 0 8px #cd7f32;
         }
         
         .results-count {
-            font-size: 16px;
-            color: #00ff55;
-            font-weight: 500;
-            text-shadow: 
-                0 0 3px #00ff55,
-                0 0 6px rgba(0, 255, 85, 0.5);
-            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            color: #666666;
+            font-weight: 400;
+            font-family: 'Noto Sans JP', sans-serif;
         }
         
-        .results-count::before {
-            content: '[SYSTEM] ';
-            color: #cd7f32;
-            text-shadow: 0 0 8px #cd7f32;
-        }
-        
-        /* Steampunk Terminal Table */
+        /* Table Container */
         .table-container {
-            background: linear-gradient(135deg, rgba(0, 0, 0, 0.8) 0%, rgba(10, 10, 11, 0.9) 100%);
-            border: 3px solid #b87333;
-            border-radius: 12px;
-            box-shadow: 
-                inset 0 0 30px rgba(184, 115, 51, 0.1),
-                0 0 40px rgba(0, 255, 65, 0.15),
-                0 0 80px rgba(184, 115, 51, 0.1);
-            overflow: auto;
-            max-height: 75vh;
+            background: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+            overflow: visible;
             position: relative;
-        }
-        
-        .table-container::before {
-            content: '╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗';
-            position: absolute;
-            top: -10px;
-            left: 50%;
-            transform: translateX(-50%);
-            color: #cd7f32;
-            font-size: 10px;
-            text-shadow: 0 0 8px #cd7f32;
-            white-space: nowrap;
-            z-index: 1;
-        }
-        
-        .table-container::after {
-            content: '╚══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝';
-            position: absolute;
-            bottom: -10px;
-            left: 50%;
-            transform: translateX(-50%);
-            color: #cd7f32;
-            font-size: 10px;
-            text-shadow: 0 0 8px #cd7f32;
-            white-space: nowrap;
-            z-index: 1;
         }
         
         table {
             width: 100%;
             border-collapse: separate;
-            border-spacing: 1px;
-            min-width: 1200px;
-            font-family: 'JetBrains Mono', monospace;
+            border-spacing: 0;
+            font-family: 'Noto Sans JP', sans-serif;
+            table-layout: fixed;
         }
         
         th {
-            background: linear-gradient(135deg, rgba(184, 115, 51, 0.15) 0%, rgba(205, 127, 50, 0.1) 100%);
-            backdrop-filter: blur(10px);
-            border: 2px solid #b87333;
-            border-bottom: 3px solid #b87333;
+            background: #f1eee8;
             padding: 0;
             position: sticky;
             top: 0;
@@ -269,14 +127,17 @@
             font-size: 13px;
             text-align: left;
             text-transform: uppercase;
-            letter-spacing: 2px;
-            color: #00ff55;
-            text-shadow: 
-                0 0 3px #00ff55,
-                0 0 6px rgba(0, 255, 85, 0.5);
-            box-shadow: 
-                inset 0 0 15px rgba(184, 115, 51, 0.1),
-                0 2px 10px rgba(0, 0, 0, 0.3);
+            letter-spacing: 0.1em;
+            color: #333333;
+            border-bottom: 1px solid #cccccc;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+        
+        thead th {
+            position: sticky;
+            top: 0;
+            background: #f1eee8;
+            z-index: 20;
         }
         
         th.sortable {
@@ -287,213 +148,82 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 16px 20px;
+            padding: 14px 16px;
             cursor: pointer;
             min-height: 45px;
-            transition: all 200ms ease;
+            transition: all 120ms ease;
             position: relative;
-        }
-        
-        .column-header::before {
-            content: '║';
-            position: absolute;
-            left: 2px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: #cd7f32;
-            font-size: 14px;
-            text-shadow: 0 0 6px #cd7f32;
-        }
-        
-        .column-header::after {
-            content: '║';
-            position: absolute;
-            right: 2px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: #cd7f32;
-            font-size: 14px;
-            text-shadow: 0 0 6px #cd7f32;
         }
         
         .column-header:hover {
-            background: linear-gradient(135deg, rgba(184, 115, 51, 0.4) 0%, rgba(255, 102, 0, 0.2) 100%);
-            text-shadow: 0 0 12px #00ff41;
-            animation: glitch 0.3s ease-in-out;
-        }
-        
-        @keyframes glitch {
-            0%, 100% { transform: translateX(0); }
-            25% { transform: translateX(-1px); }
-            75% { transform: translateX(1px); }
+            background: rgba(105, 91, 141, 0.05);
         }
         
         .sort-arrows {
-            font-size: 12px;
-            color: #cd7f32;
+            font-size: 11px;
+            color: #999999;
             margin-left: 6px;
-            transition: all 200ms ease;
-            text-shadow: 0 0 6px #cd7f32;
+            transition: all 120ms ease;
         }
         
         .sort-arrows.active {
-            color: #ff6600;
-            transform: scale(1.2);
-            text-shadow: 0 0 10px #ff6600;
-            animation: pulse 1s infinite;
-        }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.7; }
-        }
-        
-        .filter-row {
-            background-color: #fafbfc;
-            border-bottom: 2px solid #ddd;
-        }
-        
-        .filter-cell {
-            padding: 4px 8px;
-            border-right: 1px solid #ddd;
-            position: relative;
-        }
-        
-        .filter-btn {
-            background: none;
-            border: none;
-            font-size: 12px;
-            color: #666;
-            cursor: pointer;
-            padding: 2px 4px;
-            border-radius: 2px;
-        }
-        
-        .filter-btn:hover {
-            background-color: #e8eaed;
-        }
-        
-        .filter-btn.active {
-            background-color: #3b82f6;
-            color: white;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-        }
-        
-        .filter-dropdown {
-            position: absolute;
-            top: 100%;
-            left: 0;
-            background: white;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            z-index: 1000;
-            min-width: 200px;
-            max-height: 300px;
-            overflow-y: auto;
-            display: none;
-        }
-        
-        .filter-content {
-            padding: 10px;
-        }
-        
-        .filter-content label {
-            display: block;
-            margin: 4px 0;
-            font-size: 12px;
-            cursor: pointer;
-        }
-        
-        .filter-content input[type="checkbox"] {
-            margin-right: 6px;
-        }
-        
-        .filter-content input[type="number"] {
-            width: 80px;
-            padding: 2px 4px;
-            margin: 2px;
-            border: 1px solid #ccc;
-            border-radius: 2px;
-            font-size: 12px;
-        }
-        
-        .filter-actions {
-            padding: 8px 10px;
-            border-top: 1px solid #eee;
-            display: flex;
-            gap: 8px;
-        }
-        
-        .filter-actions button {
-            padding: 4px 12px;
-            border: 1px solid #ccc;
-            border-radius: 2px;
-            background: white;
-            font-size: 11px;
-            cursor: pointer;
-        }
-        
-        .filter-actions button:hover {
-            background-color: #f5f5f5;
-        }
-        
-        .filter-actions .apply-btn {
-            background-color: #1976d2;
-            color: white;
-            border-color: #1976d2;
-        }
-        
-        .filter-actions .apply-btn:hover {
-            background-color: #1565c0;
+            color: #695b8d;
+            font-weight: 700;
         }
         
         td {
-            border: 1px solid rgba(184, 115, 51, 0.3);
-            padding: 16px 20px;
-            font-size: 16px;
+            border-bottom: 1px solid #f0f0f0;
+            padding: 14px 16px;
+            font-size: 14px;
             vertical-align: middle;
-            background: rgba(0, 0, 0, 0.2);
-            color: #00ff55;
-            text-shadow: 
-                0 0 3px #00ff55,
-                0 0 6px rgba(0, 255, 85, 0.5);
-            font-family: 'JetBrains Mono', monospace;
-            font-weight: 500;
+            color: #333333;
+            font-family: 'Noto Sans JP', sans-serif;
+            font-weight: 400;
             position: relative;
+            word-break: break-word;
         }
         
-        /* Zebra striping with terminal phosphor feel */
+        /* Zebra striping */
         tbody tr:nth-child(odd) td {
-            background: rgba(0, 255, 85, 0.02);
+            background: #ffffff;
         }
         
         tbody tr:nth-child(even) td {
-            background: rgba(0, 0, 0, 0.3);
+            background: #fafaf8;
         }
         
         tbody tr {
-            transition: all 200ms ease;
+            transition: all 120ms ease;
+            animation: fadeInUp 0.3s ease-out;
         }
         
-        /* Better hover state with glow */
+        @keyframes fadeInUp {
+            0% {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            100% {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        /* First and last cell rounded corners */
+        tbody tr td:first-child {
+            border-top-left-radius: 4px;
+            border-bottom-left-radius: 4px;
+        }
+        
+        tbody tr td:last-child {
+            border-top-right-radius: 4px;
+            border-bottom-right-radius: 4px;
+        }
+        
+        /* Hover state */
         tbody tr:hover td {
-            background: rgba(0, 255, 85, 0.08) !important;
-            box-shadow: 
-                0 0 30px rgba(0, 255, 85, 0.2),
-                inset 0 0 10px rgba(0, 255, 85, 0.1);
-            text-shadow: 
-                0 0 3px #00ff55,
-                0 0 6px rgba(0, 255, 85, 0.7),
-                0 0 12px rgba(0, 255, 85, 0.3);
-            transform: translateX(2px); /* Slight glitch effect */
-            animation: flicker-row 0.5s ease-in-out;
-        }
-        
-        @keyframes flicker-row {
-            0%, 100% { opacity: 1; }
-            25%, 75% { opacity: 0.95; }
-            50% { opacity: 0.9; }
+            background: #f3f0f8 !important;
+            transform: translateY(-1px) scale(1.002);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
         }
         
         .property-image {
@@ -501,469 +231,258 @@
             height: 38px;
             object-fit: cover;
             border-radius: 4px;
-            background: linear-gradient(135deg, rgba(0, 0, 0, 0.8) 0%, rgba(10, 10, 11, 0.9) 100%);
+            background: #f5f5f5;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 32px;
-            color: #cc3333;
-            border: 2px solid #b87333;
-            font-family: 'JetBrains Mono', monospace;
-            text-shadow: 
-                0 0 8px #cc3333,
-                0 0 16px #cc3333,
-                0 0 24px #ff4444;
-            line-height: 0.8;
-            white-space: pre;
+            font-size: 18px;
+            color: #999999;
+            border: 1px solid #e0e0e0;
+            font-family: 'Noto Sans JP', sans-serif;
             overflow: hidden;
         }
         
         .skull-icon {
-            color: #cc3333;
-            text-shadow: 
-                0 0 8px #cc3333,
-                0 0 16px #cc3333,
-                0 0 24px #ff4444;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 24px;
-            animation: skull-glow 2s infinite alternate;
+            color: #cccccc;
+            font-family: 'Noto Sans JP', sans-serif;
+            font-size: 16px;
             display: inline-block;
-            transform: scale(1.2);
-        }
-        
-        @keyframes skull-glow {
-            0% { 
-                text-shadow: 
-                    0 0 8px #cc3333,
-                    0 0 16px #cc3333,
-                    0 0 24px #ff4444;
-                color: #cc3333;
-                transform: scale(1.2);
-            }
-            100% { 
-                text-shadow: 
-                    0 0 12px #ff4444,
-                    0 0 24px #ff4444,
-                    0 0 36px #ff6666,
-                    0 0 48px #ff0000;
-                color: #ff4444;
-                transform: scale(1.3);
-            }
         }
         
         .price {
-            font-weight: 700;
-            color: #00ff55;
+            font-weight: 500;
+            color: #333333;
             text-align: right;
-            font-size: 18px;
-            text-shadow: 
-                0 0 3px #00ff55,
-                0 0 6px rgba(0, 255, 85, 0.5),
-                0 0 12px rgba(0, 255, 85, 0.3);
-            font-family: 'JetBrains Mono', monospace;
+            font-size: 15px;
+            font-family: 'Noto Sans JP', sans-serif;
+        }
+        
+        .numeric {
+            text-align: center;
+            font-weight: 500;
+        }
+        
+        .percent {
+            text-align: center;
+            font-weight: 500;
+            font-family: monospace;
+        }
+        
+        .age {
+            text-align: center;
+            color: #666666;
+        }
+        
+        .no-data {
+            color: #cccccc;
+            font-style: italic;
         }
         
         .verdict {
-            padding: 4px 8px;
+            padding: 6px 12px;
             border-radius: 4px;
-            font-size: 10px;
-            font-weight: 500;
+            font-size: 11px;
+            font-weight: 600;
             text-transform: uppercase;
             text-align: center;
             letter-spacing: 0.1em;
-            transition: all 200ms ease;
-            font-family: 'JetBrains Mono', monospace;
+            transition: all 120ms ease;
+            font-family: 'Noto Sans JP', sans-serif;
             position: relative;
-            border: 2px solid transparent;
-        }
-        
-        .verdict::before {
-            content: '[';
-            margin-right: 2px;
-        }
-        
-        .verdict::after {
-            content: ']';
-            margin-left: 2px;
+            border: 1px solid transparent;
         }
         
         .verdict-buy, .verdict-strong_buy {
-            background: linear-gradient(135deg, rgba(0, 204, 51, 0.3) 0%, rgba(0, 255, 65, 0.2) 100%);
-            color: #00ff55;
-            border-color: #00ff55;
-            text-shadow: 0 0 8px #00ff55;
-            box-shadow: 0 0 15px rgba(0, 255, 85, 0.3);
-            font-weight: bold;
-            animation: pulse-glow 2s infinite;
-        }
-        
-        @keyframes pulse-glow {
-            0%, 100% { 
-                box-shadow: 0 0 5px #00ff55;
-                text-shadow: 0 0 8px #00ff55;
-            }
-            50% { 
-                box-shadow: 0 0 20px #00ff55, 0 0 30px #00ff55;
-                text-shadow: 0 0 12px #00ff55, 0 0 20px rgba(0, 255, 85, 0.5);
-            }
+            background: #e6f4ea;
+            color: #2e7d32;
+            border-color: #2e7d32;
         }
         
         .verdict-hold {
-            background: linear-gradient(135deg, rgba(255, 102, 0, 0.3) 0%, rgba(255, 153, 0, 0.2) 100%);
-            color: #ff6600;
-            border-color: #ff6600;
-            text-shadow: 0 0 8px #ff6600;
-            box-shadow: 0 0 15px rgba(255, 102, 0, 0.3);
+            background: #fff4e5;
+            color: #b26a00;
+            border-color: #b26a00;
         }
         
         .verdict-pass {
-            background: linear-gradient(135deg, rgba(204, 51, 51, 0.3) 0%, rgba(255, 65, 65, 0.2) 100%);
-            color: #cc3333;
-            border-color: #cc3333;
-            text-shadow: 0 0 8px #cc3333;
-            box-shadow: 0 0 15px rgba(204, 51, 51, 0.3);
+            background: #fdecea;
+            color: #c62828;
+            border-color: #c62828;
         }
         
         .verdict:hover {
-            transform: scale(1.05);
-            animation: steam 0.5s ease-in-out;
-        }
-        
-        @keyframes steam {
-            0%, 100% { filter: brightness(1); }
-            50% { filter: brightness(1.2); }
+            transform: scale(1.02);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
         }
         
         .link-button {
-            color: #00ff55;
+            color: #333333;
             text-decoration: none;
-            font-weight: 500;
+            font-weight: 400;
             font-size: 12px;
-            font-family: 'JetBrains Mono', monospace;
-            text-shadow: 
-                0 0 3px #00ff55,
-                0 0 6px rgba(0, 255, 85, 0.5);
-            padding: 4px 8px;
-            border: 2px solid #b87333;
+            font-family: 'Noto Sans JP', sans-serif;
+            padding: 6px 12px;
+            border: 1px solid #cccccc;
             border-radius: 4px;
-            background: linear-gradient(135deg, rgba(184, 115, 51, 0.3) 0%, rgba(0, 0, 0, 0.4) 100%);
-            transition: all 200ms ease;
-        }
-        
-        .link-button::before {
-            content: '[';
-            color: #cd7f32;
-            margin-right: 2px;
-        }
-        
-        .link-button::after {
-            content: ']';
-            color: #cd7f32;
-            margin-left: 2px;
+            background: transparent;
+            transition: all 120ms ease;
+            display: inline-block;
         }
         
         .link-button:hover {
-            color: #ff6600;
-            text-shadow: 0 0 10px #ff6600;
-            border-color: #ff6600;
-            background: linear-gradient(135deg, rgba(255, 102, 0, 0.3) 0%, rgba(184, 115, 51, 0.4) 100%);
-            transform: scale(1.05);
+            background: #f3f0f8;
+            border-color: #695b8d;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
         }
         
-        /* Steampunk Terminal Pagination */
-        .pagination {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            gap: 25px;
-            margin-top: 30px;
-            padding: 15px 25px;
-            background: linear-gradient(90deg, rgba(184, 115, 51, 0.1) 0%, rgba(0, 0, 0, 0.3) 50%, rgba(184, 115, 51, 0.1) 100%);
-            border: 2px solid #b87333;
-            border-radius: 8px;
-            box-shadow: 
-                inset 0 0 15px rgba(184, 115, 51, 0.1),
-                0 0 30px rgba(0, 255, 65, 0.1);
-            position: relative;
+        /* Scroll sentinel */
+        #scrollSentinel {
+            height: 20px;
+            margin-top: 20px;
         }
         
-        .pagination::before {
-            content: '╠══════════════════════════════════════════╣';
-            position: absolute;
-            top: -12px;
-            left: 50%;
-            transform: translateX(-50%);
-            color: #cd7f32;
-            font-size: 10px;
-            text-shadow: 0 0 8px #cd7f32;
-            white-space: nowrap;
-        }
-        
-        .pagination button {
-            padding: 8px 16px;
-            border: 2px solid #b87333;
-            background: linear-gradient(135deg, rgba(184, 115, 51, 0.2) 0%, rgba(0, 0, 0, 0.4) 100%);
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 12px;
-            font-weight: 400;
-            font-family: 'JetBrains Mono', monospace;
-            color: #00ff41;
-            text-shadow: 0 0 6px #00ff41;
-            transition: all 200ms ease;
-            position: relative;
-        }
-        
-        .pagination button::before {
-            content: '[';
-            margin-right: 4px;
-            color: #cd7f32;
-        }
-        
-        .pagination button::after {
-            content: ']';
-            margin-left: 4px;
-            color: #cd7f32;
-        }
-        
-        .pagination button:hover:not(:disabled) {
-            background: linear-gradient(135deg, rgba(255, 102, 0, 0.3) 0%, rgba(184, 115, 51, 0.4) 100%);
-            border-color: #ff6600;
-            color: #ff6600;
-            text-shadow: 0 0 10px #ff6600;
-            box-shadow: 0 0 20px rgba(255, 102, 0, 0.2);
-            transform: scale(1.05);
-        }
-        
-        .pagination button:disabled {
-            opacity: 0.4;
-            cursor: not-allowed;
-            color: #666;
-            text-shadow: none;
-            border-color: #666;
-        }
-        
-        .page-info {
-            font-size: 12px;
-            color: #00ff41;
-            text-shadow: 0 0 6px #00ff41;
-            font-family: 'JetBrains Mono', monospace;
-        }
-        
-        .page-info::before {
-            content: '[STATUS] ';
-            color: #cd7f32;
-            text-shadow: 0 0 6px #cd7f32;
-        }
-        
-        
-        /* Terminal Status Bar */
+        /* Status Bar */
         .terminal-status-bar {
             position: fixed;
             bottom: 0;
             left: 0;
             right: 0;
-            background: linear-gradient(90deg, rgba(0, 0, 0, 0.9) 0%, rgba(10, 10, 11, 0.95) 50%, rgba(0, 0, 0, 0.9) 100%);
-            border-top: 2px solid #b87333;
-            padding: 8px 20px;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 11px;
-            color: #00cc33;
-            text-shadow: 0 0 3px #00cc33;
+            background: #ffffff;
+            border-top: 1px solid #e0e0e0;
+            padding: 12px 24px;
+            font-family: 'Noto Sans JP', sans-serif;
+            font-size: 12px;
+            color: #666666;
             z-index: 999;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.04);
         }
         
         .status-left, .status-right {
             display: flex;
-            gap: 20px;
+            gap: 24px;
         }
         
         .status-item {
-            color: #00ff55;
-            text-shadow: 0 0 3px #00ff55;
+            color: #666666;
         }
         
-        .status-item::before {
-            content: '[';
-            color: #cd7f32;
-            margin-right: 2px;
-        }
-        
-        .status-item::after {
-            content: ']';
-            color: #cd7f32;
-            margin-left: 2px;
-        }
-        
-        /* Steampunk Terminal Loading */
+        /* Loading */
         .loading {
-            background: linear-gradient(135deg, rgba(0, 0, 0, 0.8) 0%, rgba(10, 10, 11, 0.9) 100%);
-            border: 3px solid #b87333;
-            border-radius: 12px;
-            box-shadow: 
-                inset 0 0 30px rgba(184, 115, 51, 0.1),
-                0 0 40px rgba(0, 255, 65, 0.15);
+            background: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
             overflow: hidden;
             position: relative;
+            padding: 24px;
         }
         
         .loading::before {
-            content: '[SYSTEM INITIALIZATION...]';
+            content: 'Loading properties...';
             position: absolute;
-            top: 10px;
-            left: 20px;
-            color: #cd7f32;
-            font-size: 12px;
-            text-shadow: 0 0 8px #cd7f32;
-            font-family: 'JetBrains Mono', monospace;
+            top: 20px;
+            left: 24px;
+            color: #999999;
+            font-size: 13px;
+            font-family: 'Noto Sans JP', sans-serif;
         }
         
         .skeleton {
-            animation: terminal-loading 2s infinite ease-in-out;
+            animation: skeleton-loading 1.5s infinite ease-in-out;
         }
         
         .skeleton-row {
             display: flex;
-            padding: 12px 10px;
-            border-bottom: 1px solid rgba(184, 115, 51, 0.2);
-        }
-        
-        .skeleton-row::before {
-            content: '║';
-            color: #cd7f32;
-            font-size: 14px;
-            text-shadow: 0 0 6px #cd7f32;
-            margin-right: 8px;
-        }
-        
-        .skeleton-row::after {
-            content: '║';
-            color: #cd7f32;
-            font-size: 14px;
-            text-shadow: 0 0 6px #cd7f32;
-            margin-left: auto;
+            padding: 14px 16px;
+            border-bottom: 1px solid #f0f0f0;
+            margin-top: 40px;
         }
         
         .skeleton-cell {
-            height: 18px;
+            height: 20px;
             background: linear-gradient(90deg, 
-                rgba(0, 255, 65, 0.1) 0%, 
-                rgba(184, 115, 51, 0.2) 25%, 
-                rgba(0, 255, 65, 0.15) 50%, 
-                rgba(184, 115, 51, 0.1) 75%,
-                rgba(0, 255, 65, 0.1) 100%
+                #f5f5f5 0%, 
+                #eeeeee 25%, 
+                #f5f5f5 50%, 
+                #eeeeee 75%,
+                #f5f5f5 100%
             );
             background-size: 200% 100%;
-            border: 1px solid rgba(184, 115, 51, 0.3);
-            border-radius: 2px;
-            margin-right: 10px;
+            border-radius: 4px;
+            margin-right: 12px;
             position: relative;
-        }
-        
-        .skeleton-cell::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: repeating-linear-gradient(
-                90deg,
-                transparent 0px,
-                rgba(0, 255, 65, 0.1) 2px,
-                transparent 4px
-            );
-            animation: data-stream 1s linear infinite;
         }
         
         .skeleton-cell:last-child {
             margin-right: 0;
         }
         
-        .skeleton-cell.image { width: 50px; height: 35px; }
-        .skeleton-cell.location { width: 120px; }
-        .skeleton-cell.price { width: 100px; }
-        .skeleton-cell.price-per-sqm { width: 100px; }
-        .skeleton-cell.size { width: 90px; }
-        .skeleton-cell.station { width: 80px; }
-        .skeleton-cell.score { width: 60px; }
-        .skeleton-cell.verdict { width: 70px; }
-        .skeleton-cell.link { width: 50px; }
-        .skeleton-cell.date { width: 100px; }
+        .skeleton-cell.link { width: 80px; }
+        .skeleton-cell.price { width: 120px; }
+        .skeleton-cell.ward { width: 100px; }
+        .skeleton-cell.percent { width: 80px; }
+        .skeleton-cell.station { width: 120px; }
+        .skeleton-cell.numeric { width: 80px; }
+        .skeleton-cell.age { width: 100px; }
+        .skeleton-cell.light { width: 100px; }
+        .skeleton-cell.verdict { width: 80px; }
         
-        @keyframes terminal-loading {
+        @keyframes skeleton-loading {
             0% { 
                 background-position: -200% 0;
-                opacity: 0.7;
-            }
-            50% {
-                opacity: 1;
             }
             100% { 
                 background-position: 200% 0;
-                opacity: 0.7;
             }
-        }
-        
-        @keyframes data-stream {
-            0% { transform: translateX(-100%); }
-            100% { transform: translateX(100%); }
         }
         
         /* Mobile Responsiveness */
         @media (max-width: 768px) {
-            /* Reduce decorative elements on mobile */
             body::before {
-                display: none; /* No scan lines on mobile */
-            }
-            
-            .container::before,
-            .container::after {
-                display: none; /* Simpler borders */
+                width: 300px;
+                height: 200px;
             }
             
             .container {
-                padding: 15px 10px;
-                margin: 10px;
+                padding: 20px 4.5px;
+                margin: 0;
+                border-radius: 8px;
+            }
+            
+            h1 {
+                font-size: 32px;
+                margin-bottom: 24px;
             }
             
             .results-info {
                 flex-direction: column;
                 gap: 10px;
-                padding: 12px 15px;
+                padding: 12px 16px;
             }
             
-            
             td {
-                padding: 12px 10px;
-                font-size: 14px;
+                padding: 10px 12px;
+                font-size: 13px;
             }
             
             .price {
-                font-size: 16px;
-            }
-            
-            /* Larger touch targets */
-            .filter-btn {
-                padding: 6px 10px;
                 font-size: 14px;
             }
             
             .link-button {
                 padding: 6px 10px;
-                font-size: 14px;
+                font-size: 12px;
             }
             
             .terminal-status-bar {
-                font-size: 10px;
-                padding: 6px 10px;
+                font-size: 11px;
+                padding: 8px 12px;
             }
             
             .status-left, .status-right {
-                gap: 10px;
+                gap: 12px;
             }
         }
     </style>
@@ -971,7 +490,7 @@
 <body>
     
     <div class="container">
-        <h1>TOKYO_REAL_ESTATE_TERMINAL_v2.7 --access-granted</h1>
+        <h1>東京 Real Estate</h1>
         
         <div class="results-info">
             <div class="results-count" id="resultsCount">Loading properties...</div>
@@ -979,52 +498,52 @@
         
         <div class="loading" id="loading">
             <div class="skeleton-row">
-                <div class="skeleton-cell image skeleton"></div>
-                <div class="skeleton-cell location skeleton"></div>
-                <div class="skeleton-cell price skeleton"></div>
-                <div class="skeleton-cell price-per-sqm skeleton"></div>
-                <div class="skeleton-cell size skeleton"></div>
-                <div class="skeleton-cell station skeleton"></div>
-                <div class="skeleton-cell score skeleton"></div>
-                <div class="skeleton-cell verdict skeleton"></div>
                 <div class="skeleton-cell link skeleton"></div>
-                <div class="skeleton-cell date skeleton"></div>
+                <div class="skeleton-cell price skeleton"></div>
+                <div class="skeleton-cell price skeleton"></div>
+                <div class="skeleton-cell price skeleton"></div>
+                <div class="skeleton-cell ward skeleton"></div>
+                <div class="skeleton-cell percent skeleton"></div>
+                <div class="skeleton-cell price skeleton"></div>
+                <div class="skeleton-cell station skeleton"></div>
+                <div class="skeleton-cell numeric skeleton"></div>
+                <div class="skeleton-cell numeric skeleton"></div>
+                <div class="skeleton-cell age skeleton"></div>
+                <div class="skeleton-cell numeric skeleton"></div>
+                <div class="skeleton-cell light skeleton"></div>
+                <div class="skeleton-cell verdict skeleton"></div>
             </div>
             <div class="skeleton-row">
-                <div class="skeleton-cell image skeleton"></div>
-                <div class="skeleton-cell location skeleton"></div>
-                <div class="skeleton-cell price skeleton"></div>
-                <div class="skeleton-cell price-per-sqm skeleton"></div>
-                <div class="skeleton-cell size skeleton"></div>
-                <div class="skeleton-cell station skeleton"></div>
-                <div class="skeleton-cell score skeleton"></div>
-                <div class="skeleton-cell verdict skeleton"></div>
                 <div class="skeleton-cell link skeleton"></div>
-                <div class="skeleton-cell date skeleton"></div>
+                <div class="skeleton-cell price skeleton"></div>
+                <div class="skeleton-cell price skeleton"></div>
+                <div class="skeleton-cell price skeleton"></div>
+                <div class="skeleton-cell ward skeleton"></div>
+                <div class="skeleton-cell percent skeleton"></div>
+                <div class="skeleton-cell price skeleton"></div>
+                <div class="skeleton-cell station skeleton"></div>
+                <div class="skeleton-cell numeric skeleton"></div>
+                <div class="skeleton-cell numeric skeleton"></div>
+                <div class="skeleton-cell age skeleton"></div>
+                <div class="skeleton-cell numeric skeleton"></div>
+                <div class="skeleton-cell light skeleton"></div>
+                <div class="skeleton-cell verdict skeleton"></div>
             </div>
             <div class="skeleton-row">
-                <div class="skeleton-cell image skeleton"></div>
-                <div class="skeleton-cell location skeleton"></div>
-                <div class="skeleton-cell price skeleton"></div>
-                <div class="skeleton-cell price-per-sqm skeleton"></div>
-                <div class="skeleton-cell size skeleton"></div>
-                <div class="skeleton-cell station skeleton"></div>
-                <div class="skeleton-cell score skeleton"></div>
-                <div class="skeleton-cell verdict skeleton"></div>
                 <div class="skeleton-cell link skeleton"></div>
-                <div class="skeleton-cell date skeleton"></div>
-            </div>
-            <div class="skeleton-row">
-                <div class="skeleton-cell image skeleton"></div>
-                <div class="skeleton-cell location skeleton"></div>
                 <div class="skeleton-cell price skeleton"></div>
-                <div class="skeleton-cell price-per-sqm skeleton"></div>
-                <div class="skeleton-cell size skeleton"></div>
+                <div class="skeleton-cell price skeleton"></div>
+                <div class="skeleton-cell price skeleton"></div>
+                <div class="skeleton-cell ward skeleton"></div>
+                <div class="skeleton-cell percent skeleton"></div>
+                <div class="skeleton-cell price skeleton"></div>
                 <div class="skeleton-cell station skeleton"></div>
-                <div class="skeleton-cell score skeleton"></div>
+                <div class="skeleton-cell numeric skeleton"></div>
+                <div class="skeleton-cell numeric skeleton"></div>
+                <div class="skeleton-cell age skeleton"></div>
+                <div class="skeleton-cell numeric skeleton"></div>
+                <div class="skeleton-cell light skeleton"></div>
                 <div class="skeleton-cell verdict skeleton"></div>
-                <div class="skeleton-cell link skeleton"></div>
-                <div class="skeleton-cell date skeleton"></div>
             </div>
         </div>
         
@@ -1032,406 +551,239 @@
             <table>
                 <thead>
                     <tr>
-                        <th style="width: 70px;">
+                        <th>View Listing</th>
+                        <th class="sortable" onclick="sortTable('price')">
                             <div class="column-header">
-                                <span>Image</span>
-                            </div>
-                            <div class="filter-cell"></div>
-                        </th>
-                        <th class="sortable" style="width: 150px;">
-                            <div class="column-header" onclick="sortTable('location')">
-                                <span>Location</span>
-                                <span class="sort-arrows" id="sort-location">▲▼</span>
-                            </div>
-                            <div class="filter-cell">
-                                <button class="filter-btn" onclick="toggleFilter('location')">▼</button>
-                                <div class="filter-dropdown" id="filter-location">
-                                    <div class="filter-content" id="filter-location-content"></div>
-                                    <div class="filter-actions">
-                                        <button class="apply-btn" onclick="applyFilter('location')">Apply</button>
-                                        <button onclick="clearFilter('location')">Clear</button>
-                                    </div>
-                                </div>
-                            </div>
-                        </th>
-                        <th class="sortable" style="width: 120px;">
-                            <div class="column-header" onclick="sortTable('price')">
-                                <span>Price</span>
+                                Price
                                 <span class="sort-arrows" id="sort-price">▲▼</span>
                             </div>
-                            <div class="filter-cell">
-                                <button class="filter-btn" onclick="toggleFilter('price')">▼</button>
-                                <div class="filter-dropdown" id="filter-price">
-                                    <div class="filter-content">
-                                        <label>Min: <input type="number" id="price-min" placeholder="0"></label>
-                                        <label>Max: <input type="number" id="price-max" placeholder="∞"></label>
-                                    </div>
-                                    <div class="filter-actions">
-                                        <button class="apply-btn" onclick="applyFilter('price')">Apply</button>
-                                        <button onclick="clearFilter('price')">Clear</button>
-                                    </div>
-                                </div>
-                            </div>
                         </th>
-                        <th class="sortable" style="width: 120px;">
-                            <div class="column-header" onclick="sortTable('price_per_sqm')">
-                                <span>Price/m²</span>
+                        <th class="sortable" onclick="sortTable('price_per_sqm')">
+                            <div class="column-header">
+                                Price/m²
                                 <span class="sort-arrows" id="sort-price_per_sqm">▲▼</span>
                             </div>
-                            <div class="filter-cell">
-                                <button class="filter-btn" onclick="toggleFilter('price_per_sqm')">▼</button>
-                                <div class="filter-dropdown" id="filter-price_per_sqm">
-                                    <div class="filter-content">
-                                        <label>Min: <input type="number" id="price_per_sqm-min" placeholder="0"></label>
-                                        <label>Max: <input type="number" id="price_per_sqm-max" placeholder="∞"></label>
-                                    </div>
-                                    <div class="filter-actions">
-                                        <button class="apply-btn" onclick="applyFilter('price_per_sqm')">Apply</button>
-                                        <button onclick="clearFilter('price_per_sqm')">Clear</button>
-                                    </div>
-                                </div>
-                            </div>
                         </th>
-                        <th class="sortable" style="width: 120px;">
-                            <div class="column-header" onclick="sortTable('size')">
-                                <span>Size/Bedrooms</span>
-                                <span class="sort-arrows" id="sort-size">▲▼</span>
-                            </div>
-                            <div class="filter-cell">
-                                <button class="filter-btn" onclick="toggleFilter('size')">▼</button>
-                                <div class="filter-dropdown" id="filter-size">
-                                    <div class="filter-content">
-                                        <label>Min sqm: <input type="number" id="size-min" placeholder="0"></label>
-                                        <label>Max sqm: <input type="number" id="size-max" placeholder="∞"></label>
-                                    </div>
-                                    <div class="filter-actions">
-                                        <button class="apply-btn" onclick="applyFilter('size')">Apply</button>
-                                        <button onclick="clearFilter('size')">Clear</button>
-                                    </div>
-                                </div>
-                            </div>
-                        </th>
-                        <th class="sortable" style="width: 100px;">
-                            <div class="column-header" onclick="sortTable('station')">
-                                <span>Station</span>
-                                <span class="sort-arrows" id="sort-station">▲▼</span>
-                            </div>
-                            <div class="filter-cell">
-                                <button class="filter-btn" onclick="toggleFilter('station')">▼</button>
-                                <div class="filter-dropdown" id="filter-station">
-                                    <div class="filter-content">
-                                        <label>Max min: <input type="number" id="station-max" placeholder="∞"></label>
-                                    </div>
-                                    <div class="filter-actions">
-                                        <button class="apply-btn" onclick="applyFilter('station')">Apply</button>
-                                        <button onclick="clearFilter('station')">Clear</button>
-                                    </div>
-                                </div>
-                            </div>
-                        </th>
-                        <th class="sortable" style="width: 100px;">
-                            <div class="column-header" onclick="sortTable('score')">
-                                <span>Score</span>
-                                <span class="sort-arrows" id="sort-score">▲▼</span>
-                            </div>
-                            <div class="filter-cell">
-                                <button class="filter-btn" onclick="toggleFilter('score')">▼</button>
-                                <div class="filter-dropdown" id="filter-score">
-                                    <div class="filter-content">
-                                        <label>Min: <input type="number" id="score-min" placeholder="0"></label>
-                                        <label>Max: <input type="number" id="score-max" placeholder="100"></label>
-                                    </div>
-                                    <div class="filter-actions">
-                                        <button class="apply-btn" onclick="applyFilter('score')">Apply</button>
-                                        <button onclick="clearFilter('score')">Clear</button>
-                                    </div>
-                                </div>
-                            </div>
-                        </th>
-                        <th style="width: 100px;">
+                        <th class="sortable" onclick="sortTable('total_monthly_costs')">
                             <div class="column-header">
-                                <span>Verdict</span>
-                            </div>
-                            <div class="filter-cell">
-                                <button class="filter-btn" onclick="toggleFilter('verdict')">▼</button>
-                                <div class="filter-dropdown" id="filter-verdict">
-                                    <div class="filter-content" id="filter-verdict-content"></div>
-                                    <div class="filter-actions">
-                                        <button class="apply-btn" onclick="applyFilter('verdict')">Apply</button>
-                                        <button onclick="clearFilter('verdict')">Clear</button>
-                                    </div>
-                                </div>
+                                Monthly Cost
+                                <span class="sort-arrows" id="sort-total_monthly_costs">▲▼</span>
                             </div>
                         </th>
-                        <th style="width: 80px;">
+                        <th class="sortable" onclick="sortTable('ward')">
                             <div class="column-header">
-                                <span>Link</span>
+                                Ward
+                                <span class="sort-arrows" id="sort-ward">▲▼</span>
                             </div>
-                            <div class="filter-cell"></div>
                         </th>
-                        <th class="sortable" style="width: 100px;">
-                            <div class="column-header" onclick="sortTable('date')">
-                                <span>Date Added</span>
-                                <span class="sort-arrows" id="sort-date">▲▼</span>
+                        <th class="sortable" onclick="sortTable('ward_discount_pct')">
+                            <div class="column-header">
+                                Ward Discount %
+                                <span class="sort-arrows" id="sort-ward_discount_pct">▲▼</span>
                             </div>
-                            <div class="filter-cell"></div>
                         </th>
+                        <th class="sortable" onclick="sortTable('ward_median_price_per_sqm')">
+                            <div class="column-header">
+                                Ward Median ¥/m²
+                                <span class="sort-arrows" id="sort-ward_median_price_per_sqm">▲▼</span>
+                            </div>
+                        </th>
+                        <th>Closest Station</th>
+                        <th class="sortable" onclick="sortTable('station_distance_minutes')">
+                            <div class="column-header">
+                                Walk Time (min)
+                                <span class="sort-arrows" id="sort-station_distance_minutes">▲▼</span>
+                            </div>
+                        </th>
+                        <th class="sortable" onclick="sortTable('floor')">
+                            <div class="column-header">
+                                Floor
+                                <span class="sort-arrows" id="sort-floor">▲▼</span>
+                            </div>
+                        </th>
+                        <th class="sortable" onclick="sortTable('building_age_years')">
+                            <div class="column-header">
+                                Building Age
+                                <span class="sort-arrows" id="sort-building_age_years">▲▼</span>
+                            </div>
+                        </th>
+                        <th class="sortable" onclick="sortTable('size_sqm')">
+                            <div class="column-header">
+                                Size (m²)
+                                <span class="sort-arrows" id="sort-size_sqm">▲▼</span>
+                            </div>
+                        </th>
+                        <th>Primary Light</th>
+                        <th>Verdict</th>
                     </tr>
                 </thead>
                 <tbody id="propertiesTable">
                 </tbody>
             </table>
-        </div>
-        
-        <div class="pagination" id="pagination" style="display: none;">
-            <button id="prevButton" onclick="previousPage()">Previous</button>
-            <span class="page-info" id="pageInfo"></span>
-            <button id="nextButton" onclick="nextPage()">Next</button>
+            <div id="scrollSentinel"></div>
         </div>
     </div>
     
     <script>
         // Configuration
-        const API_URL = 'https://mcyuz5cvfl.execute-api.ap-northeast-1.amazonaws.com/prod/properties';
+        const API_URL = 'https://nbgnatp0pd.execute-api.ap-northeast-1.amazonaws.com/prod/properties';
+        const limit = 500;
         
         // State
+        let cursor = null;          // null = first page; false = no more pages
+        let loading = false;
         let allProperties = [];
-        let filteredProperties = [];
-        let currentPage = 1;
-        let pageSize = 50;
-        let currentSort = { field: 'date', direction: 'desc' };
-        let filters = {};
+        let currentSort = { field: 'price', direction: 'desc' };
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
-            loadProperties();
-            setupEventListeners();
+            loadNext();   // initial page
+            setupInfiniteScroll();
+            updateSortArrows(); // show initial sort state
         });
         
-        function setupEventListeners() {
-            // Close dropdowns when clicking outside
-            document.addEventListener('click', function(event) {
-                if (!event.target.closest('.filter-cell')) {
-                    closeAllDropdowns();
+        function setupInfiniteScroll() {
+            window.addEventListener('scroll', () => {
+                if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 200) {
+                    loadNext();
                 }
             });
         }
         
-        // Load all properties from API
-        async function loadProperties() {
+        async function loadNext() {
+            if (loading || cursor === false) return;
+            loading = true;
+            
             try {
-                document.getElementById('loading').style.display = 'block';
-                document.getElementById('tableContainer').style.display = 'none';
-                document.getElementById('pagination').style.display = 'none';
-                
-                // Load all properties at once (since we have a small dataset)
-                const response = await fetch(`${API_URL}?limit=1000`);
-                const data = await response.json();
-                
-                if (response.ok) {
-                    allProperties = data.properties || [];
-                    setupFilterOptions();
-                    applyFiltersAndSort();
-                } else {
-                    console.error('Error loading properties:', data);
-                    document.getElementById('resultsCount').textContent = 'Error loading properties';
+                const url = API_URL + '?limit=' + limit +
+                           (cursor ? '&cursor=' + encodeURIComponent(JSON.stringify(cursor)) : '');
+                const res = await fetch(url);
+                if (!res.ok) { 
+                    loading = false; 
+                    return; 
                 }
+                
+                const { items, cursor: next } = await res.json();
+                
+                // First load: show the table and hide loading
+                if (allProperties.length === 0) {
+                    document.getElementById('loading').style.display = 'none';
+                    document.getElementById('tableContainer').style.display = 'block';
+                }
+                
+                // Add items to our properties array
+                allProperties = allProperties.concat(items || []);
+                
+                // Append rows to table
+                appendRows(items);
+                
+                // Update cursor
+                cursor = next ?? false;
+                
+                // Update results count
+                document.getElementById('resultsCount').textContent = 
+                    `Showing ${allProperties.length} properties${cursor === false ? ' (all loaded)' : '...'}`;
+                    
             } catch (error) {
                 console.error('Error:', error);
                 document.getElementById('resultsCount').textContent = 'Connection error';
             } finally {
-                document.getElementById('loading').style.display = 'none';
+                loading = false;
             }
         }
         
-        // Setup filter dropdown options
-        function setupFilterOptions() {
-            // Location filter
-            const locations = [...new Set(allProperties.map(p => p.district || 'Unknown').filter(l => l !== 'Unknown'))].sort();
-            const locationContent = document.getElementById('filter-location-content');
-            locationContent.innerHTML = locations.map(loc => 
-                `<label><input type="checkbox" value="${loc}"> ${loc}</label>`
-            ).join('');
-            
-            // Verdict filter
-            const verdicts = [...new Set(allProperties.map(p => p.recommendation || 'pass'))].sort();
-            const verdictContent = document.getElementById('filter-verdict-content');
-            verdictContent.innerHTML = verdicts.map(verdict => 
-                `<label><input type="checkbox" value="${verdict}"> ${verdict.toUpperCase()}</label>`
-            ).join('');
-        }
-        
-        // Apply filters and sorting
-        function applyFiltersAndSort() {
-            // Apply filters
-            filteredProperties = allProperties.filter(property => {
-                // Location filter
-                if (filters.location && filters.location.length > 0) {
-                    if (!filters.location.includes(property.district || 'Unknown')) return false;
-                }
-                
-                // Price filter
-                if (filters.price) {
-                    const price = property.price || 0;
-                    if (filters.price.min && price < filters.price.min) return false;
-                    if (filters.price.max && price > filters.price.max) return false;
-                }
-                
-                // Price per sqm filter
-                if (filters.price_per_sqm) {
-                    const pricePerSqm = property.price_per_sqm || 0;
-                    if (filters.price_per_sqm.min && pricePerSqm < filters.price_per_sqm.min) return false;
-                    if (filters.price_per_sqm.max && pricePerSqm > filters.price_per_sqm.max) return false;
-                }
-                
-                // Size filter
-                if (filters.size) {
-                    const size = property.total_sqm || 0;
-                    if (filters.size.min && size < filters.size.min) return false;
-                    if (filters.size.max && size > filters.size.max) return false;
-                }
-                
-                // Station filter
-                if (filters.station && filters.station.max) {
-                    const station = property.station_distance_minutes || 999;
-                    if (station > filters.station.max) return false;
-                }
-                
-                // Score filter
-                if (filters.score) {
-                    const score = property.investment_score || 0;
-                    if (filters.score.min && score < filters.score.min) return false;
-                    if (filters.score.max && score > filters.score.max) return false;
-                }
-                
-                // Verdict filter
-                if (filters.verdict && filters.verdict.length > 0) {
-                    if (!filters.verdict.includes(property.recommendation || 'pass')) return false;
-                }
-                
-                return true;
-            });
-            
-            // Apply sorting
-            filteredProperties.sort((a, b) => {
-                let aVal, bVal;
-                
-                switch (currentSort.field) {
-                    case 'location':
-                        aVal = (a.district || 'Unknown').toLowerCase();
-                        bVal = (b.district || 'Unknown').toLowerCase();
-                        break;
-                    case 'price':
-                        aVal = a.price || 0;
-                        bVal = b.price || 0;
-                        break;
-                    case 'price_per_sqm':
-                        aVal = a.price_per_sqm || 0;
-                        bVal = b.price_per_sqm || 0;
-                        break;
-                    case 'size':
-                        aVal = a.total_sqm || 0;
-                        bVal = b.total_sqm || 0;
-                        break;
-                    case 'station':
-                        aVal = a.station_distance_minutes || 999;
-                        bVal = b.station_distance_minutes || 999;
-                        break;
-                    case 'score':
-                        aVal = a.investment_score || 0;
-                        bVal = b.investment_score || 0;
-                        break;
-                    case 'date':
-                        aVal = new Date(a.analysis_date || 0);
-                        bVal = new Date(b.analysis_date || 0);
-                        break;
-                    default:
-                        return 0;
-                }
-                
-                if (aVal < bVal) return currentSort.direction === 'asc' ? -1 : 1;
-                if (aVal > bVal) return currentSort.direction === 'asc' ? 1 : -1;
-                return 0;
-            });
-            
-            currentPage = 1; // Reset to first page
-            displayProperties();
-            updateSortArrows();
-        }
-        
-        // Display properties in table
-        function displayProperties() {
+        // Append rows to the table
+        function appendRows(items) {
             const tbody = document.getElementById('propertiesTable');
-            const startIdx = (currentPage - 1) * pageSize;
-            const endIdx = startIdx + pageSize;
-            const pageProperties = filteredProperties.slice(startIdx, endIdx);
+            tbody.insertAdjacentHTML('beforeend', items.map(renderRow).join(''));
+        }
+        
+        function renderRow(property) {
+            const price = formatPrice(property.price, '', true);
+            const pricePerSqm = formatPrice(property.price_per_sqm);
+            const monthyCost = formatPrice(property.total_monthly_costs);
+            const ward = property.ward || '<span class="no-data">—</span>';
+            const wardDiscount = formatPercent(property.ward_discount_pct);
+            const wardMedian = formatPrice(property.ward_median_price_per_sqm);
+            const closestStation = property.closest_station || '<span class="no-data">—</span>';
+            const walkTime = property.station_distance_minutes 
+                ? `${property.station_distance_minutes}`
+                : '<span class="no-data">—</span>';
+            const floor = property.floor || '<span class="no-data">—</span>';
+            const buildingAge = property.building_age_years !== undefined 
+                ? `${property.building_age_years} years`
+                : '<span class="no-data">—</span>';
+            const size = property.size_sqm || property.total_sqm 
+                ? `${Math.round(property.size_sqm || property.total_sqm)}`
+                : '<span class="no-data">—</span>';
+            const primaryLight = property.primary_light || '<span class="no-data">—</span>';
+            const verdict = property.verdict || property.recommendation || 'pass';
+            const hasLink = property.listing_url && property.listing_url.trim();
             
-            tbody.innerHTML = pageProperties.map(property => {
-                const location = property.district || '<span class="skull-icon">☠</span>';
-                const price = formatPrice(property.price);
-                const pricePerSqm = formatPricePerSqm(property.price_per_sqm);
-                const size = `${Math.round(property.total_sqm || 0)}m² / ${property.num_bedrooms || 0}BR`;
-                const station = property.station_distance_minutes ? `${property.station_distance_minutes} min` : `<span class="skull-icon">☠</span>`;
-                const score = Math.round(property.investment_score || 0);
-                const verdict = property.recommendation || 'pass';
-                const date = formatDate(property.analysis_date);
-                const hasLink = property.listing_url && property.listing_url.trim();
-                const imageDisplay = getImageDisplay(property.image_urls);
-                
-                return `
-                    <tr>
-                        <td>
-                            ${imageDisplay}
-                        </td>
-                        <td>${location}</td>
-                        <td class="price">${price}</td>
-                        <td class="price">${pricePerSqm}</td>
-                        <td>${size}</td>
-                        <td>${station}</td>
-                        <td style="text-align: center; font-weight: 700; font-size: 18px; color: #00ff55; text-shadow: 0 0 3px #00ff55, 0 0 6px rgba(0, 255, 85, 0.5), 0 0 12px rgba(0, 255, 85, 0.3); font-family: 'JetBrains Mono', monospace;">[${score}]</td>
-                        <td>
-                            <span class="verdict verdict-${verdict}">${verdict.toUpperCase()}</span>
-                        </td>
-                        <td style="text-align: center;">
-                            ${hasLink ? 
-                                `<a href="${property.listing_url}" target="_blank" class="link-button">View</a>` :
-                                `<span class="skull-icon">☠</span>`
-                            }
-                        </td>
-                        <td>${date}</td>
-                    </tr>
-                `;
-            }).join('');
-            
-            // Update counts and pagination
-            const totalCount = filteredProperties.length;
-            const showing = Math.min(endIdx, totalCount);
-            const activeFilters = Object.keys(filters).filter(key => 
-                filters[key] && (Array.isArray(filters[key]) ? filters[key].length > 0 : true)
-            ).length;
-            
-            document.getElementById('resultsCount').textContent = 
-                `Showing ${startIdx + 1}-${showing} of ${totalCount} properties` +
-                (activeFilters > 0 ? ` (${activeFilters} filters active)` : '');
-            
-            updatePagination();
-            
-            document.getElementById('tableContainer').style.display = 'block';
-            document.getElementById('pagination').style.display = 'flex';
-            
-            // Update status bar
-            updatePropertiesStatus();
+            return `
+                <tr>
+                    <td style="text-align: center;">
+                        ${hasLink ? 
+                            `<a href="${property.listing_url}" target="_blank" class="link-button">View</a>` :
+                            '<span class="no-data">—</span>'
+                        }
+                    </td>
+                    <td class="price">${price}</td>
+                    <td class="price">${pricePerSqm}</td>
+                    <td class="price">${monthyCost}</td>
+                    <td>${ward}</td>
+                    <td class="percent">${wardDiscount}</td>
+                    <td class="price">${wardMedian}</td>
+                    <td>${closestStation}</td>
+                    <td class="numeric">${walkTime}</td>
+                    <td class="numeric">${floor}</td>
+                    <td class="age">${buildingAge}</td>
+                    <td class="numeric">${size}</td>
+                    <td>${primaryLight}</td>
+                    <td>
+                        <span class="verdict verdict-${verdict}">${verdict.toUpperCase()}</span>
+                    </td>
+                </tr>
+            `;
         }
         
         // Sorting
         function sortTable(field) {
+            // Toggle direction if same field, otherwise start with desc
             if (currentSort.field === field) {
                 currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
             } else {
                 currentSort.field = field;
-                currentSort.direction = 'asc';
+                currentSort.direction = 'desc';
             }
-            applyFiltersAndSort();
+            
+            // Sort the loaded properties
+            allProperties.sort((a, b) => {
+                let valA = a[field];
+                let valB = b[field];
+                
+                // Handle null/undefined values
+                if (valA == null && valB == null) return 0;
+                if (valA == null) return 1;
+                if (valB == null) return -1;
+                
+                // Convert to numbers for numeric fields
+                if (typeof valA === 'string' && !isNaN(valA)) valA = parseFloat(valA);
+                if (typeof valB === 'string' && !isNaN(valB)) valB = parseFloat(valB);
+                
+                let result = 0;
+                if (valA < valB) result = -1;
+                else if (valA > valB) result = 1;
+                
+                return currentSort.direction === 'asc' ? result : -result;
+            });
+            
+            // Re-render the table
+            const tbody = document.getElementById('propertiesTable');
+            tbody.innerHTML = allProperties.map(renderRow).join('');
+            
+            // Update sort arrows
+            updateSortArrows();
         }
         
         function updateSortArrows() {
@@ -1449,219 +801,20 @@
             }
         }
         
-        // Filter management
-        function toggleFilter(filterType) {
-            closeAllDropdowns();
-            const dropdown = document.getElementById(`filter-${filterType}`);
-            dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
-        }
-        
-        function closeAllDropdowns() {
-            document.querySelectorAll('.filter-dropdown').forEach(dropdown => {
-                dropdown.style.display = 'none';
-            });
-        }
-        
-        function applyFilter(filterType) {
-            switch (filterType) {
-                case 'location':
-                    const locationChecked = Array.from(document.querySelectorAll('#filter-location-content input:checked'))
-                        .map(cb => cb.value);
-                    filters.location = locationChecked.length > 0 ? locationChecked : null;
-                    break;
-                    
-                case 'price':
-                    const priceMin = parseFloat(document.getElementById('price-min').value) || null;
-                    const priceMax = parseFloat(document.getElementById('price-max').value) || null;
-                    filters.price = (priceMin || priceMax) ? { min: priceMin, max: priceMax } : null;
-                    break;
-                    
-                case 'price_per_sqm':
-                    const pricePerSqmMin = parseFloat(document.getElementById('price_per_sqm-min').value) || null;
-                    const pricePerSqmMax = parseFloat(document.getElementById('price_per_sqm-max').value) || null;
-                    filters.price_per_sqm = (pricePerSqmMin || pricePerSqmMax) ? { min: pricePerSqmMin, max: pricePerSqmMax } : null;
-                    break;
-                    
-                case 'size':
-                    const sizeMin = parseFloat(document.getElementById('size-min').value) || null;
-                    const sizeMax = parseFloat(document.getElementById('size-max').value) || null;
-                    filters.size = (sizeMin || sizeMax) ? { min: sizeMin, max: sizeMax } : null;
-                    break;
-                    
-                case 'station':
-                    const stationMax = parseFloat(document.getElementById('station-max').value) || null;
-                    filters.station = stationMax ? { max: stationMax } : null;
-                    break;
-                    
-                case 'score':
-                    const scoreMin = parseFloat(document.getElementById('score-min').value) || null;
-                    const scoreMax = parseFloat(document.getElementById('score-max').value) || null;
-                    filters.score = (scoreMin || scoreMax) ? { min: scoreMin, max: scoreMax } : null;
-                    break;
-                    
-                case 'verdict':
-                    const verdictChecked = Array.from(document.querySelectorAll('#filter-verdict-content input:checked'))
-                        .map(cb => cb.value);
-                    filters.verdict = verdictChecked.length > 0 ? verdictChecked : null;
-                    break;
-            }
-            
-            updateFilterButtonState(filterType);
-            closeAllDropdowns();
-            applyFiltersAndSort();
-        }
-        
-        function clearFilter(filterType) {
-            filters[filterType] = null;
-            
-            // Clear UI elements
-            switch (filterType) {
-                case 'location':
-                    document.querySelectorAll('#filter-location-content input').forEach(cb => cb.checked = false);
-                    break;
-                case 'price':
-                    document.getElementById('price-min').value = '';
-                    document.getElementById('price-max').value = '';
-                    break;
-                case 'price_per_sqm':
-                    document.getElementById('price_per_sqm-min').value = '';
-                    document.getElementById('price_per_sqm-max').value = '';
-                    break;
-                case 'size':
-                    document.getElementById('size-min').value = '';
-                    document.getElementById('size-max').value = '';
-                    break;
-                case 'station':
-                    document.getElementById('station-max').value = '';
-                    break;
-                case 'score':
-                    document.getElementById('score-min').value = '';
-                    document.getElementById('score-max').value = '';
-                    break;
-                case 'verdict':
-                    document.querySelectorAll('#filter-verdict-content input').forEach(cb => cb.checked = false);
-                    break;
-            }
-            
-            updateFilterButtonState(filterType);
-            closeAllDropdowns();
-            applyFiltersAndSort();
-        }
-        
-        function updateFilterButtonState(filterType) {
-            const button = document.querySelector(`button[onclick="toggleFilter('${filterType}')"]`);
-            const hasFilter = filters[filterType] && 
-                (Array.isArray(filters[filterType]) ? filters[filterType].length > 0 : true);
-            
-            if (hasFilter) {
-                button.classList.add('active');
-            } else {
-                button.classList.remove('active');
-            }
-        }
-        
-        // Pagination
-        function updatePagination() {
-            const totalPages = Math.ceil(filteredProperties.length / pageSize);
-            document.getElementById('pageInfo').textContent = `Page ${currentPage} of ${totalPages}`;
-            document.getElementById('prevButton').disabled = currentPage === 1;
-            document.getElementById('nextButton').disabled = currentPage === totalPages || totalPages === 0;
-        }
-        
-        function previousPage() {
-            if (currentPage > 1) {
-                currentPage--;
-                displayProperties();
-            }
-        }
-        
-        function nextPage() {
-            const totalPages = Math.ceil(filteredProperties.length / pageSize);
-            if (currentPage < totalPages) {
-                currentPage++;
-                displayProperties();
-            }
-        }
-        
         // Utility functions
-        function formatPrice(price) {
-            if (!price) return '¥ 0';
-            return '¥ ' + Math.round(price).toLocaleString();
+        function formatPrice(price, suffix = '', multiplyBy10k = false) {
+            if (!price && price !== 0) return '<span class="no-data">—</span>';
+            // Only multiply by 10,000 for main price column (prices stored in 万円)
+            const actualPrice = multiplyBy10k ? price * 10000 : price;
+            return '¥' + Math.round(actualPrice).toLocaleString() + suffix;
         }
         
-        function formatPricePerSqm(pricePerSqm) {
-            if (!pricePerSqm) return '¥ 0/m²';
-            return '¥ ' + Math.round(pricePerSqm).toLocaleString() + '/m²';
+        function formatPercent(percent) {
+            if (percent === undefined || percent === null) return '<span class="no-data">—</span>';
+            const formatted = percent.toFixed(1);
+            return formatted > 0 ? `+${formatted}%` : `${formatted}%`;
         }
         
-        function getImageDisplay(imageUrls) {
-            if (imageUrls && imageUrls.length > 0) {
-                return `<img src="${imageUrls[0]}" alt="Property" class="property-image" onerror="this.style.display='none'; this.nextSibling.style.display='flex';" style="width: 50px; height: 38px; object-fit: cover; border-radius: 4px; border: 2px solid #b87333;"><div class="property-image" style="display: none;">☠</div>`;
-            } else {
-                return '<div class="property-image">☠</div>';
-            }
-        }
-        
-        function formatDate(dateString) {
-            if (!dateString) return '<span class="skull-icon">☠</span>';
-            try {
-                const date = new Date(dateString);
-                return date.toLocaleDateString('en-US', { 
-                    year: 'numeric', 
-                    month: 'short', 
-                    day: 'numeric' 
-                });
-            } catch {
-                return '<span class="skull-icon">☠</span>';
-            }
-        }
-        
-        // Status Bar Updates
-        let startTime = Date.now();
-        
-        function updateStatusBar() {
-            // Update property counts
-            const totalProperties = allProperties.length;
-            const filteredCount = filteredProperties.length;
-            document.getElementById('statusProperties').textContent = `PROPERTIES: ${totalProperties}`;
-            document.getElementById('statusFiltered').textContent = `FILTERED: ${filteredCount}`;
-            
-            // Update uptime
-            const elapsed = Date.now() - startTime;
-            const hours = Math.floor(elapsed / 3600000).toString().padStart(2, '0');
-            const minutes = Math.floor((elapsed % 3600000) / 60000).toString().padStart(2, '0');
-            const seconds = Math.floor((elapsed % 60000) / 1000).toString().padStart(2, '0');
-            document.getElementById('statusUptime').textContent = `UPTIME: ${hours}:${minutes}:${seconds}`;
-            
-            // Update Tokyo time
-            const tokyoTime = new Date().toLocaleTimeString('en-US', {
-                timeZone: 'Asia/Tokyo',
-                hour12: false,
-                hour: '2-digit',
-                minute: '2-digit'
-            });
-            document.getElementById('statusTime').textContent = `TOKYO TIME: ${tokyoTime}`;
-        }
-        
-        // Update status bar every second
-        setInterval(updateStatusBar, 1000);
-        
-        // Update status when properties change
-        function updatePropertiesStatus() {
-            updateStatusBar();
-        }
     </script>
-    
-    <!-- Terminal Status Bar -->
-    <div class="terminal-status-bar">
-        <div class="status-left">
-            <span class="status-item" id="statusProperties">PROPERTIES: --</span>
-            <span class="status-item" id="statusFiltered">FILTERED: --</span>
-            <span class="status-item" id="statusUptime">UPTIME: 00:00:00</span>
-        </div>
-        <div class="status-right">
-            <span class="status-item" id="statusTime">TOKYO TIME: --:--</span>
-        </div>
-    </div>
 </body>
 </html>
