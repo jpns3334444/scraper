@@ -16,6 +16,15 @@ Parameters:
     Type: String
     Default: "properties"
     Description: "Name of the existing DynamoDB table containing property data"
+    
+  FavoritesTableName:
+    Type: String
+    Default: "user-favorites"
+    Description: "Name of the DynamoDB table for user favorites"
+    
+  FavoritesApiLambdaArn:
+    Type: String
+    Description: "ARN of the Favorites API Lambda function"
 
 Conditions:
   CreateBucketName: !Equals [!Ref S3BucketName, ""]
@@ -221,6 +230,8 @@ Resources:
           - "*"
         AllowMethods:
           - GET
+          - POST
+          - DELETE
           - OPTIONS
         AllowHeaders:
           - "*"
@@ -282,6 +293,54 @@ Resources:
       ApiId: !Ref PropertiesApi
       RouteKey: "$default"
       Target: !Sub "integrations/${DefaultRouteIntegration}"
+
+  # Favorites API Integration
+  FavoritesApiIntegration:
+    Type: "AWS::ApiGatewayV2::Integration"
+    Properties:
+      ApiId: !Ref PropertiesApi
+      IntegrationType: "AWS_PROXY"
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FavoritesApiLambdaArn}/invocations"
+      PayloadFormatVersion: "2.0"
+      TimeoutInMillis: 30000
+
+  # Favorites Routes
+  FavoritesPostRoute:
+    Type: "AWS::ApiGatewayV2::Route"
+    Properties:
+      ApiId: !Ref PropertiesApi
+      RouteKey: "POST /favorites"
+      Target: !Sub "integrations/${FavoritesApiIntegration}"
+
+  FavoritesGetRoute:
+    Type: "AWS::ApiGatewayV2::Route"
+    Properties:
+      ApiId: !Ref PropertiesApi
+      RouteKey: "GET /favorites/{userId}"
+      Target: !Sub "integrations/${FavoritesApiIntegration}"
+
+  FavoritesDeleteRoute:
+    Type: "AWS::ApiGatewayV2::Route"
+    Properties:
+      ApiId: !Ref PropertiesApi
+      RouteKey: "DELETE /favorites/{favoriteId}"
+      Target: !Sub "integrations/${FavoritesApiIntegration}"
+
+  FavoritesAnalysisRoute:
+    Type: "AWS::ApiGatewayV2::Route"
+    Properties:
+      ApiId: !Ref PropertiesApi
+      RouteKey: "GET /favorites/{favoriteId}/analysis"
+      Target: !Sub "integrations/${FavoritesApiIntegration}"
+
+  # Lambda Permission for Favorites API
+  FavoritesApiInvokePermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      FunctionName: !Ref FavoritesApiLambdaArn
+      Action: "lambda:InvokeFunction"
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PropertiesApi}/*/*"
 
 
 Outputs:

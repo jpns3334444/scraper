@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
 import io
 import boto3
+import json
 
 # Overview field mapping for deterministic parsing
 OVERVIEW_FIELD_MAP = {
@@ -1368,6 +1369,24 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
             data['source'] = 'homes_scraper'
             data['processed_date'] = datetime.now().strftime('%Y-%m-%d')
             
+            # Save complete property data to S3 as individual JSON
+            try:
+                if output_bucket and property_id:
+                    s3_json_key = save_property_json_to_s3(data, output_bucket, property_id, logger)
+                    if s3_json_key:
+                        data['s3_json_key'] = s3_json_key
+                        if logger:
+                            logger.info(f"Property JSON saved to S3: {s3_json_key}")
+                    else:
+                        if logger:
+                            logger.warning(f"Failed to save property JSON to S3 for {property_id}")
+                else:
+                    if logger:
+                        logger.debug(f"Skipping S3 JSON save - bucket: {output_bucket}, property_id: {property_id}")
+            except Exception as e:
+                if logger:
+                    logger.error(f"Error saving property JSON to S3: {str(e)}")
+            
             # Final price validation and fallback
             if not data.get('price') or data.get('price') == 0:
                 # Try one more time with the title if it contains price info
@@ -1766,6 +1785,47 @@ def download_images_parallel_fallback(image_urls, session, bucket, property_id, 
     return s3_keys
 
 # Enhanced upload_image_to_s3 in core_scraper.py:
+def save_property_json_to_s3(property_data, bucket, property_id, logger=None):
+    """Save complete property data as JSON to S3"""
+    try:
+        if logger:
+            logger.debug(f"Saving property JSON to S3: bucket={bucket}, property_id={property_id}")
+        
+        date_str = datetime.now().strftime('%Y-%m-%d')
+        s3_key = f"raw/{date_str}/properties/{property_id}.json"
+        
+        s3_client = boto3.client('s3')
+        
+        # Check if bucket exists and we have access
+        try:
+            s3_client.head_bucket(Bucket=bucket)
+            if logger:
+                logger.debug(f"S3 bucket '{bucket}' is accessible for property JSON")
+        except Exception as e:
+            if logger:
+                logger.error(f"S3 bucket '{bucket}' is not accessible for property JSON: {str(e)}")
+            return None
+        
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=s3_key,
+            Body=json.dumps(property_data, ensure_ascii=False, indent=2, default=str).encode('utf-8'),
+            ContentType='application/json'
+        )
+        
+        if logger:
+            logger.debug(f"Successfully saved property JSON to S3: {s3_key}")
+        
+        return s3_key
+        
+    except Exception as e:
+        if logger:
+            logger.error(f"S3 property JSON upload failed for {property_id}: {str(e)}")
+            import traceback
+            logger.debug(f"Traceback: {traceback.format_exc()}")
+        return None
+
+
 def upload_image_to_s3(image_content, bucket, property_id, image_index, logger=None):
     """Enhanced version with debug logging"""
     try:

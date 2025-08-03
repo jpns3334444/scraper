@@ -22,7 +22,7 @@ s3_client = boto3.client('s3')
 # CORS headers for browser access
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
+    'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-User-Id',
     'Access-Control-Allow-Methods': 'GET,OPTIONS'
 }
 
@@ -197,6 +197,30 @@ def get_sort_key(sort_by):
     
     return sort_mappings.get(sort_by, ('analysis_date', True))
 
+def get_user_favorite_ids(user_id):
+    """Get set of property IDs favorited by user"""
+    if not user_id or user_id == 'anonymous':
+        return set()
+    
+    try:
+        favorites_table_name = os.environ.get('FAVORITES_TABLE')
+        if not favorites_table_name:
+            return set()
+        
+        favorites_table = dynamodb.Table(favorites_table_name)
+        
+        response = favorites_table.query(
+            IndexName='user-favorites-index',
+            KeyConditionExpression='user_id = :uid',
+            ExpressionAttributeValues={':uid': user_id},
+            ProjectionExpression='property_id'
+        )
+        
+        return {item['property_id'] for item in response.get('Items', [])}
+    except Exception as e:
+        print(f"Error getting user favorites: {e}")
+        return set()
+
 def lambda_handler(event, context):
     """Handle API requests for property data with cursor-based pagination"""
     
@@ -232,6 +256,9 @@ def lambda_handler(event, context):
         # Get query parameters
         params = event.get('queryStringParameters', {}) or {}
         
+        # Get user_id from headers
+        user_id = event.get('headers', {}).get('X-User-Id', 'anonymous')
+        
         # Pagination parameters
         limit = min(int(params.get('limit', 500)), 1000)  # Default 500, max 1000
         cursor = json.loads(params['cursor']) if 'cursor' in params else None
@@ -250,6 +277,9 @@ def lambda_handler(event, context):
         response = table.scan(**scan_kwargs)
         items = response.get('Items', [])
         last_evaluated_key = response.get('LastEvaluatedKey')
+        
+        # Get user's favorites if user is authenticated
+        user_favorites = get_user_favorite_ids(user_id) if user_id != 'anonymous' else set()
         
         # Format response with necessary transformations
         formatted_items = []
@@ -298,6 +328,9 @@ def lambda_handler(event, context):
                         )
                     except:
                         pass
+            
+            # Add favorite status
+            property_data['is_favorited'] = property_data.get('property_id') in user_favorites
             
             formatted_items.append(property_data)
         

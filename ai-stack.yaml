@@ -44,6 +44,12 @@ Parameters:
   PropertyAnalyzerCodeVersion:
     Type: String
     Default: latest
+  FavoritesAPICodeVersion:
+    Type: String
+    Default: latest
+  FavoriteAnalyzerCodeVersion:
+    Type: String
+    Default: latest
   OpenAILayerObjectVersion:
     Type: String
     Description: S3 object version ID for openai-layer.zip
@@ -132,6 +138,8 @@ Resources:
                 Resource: 
                   - !GetAtt RealEstateAnalysisDB.Arn
                   - !Sub '${RealEstateAnalysisDB.Arn}/index/*'
+                  - !GetAtt UserFavoritesTable.Arn
+                  - !Sub '${UserFavoritesTable.Arn}/index/*'
         - PolicyName: SQSAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -148,6 +156,7 @@ Resources:
                   - !GetAtt SnapshotGeneratorDeadLetterQueue.Arn
                   - !GetAtt DailyDigestDeadLetterQueue.Arn
                   - !GetAtt DashboardAPIDeadLetterQueue.Arn
+                  - !GetAtt FavoriteAnalysisQueue.Arn
 
   # Simplified IAM Role for URL collection and property processing functions
   ScraperExecutionRole:
@@ -289,6 +298,40 @@ Resources:
         - AttributeName: url
           KeyType: HASH
       BillingMode: PAY_PER_REQUEST
+
+  # DynamoDB Table for User Favorites
+  UserFavoritesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-user-favorites'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: favorite_id
+          AttributeType: S
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: favorited_at
+          AttributeType: S
+        - AttributeName: property_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: favorite_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: user-favorites-index
+          KeySchema:
+            - AttributeName: user_id
+              KeyType: HASH
+            - AttributeName: favorited_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: property-favorites-index
+          KeySchema:
+            - AttributeName: property_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
 
   # Lambda Functions (using AWS prebuilt layers + our OpenAI layer)
   ETLFunction:
@@ -486,6 +529,7 @@ Resources:
       Environment:
         Variables:
           DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
+          FAVORITES_TABLE: !Ref UserFavoritesTable
 
   # URL Collector Lambda Function
   URLCollectorFunction:
@@ -561,6 +605,61 @@ Resources:
           DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
           DAYS_BACK: '7'  # Analyze properties from last 7 days by default
           ANALYZE_ALL: 'false'  # Set to 'true' to analyze all properties
+
+  # Favorites API Lambda Function
+  FavoritesAPIFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-favorites-api'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/favorites_api.zip
+        S3ObjectVersion: !Ref FavoritesAPICodeVersion
+      Timeout: 30  # API Gateway timeout limit
+      MemorySize: 512
+      Layers:
+        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
+      Environment:
+        Variables:
+          FAVORITES_TABLE: !Ref UserFavoritesTable
+          PROPERTIES_TABLE: !Ref RealEstateAnalysisDB
+          ANALYSIS_QUEUE_URL: !Ref FavoriteAnalysisQueue
+
+  # Favorite Analyzer Lambda Function
+  FavoriteAnalyzerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-favorite-analyzer'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/favorite_analyzer.zip
+        S3ObjectVersion: !Ref FavoriteAnalyzerCodeVersion
+      Timeout: 900  # 15 minutes for analysis
+      MemorySize: 1024
+      ReservedConcurrentExecutions: 5  # Limit concurrent executions
+      Layers:
+        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
+        - !Ref OpenAILayer
+      Environment:
+        Variables:
+          FAVORITES_TABLE: !Ref UserFavoritesTable
+          PROPERTIES_TABLE: !Ref RealEstateAnalysisDB
+          DATA_BUCKET: !Ref OutputBucket
+          OPENAI_SECRET_NAME: ai-scraper/openai-api-key
+
+  # Event Source Mapping for Favorite Analyzer
+  FavoriteAnalyzerEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt FavoriteAnalysisQueue.Arn
+      FunctionName: !GetAtt FavoriteAnalyzerFunction.Arn
+      BatchSize: 1
 
   # Step Functions
   StepFunctionsExecutionRole:
@@ -1187,6 +1286,23 @@ Resources:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: !Sub '${AWS::StackName}-property-analyzer-dlq'
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  # SQS Queue for Favorite Analysis Processing
+  FavoriteAnalysisQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-favorite-analysis'
+      VisibilityTimeoutSeconds: 900
+      MessageRetentionPeriod: 1209600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt FavoriteAnalysisDLQ.Arn
+        maxReceiveCount: 3
+
+  FavoriteAnalysisDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-favorite-analysis-dlq'
       MessageRetentionPeriod: 1209600  # 14 days
 
 Outputs:

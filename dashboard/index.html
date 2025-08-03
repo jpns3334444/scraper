@@ -438,6 +438,168 @@
             }
         }
         
+        /* Tab Navigation */
+        .tab-navigation {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        
+        .tab-button {
+            padding: 10px 20px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            position: relative;
+            color: #666666;
+            font-family: 'Noto Sans JP', sans-serif;
+            font-size: 14px;
+            transition: all 120ms ease;
+        }
+        
+        .tab-button.active {
+            color: #695b8d;
+            border-bottom: 3px solid #695b8d;
+        }
+        
+        .tab-button:hover {
+            color: #695b8d;
+        }
+        
+        .favorites-count {
+            background: #e91e63;
+            color: white;
+            border-radius: 10px;
+            padding: 2px 6px;
+            font-size: 12px;
+            margin-left: 5px;
+        }
+        
+        .tab-pane {
+            display: none;
+        }
+        
+        .tab-pane.active {
+            display: block;
+        }
+        
+        /* Heart Button */
+        .heart-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 20px;
+            padding: 4px 8px;
+            transition: all 0.2s;
+            color: #cccccc;
+        }
+        
+        .heart-btn.favorited {
+            color: #e91e63;
+        }
+        
+        .heart-btn:hover {
+            transform: scale(1.1);
+        }
+        
+        .heart-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        /* Favorites Grid */
+        .favorites-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            padding: 20px 0;
+        }
+        
+        .favorite-card {
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #ffffff;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+        }
+        
+        .favorite-card:hover {
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            transform: translateY(-2px);
+        }
+        
+        .favorite-image {
+            height: 200px;
+            background: #f5f5f5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        
+        .favorite-image img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .no-image {
+            color: #999999;
+            font-size: 14px;
+        }
+        
+        .favorite-details {
+            padding: 15px;
+        }
+        
+        .favorite-price {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333333;
+            margin-bottom: 8px;
+        }
+        
+        .favorite-location {
+            color: #666666;
+            margin-bottom: 4px;
+        }
+        
+        .favorite-size {
+            color: #666666;
+            margin-bottom: 10px;
+        }
+        
+        .status {
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            text-align: center;
+            font-weight: 500;
+        }
+        
+        .status-completed {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+        
+        .status-processing {
+            background: #fef5e7;
+            color: #744210;
+        }
+        
+        .status-failed {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+        
+        .status-pending {
+            background: #e2e8f0;
+            color: #4a5568;
+        }
+
         /* Mobile Responsiveness */
         @media (max-width: 768px) {
             body::before {
@@ -492,8 +654,28 @@
     <div class="container">
         <h1>東京 Real Estate</h1>
         
-        <div class="results-info">
-            <div class="results-count" id="resultsCount">Loading properties...</div>
+        <!-- Tab Navigation -->
+        <div class="tab-navigation">
+            <button class="tab-button active" onclick="switchTab('properties')">
+                All Properties
+            </button>
+            <button class="tab-button" onclick="switchTab('favorites')">
+                Favorites <span class="favorites-count" id="favoritesCount">0</span>
+            </button>
+        </div>
+
+        <!-- Properties Tab -->
+        <div id="properties-tab" class="tab-pane active">
+            <div class="results-info">
+                <div class="results-count" id="resultsCount">Loading properties...</div>
+            </div>
+        </div>
+
+        <!-- Favorites Tab -->
+        <div id="favorites-tab" class="tab-pane" style="display: none;">
+            <div class="favorites-grid" id="favoritesGrid">
+                <!-- Favorites will be loaded here -->
+            </div>
         </div>
         
         <div class="loading" id="loading">
@@ -551,6 +733,7 @@
             <table>
                 <thead>
                     <tr>
+                        <th>♥</th>
                         <th>View Listing</th>
                         <th class="sortable" onclick="sortTable('price')">
                             <div class="column-header">
@@ -626,7 +809,7 @@
     
     <script>
         // Configuration
-        const API_URL = 'https://nbgnatp0pd.execute-api.ap-northeast-1.amazonaws.com/prod/properties';
+        const API_URL = 'https://nbgnatp0pd.execute-api.ap-northeast-1.amazonaws.com/prod';
         const limit = 500;
         
         // State
@@ -640,6 +823,7 @@
             loadNext();   // initial page
             setupInfiniteScroll();
             updateSortArrows(); // show initial sort state
+            updateFavoritesCount(); // update favorites count
         });
         
         function setupInfiniteScroll() {
@@ -655,9 +839,13 @@
             loading = true;
             
             try {
-                const url = API_URL + '?limit=' + limit +
+                const url = API_URL + '/properties?limit=' + limit +
                            (cursor ? '&cursor=' + encodeURIComponent(JSON.stringify(cursor)) : '');
-                const res = await fetch(url);
+                const res = await fetch(url, {
+                    headers: {
+                        'X-User-Id': getUserId()
+                    }
+                });
                 if (!res.ok) { 
                     loading = false; 
                     return; 
@@ -719,9 +907,17 @@
             const primaryLight = property.primary_light || '<span class="no-data">—</span>';
             const verdict = property.verdict || property.recommendation || 'pass';
             const hasLink = property.listing_url && property.listing_url.trim();
+            const isFavorited = property.is_favorited || false;
             
             return `
                 <tr>
+                    <td style="text-align: center;">
+                        <button class="heart-btn ${isFavorited ? 'favorited' : ''}" 
+                                onclick="toggleFavorite('${property.property_id}', this)"
+                                data-property-id="${property.property_id}">
+                            ${isFavorited ? '♥' : '♡'}
+                        </button>
+                    </td>
                     <td style="text-align: center;">
                         ${hasLink ? 
                             `<a href="${property.listing_url}" target="_blank" class="link-button">View</a>` :
@@ -813,6 +1009,143 @@
             if (percent === undefined || percent === null) return '<span class="no-data">—</span>';
             const formatted = percent.toFixed(1);
             return formatted > 0 ? `+${formatted}%` : `${formatted}%`;
+        }
+
+        // User ID management
+        function getUserId() {
+            let userId = localStorage.getItem('user_id');
+            if (!userId) {
+                userId = 'user_' + Math.random().toString(36).substr(2, 9);
+                localStorage.setItem('user_id', userId);
+            }
+            return userId;
+        }
+
+        // Tab functionality
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-pane').forEach(pane => {
+                pane.classList.remove('active');
+            });
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            document.getElementById(`${tabName}-tab`).classList.add('active');
+            event.target.classList.add('active');
+            
+            if (tabName === 'favorites') {
+                loadFavorites();
+            }
+        }
+
+        // Toggle favorite
+        async function toggleFavorite(propertyId, button) {
+            button.disabled = true;
+            const isFavorited = button.classList.contains('favorited');
+            
+            try {
+                if (isFavorited) {
+                    await fetch(`${API_URL}/favorites/${getUserId()}_${propertyId}`, {
+                        method: 'DELETE',
+                        headers: { 'X-User-Id': getUserId() }
+                    });
+                    button.classList.remove('favorited');
+                    button.textContent = '♡';
+                    
+                    // Update property in allProperties array
+                    const property = allProperties.find(p => p.property_id === propertyId);
+                    if (property) property.is_favorited = false;
+                } else {
+                    await fetch(`${API_URL}/favorites`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-User-Id': getUserId()
+                        },
+                        body: JSON.stringify({ property_id: propertyId })
+                    });
+                    button.classList.add('favorited');
+                    button.textContent = '♥';
+                    
+                    // Update property in allProperties array
+                    const property = allProperties.find(p => p.property_id === propertyId);
+                    if (property) property.is_favorited = true;
+                }
+                updateFavoritesCount();
+            } catch (error) {
+                console.error('Failed to toggle favorite:', error);
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        // Load favorites view
+        async function loadFavorites() {
+            const userId = getUserId();
+            try {
+                const response = await fetch(`${API_URL}/favorites/${userId}`, {
+                    headers: { 'X-User-Id': userId }
+                });
+                
+                const data = await response.json();
+                const grid = document.getElementById('favoritesGrid');
+                
+                if (!data.favorites || data.favorites.length === 0) {
+                    grid.innerHTML = '<div style="text-align: center; color: #999; padding: 40px;">No favorites yet. Add some properties to your favorites!</div>';
+                    return;
+                }
+                
+                grid.innerHTML = data.favorites.map(fav => `
+                    <div class="favorite-card" onclick="viewProperty('${fav.property_id}')">
+                        <div class="favorite-image">
+                            ${fav.property_summary.image_url ? 
+                                `<img src="${fav.property_summary.image_url}" alt="Property">` :
+                                '<div class="no-image">No Image</div>'
+                            }
+                        </div>
+                        <div class="favorite-details">
+                            <div class="favorite-price">¥${(fav.property_summary.price * 10000).toLocaleString()}</div>
+                            <div class="favorite-location">${fav.property_summary.ward} - ${fav.property_summary.station}</div>
+                            <div class="favorite-size">${fav.property_summary.size_sqm}m²</div>
+                            <div class="status status-${fav.analysis_status}">
+                                ${fav.analysis_status === 'completed' ? 'Analysis Ready' : 
+                                  fav.analysis_status === 'processing' ? 'Analyzing...' : 
+                                  fav.analysis_status === 'failed' ? 'Analysis Failed' : 'Pending Analysis'}
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Failed to load favorites:', error);
+                const grid = document.getElementById('favoritesGrid');
+                grid.innerHTML = '<div style="text-align: center; color: #999; padding: 40px;">Failed to load favorites.</div>';
+            }
+        }
+
+        // Update favorites count
+        async function updateFavoritesCount() {
+            const userId = getUserId();
+            try {
+                const response = await fetch(`${API_URL}/favorites/${userId}`, {
+                    headers: { 'X-User-Id': userId }
+                });
+                const data = await response.json();
+                const count = data.favorites ? data.favorites.length : 0;
+                document.getElementById('favoritesCount').textContent = count;
+            } catch (error) {
+                console.error('Failed to update favorites count:', error);
+            }
+        }
+
+        // View property details (placeholder)
+        function viewProperty(propertyId) {
+            // Find the property in allProperties
+            const property = allProperties.find(p => p.property_id === propertyId);
+            if (property && property.listing_url) {
+                window.open(property.listing_url, '_blank');
+            } else {
+                alert('Property details not available');
+            }
         }
         
     </script>
