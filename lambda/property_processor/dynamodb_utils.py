@@ -525,6 +525,85 @@ def scan_unprocessed_urls(table, logger=None):
             logger.error(f"Failed to scan unprocessed URLs: {str(e)}")
         return []
 
+def scan_unprocessed_urls_batch(table, batch_size=100, logger=None):
+    """Scan for a limited batch of unprocessed URLs with proper pagination"""
+    unprocessed_items = []
+    total_items_scanned = 0
+    
+    try:
+        # Filter for URLs that are either empty string or don't have processed attribute
+        filter_expression = boto3.dynamodb.conditions.Attr('processed').eq('') | boto3.dynamodb.conditions.Attr('processed').not_exists()
+        
+        scan_kwargs = {
+            'FilterExpression': filter_expression
+        }
+        
+        # Keep scanning until we have enough unprocessed URLs or reach end of table
+        while len(unprocessed_items) < batch_size:
+            response = table.scan(**scan_kwargs)
+            items = response.get('Items', [])
+            total_items_scanned += len(items)
+            
+            # Process items in this scan response
+            for item in items:
+                url = item.get('url')
+                if url:
+                    # Return full item with ward and price if available
+                    unprocessed_items.append({
+                        'url': url,
+                        'ward': item.get('ward'),
+                        'price': int(item.get('price', 0))  # Include price
+                    })
+                    
+                    # Stop if we've collected enough URLs
+                    if len(unprocessed_items) >= batch_size:
+                        break
+            
+            # Check if there are more items to scan
+            if 'LastEvaluatedKey' not in response:
+                # Reached end of table
+                break
+            
+            # Continue scanning from where we left off
+            scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
+        
+        if logger:
+            logger.debug(f"Found {len(unprocessed_items)} unprocessed URLs after scanning {total_items_scanned} total items")
+        
+        return unprocessed_items
+        
+    except Exception as e:
+        if logger:
+            logger.error(f"Failed to scan unprocessed URLs batch: {str(e)}")
+        return []
+
+def mark_urls_batch_processed(url_items, table, logger=None):
+    """Mark multiple URLs as processed and return successfully marked ones"""
+    successfully_marked = []
+    
+    if not url_items:
+        return successfully_marked
+    
+    # Since BatchWriter doesn't support update_item, use individual update calls
+    for url_item in url_items:
+        try:
+            url = url_item.get('url') if isinstance(url_item, dict) else url_item
+            table.update_item(
+                Key={'url': url},
+                UpdateExpression="SET #processed = :processed",
+                ExpressionAttributeNames={'#processed': 'processed'},
+                ExpressionAttributeValues={':processed': 'Y'}
+            )
+            successfully_marked.append(url_item)
+        except Exception as e:
+            if logger:
+                logger.warning(f"Failed to mark URL {url} as processed: {str(e)}")
+    
+    if logger:
+        logger.debug(f"Successfully marked {len(successfully_marked)}/{len(url_items)} URLs as processed")
+    
+    return successfully_marked
+
 def mark_url_processed(url, table, logger=None):
     """Mark URL as processed by setting processed = 'Y'"""
     try:

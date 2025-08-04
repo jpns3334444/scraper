@@ -1,107 +1,80 @@
-# CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+# Agents.md
+
+This document provides a comprehensive overview of the real-estate-scraper repository for future coding agents.
 
 ## Project Overview
 
-This is a Tokyo Real Estate AI Analysis system that scrapes property listings, analyzes them with AI, and provides investment recommendations via a dashboard and email reports. The system uses AWS Lambda functions orchestrated by Step Functions, with data stored in DynamoDB and S3.
+This project is a serverless real estate data scraper and analyzer built on AWS. It collects property listings from a website, processes the data, analyzes it using an LLM, and displays the results on a dashboard. The project is composed of several Lambda functions, a DynamoDB database, and a static S3 website for the dashboard.
 
-## Common Development Commands
+## Architecture
 
-### Deployment Commands
-```bash
-# Deploy the entire AI stack
-./deploy-ai.sh
+The architecture is event-driven and composed of the following main components:
 
-# Deploy dashboard
-cd dashboard && ./deploy-dashboard.sh
+*   **URL Collector:** A Lambda function that scrapes the real estate website for property listing URLs and stores them in a DynamoDB table.
+*   **Property Processor:** A Lambda function that is triggered by new URLs in the DynamoDB table. It scrapes the detailed information for each property and stores it in another DynamoDB table.
+*   **Property Analyzer:** A Lambda function that is triggered by new properties in the DynamoDB table. It uses an LLM to analyze the property data and enriches the data in the DynamoDB table with the analysis results.
+*   **Dashboard API:** A Lambda function that serves as a backend for the dashboard, providing data from the DynamoDB table.
+*   **Dashboard:** A static HTML/JavaScript website hosted on S3 that displays the property listings and analysis.
+*   **Favorites API:** A Lambda function to manage user's favorite properties.
+*   **Favorite Analyzer:** A Lambda function to analyze user's favorite properties.
 
-# Update a specific Lambda function quickly
-./update-lambda.sh property_processor
-./update-lambda.sh property_analyzer
-./update-lambda.sh url_collector
-```
+## Lambdas
 
-### Testing Lambda Functions
-```bash
-# Test property processor
-./trigger-lambda.sh --function property-processor --max-properties 5 --sync
+### `url_collector`
 
-# Test property analyzer
-./trigger-lambda.sh --function property-analyzer --sync
+*   **Purpose:** Scrapes the real estate website for property listing URLs.
+*   **Trigger:** Can be triggered manually or on a schedule.
+*   **Dependencies:** `boto3`, `requests`, `beautifulsoup4`.
+*   **Output:** Stores new URLs in the `url-collector-table` DynamoDB table.
 
-# Test URL collector
-./trigger-lambda.sh --function url-collector --areas "chofu-city" --sync
+### `property_processor`
 
-# Debug mode with detailed logging
-./trigger-lambda.sh --function property-processor --debug --sync
-```
+*   **Purpose:** Scrapes the detailed information for each property.
+*   **Trigger:** Triggered by new items in the `url-collector-table` DynamoDB table.
+*   **Dependencies:** `boto3`, `requests`, `beautifulsoup4`.
+*   **Output:** Stores detailed property information in the `property-details-table` DynamoDB table.
 
-## High-Level Architecture
+### `property_analyzer`
 
-### Data Flow
-1. **URL Collection**: `url_collector` Lambda scrapes property listing URLs from real estate sites
-2. **Property Processing**: `property_processor` Lambda extracts detailed data from each listing
-3. **Property Analysis**: `property_analyzer` Lambda evaluates properties using LLM for investment potential
-4. **Data Storage**: Properties stored in DynamoDB with verdicts (BUY/WATCH/REJECT)
-5. **Dashboard**: Web interface queries DynamoDB via `dashboard_api` Lambda
-6. **Reports**: Daily digest emails sent with top property recommendations
+*   **Purpose:** Analyzes property data using an LLM.
+*   **Trigger:** Triggered by new items in the `property-details-table` DynamoDB table.
+*   **Dependencies:** `boto3`, `openai`.
+*   **Output:** Updates the corresponding item in the `property-details-table` with the analysis results.
 
-### Key Lambda Functions
-- **url_collector**: Scrapes listing URLs from configured areas
-- **property_processor**: Extracts property details (price, size, location, images)
-- **property_analyzer**: Uses OpenAI to analyze investment potential
-- **dashboard_api**: Provides filtered/sorted property data to web dashboard
-- **daily_digest**: Sends email summaries of best properties
+### `dashboard_api`
 
-### Data Storage
-- **DynamoDB**: Primary storage for property data and analysis results
-- **S3 Bucket** (`tokyo-real-estate-ai-data`): Stores scraped images and batch processing data
+*   **Purpose:** Provides data to the dashboard.
+*   **Trigger:** Triggered by HTTP requests from the dashboard.
+*   **Dependencies:** `boto3`.
+*   **Output:** Returns property data as JSON.
 
-### Infrastructure as Code
-- **CloudFormation**: `ai-stack.yaml` defines all AWS resources
-- **Lambda Layers**: OpenAI SDK packaged as layer for shared use
-- **Deployment**: `deploy-ai.sh` handles packaging and deployment
+### `favorites_api`
 
-## Development Patterns
+*   **Purpose:** Manages user's favorite properties.
+*   **Trigger:** Triggered by HTTP requests from the dashboard.
+*   **Dependencies:** `boto3`.
+*   **Output:** Manages favorites in the `favorites-table` DynamoDB table.
 
-### Lambda Function Structure
-Each Lambda follows this pattern:
-```python
-# lambda/<function_name>/app.py
-def lambda_handler(event, context):
-    # Main entry point
-    pass
-```
+### `favorite_analyzer`
 
-### Shared Code
-- `lambda/util/`: Common utilities (config, metrics)
-- `analysis/`: Property analysis logic
-- `schemas/`: Data models and validation
+*   **Purpose:** Analyzes user's favorite properties.
+*   **Trigger:** Triggered by new items in the `favorites-table` DynamoDB table.
+*   **Dependencies:** `boto3`, `openai`.
+*   **Output:** Stores analysis results in the `favorites-analysis-table` DynamoDB table.
 
-### Error Handling
-- All Lambdas use structured logging with session IDs
-- Errors are logged to CloudWatch with full context
-- Functions return standardized error responses
+## Deployment
 
-### Testing Approach
-- Unit tests in `tests/` using pytest
-- Moto for AWS service mocking
-- Integration tests via Lambda invocation
+The project is deployed using AWS SAM (Serverless Application Model).
 
-## Key Configuration
+*   **AI Stack (`ai-stack.yaml`):** Defines the core serverless application, including the Lambda functions, DynamoDB tables, and IAM roles.
+*   **Dashboard Stack (`dashboard/dashboard-stack.yaml`):** Defines the resources for the dashboard, including the S3 bucket for hosting the static website and the CloudFront distribution.
 
-### Environment Variables
-- `OUTPUT_BUCKET`: S3 bucket for data storage
-- `DYNAMODB_TABLE`: Property data table name
-- `OPENAI_API_KEY`: Stored in AWS Secrets Manager
+## Important Commands
 
-### Deployment Parameters
-- Stack name: `tokyo-real-estate-ai`
-- Region: `ap-northeast-1` (Tokyo)
-- Python runtime: 3.12
-
-## Security Considerations
-- OpenAI API key stored in AWS Secrets Manager
-- Lambda functions use IAM roles with least privilege
-- No hardcoded credentials in code
+*   **Deploy AI Stack:** `./deploy-ai.sh`
+*   **Deploy Dashboard:** `cd dashboard && ./deploy-dashboard.sh`
+*   **Update a specific Lambda:** `./update-lambda.sh <lambda-name>` (e.g., `./update-lambda.sh url_collector`)
+*   **Trigger a specific Lambda:** `./trigger-lambda.sh <lambda-name>` (e.g., `./trigger-lambda.sh url_collector`)
+*   **Clear DynamoDB tables:** `python clear-dydb.py`
+*   **Diagnose CORS issues:** `cd dashboard && ./cors_diagnose.sh`

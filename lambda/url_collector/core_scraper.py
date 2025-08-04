@@ -11,6 +11,12 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import boto3
 
+INQUIRE_SUBSTRING = "/inquire/"      # marketing / brochure / visit links
+
+def _is_inquiry_url(url: str) -> bool:
+    """Return True for brochure / visit enquiry URLs we don't want to scrape."""
+    return INQUIRE_SUBSTRING in url
+
 # Simplified browser profiles
 BROWSER_PROFILES = [
     {
@@ -65,11 +71,39 @@ def create_session(logger=None):
 def parse_price_from_text(price_text):
     """Parse price text like '32,000万円' or '32,000' to numeric value in man-yen"""
     if not price_text:
-        return 0
+        return None
+    
+    # Ignore inquiry phrases and garbage like "3件万円"
+    if any(token in price_text for token in ('件', '問い合わせ', '未定', '相談')):
+        return None
+    
+    # Extract the first "<number>万円" pattern — ignore trailing floor-plan text
+    m = re.search(r'([\d,]+)\s*万円', str(price_text))
+    if m:
+        return int(m.group(1).replace(',', ''))
     
     try:
-        # Remove common patterns and extract number
-        price_clean = re.sub(r'[^\d,万円.]', '', str(price_text))
+        # Strip nuisance characters before digit test
+        price_clean = re.sub(r'[^\d,円万円〜台以上.]', '', str(price_text))
+        
+        # Check if cleaned string contains digits
+        if not re.search(r'\d', price_clean):
+            return None
+        
+        # Handle ranges by taking the lower bound
+        if '〜' in str(price_text):
+            # Split on 〜 and take the first part
+            price_parts = str(price_text).split('〜')
+            if price_parts and price_parts[0]:
+                price_clean = re.sub(r'[^\d,円万円.]', '', price_parts[0])
+                price_clean = price_clean.replace('〜', '')
+        
+        # Handle high-end prices like "1億2,880万円"
+        if '億' in price_clean:
+            oku_part, man_part = price_clean.split('億', 1)
+            oku_val = int(oku_part.replace(',', '')) * 10000  # 1 億 = 10,000 万
+            man_val = parse_price_from_text(man_part or '0万円') or 0
+            return oku_val + man_val
         
         # Handle different formats
         if '万円' in price_clean:
@@ -88,7 +122,7 @@ def parse_price_from_text(price_text):
     except (ValueError, AttributeError):
         pass
     
-    return 0
+    return None
 
 def normalize_ward_name(area_name):
     """Keep ward names in English for consistency"""
@@ -97,68 +131,176 @@ def normalize_ward_name(area_name):
 
 def extract_listing_urls_from_html(html_content):
     """Extract unique listing URLs from HTML content"""
-    relative_urls = re.findall(r'/mansion/b-\d+/?', html_content)
-    unique_listings = set()
+    soup = BeautifulSoup(html_content, 'lxml')
     
-    for url in relative_urls:
-        absolute_url = f"https://www.homes.co.jp{url.rstrip('/')}"
-        unique_listings.add(absolute_url)
+    # Select tags that directly carry the link
+    tag_candidates = soup.select(
+        '[href*="/mansion/b-"], [data-linkurl*="/mansion/b-"], [onclick*="/mansion/b-"]'
+    )
     
-    return list(unique_listings)
+    BASE_URL = "https://www.homes.co.jp"
+    seen_urls = set()
+    results = []
+    
+    for tag in tag_candidates:
+        # 1️⃣ pull out the raw link
+        # pull out the raw link once
+        onclick_match = re.search(r"/mansion/b-\d+[^\s\"'>]*",
+                                  tag.get("onclick", ""))
+        href = (
+            tag.get("href")
+            or tag.get("data-linkurl")
+            or (onclick_match.group(0) if onclick_match else None)
+        )
+        
+        # skip if we somehow didn't extract
+        if not href:
+            continue
+        
+        if _is_inquiry_url(href):
+            continue  # skip brochure / visit links
+        
+        # 2️⃣ canonicalise to absolute URL
+        absolute_url = href if href.startswith('http') else f"{BASE_URL}{href}"
+        
+        # 3️⃣ dedupe on the whole URL
+        if absolute_url in seen_urls:
+            continue
+        seen_urls.add(absolute_url)
+        results.append(absolute_url)
+    
+    return results
+
+def _find_price(node):
+    """
+    Given a BeautifulSoup tag associated with a listing's <a>,
+    return (price_value_int, price_text_str) or (None, None).
+    """
+    # Search order:
+    # a. Card layout – sibling <div class="price">
+    sibling_price = node.find_next_sibling(class_='price')
+    if sibling_price:
+        price_text = sibling_price.get_text(strip=True)
+        price_value = parse_price_from_text(price_text)
+        if price_value and price_value > 0:
+            return (price_value, price_text)
+    
+    # NEW: look forward anywhere inside the same card for a .price element
+    deep_price = node.find_next(class_=re.compile('price'))
+    if deep_price:
+        price_text = deep_price.get_text(strip=True)
+        price_value = parse_price_from_text(price_text)
+        if price_value and price_value > 0:
+            return (price_value, price_text)
+    
+    # NEW-2: if we still have nothing, look *within the same card* for any span.num
+    deepest_num = node.find_next('span', class_='num')
+    if deepest_num:
+        # sometimes the surrounding tag holds "万円" outside <span class="num">
+        parent_text = deepest_num.parent.get_text(strip=True)
+        price_text = deepest_num.text + ('' if '万円' in parent_text else '万円')
+        price_value = parse_price_from_text(price_text)
+        if price_value and price_value > 0:
+            return (price_value, price_text)
+    
+    # b. Table layout – the enclosing <tr> → the <td class*="price">
+    tr = node.find_parent('tr')
+    if tr:
+        price_cell = tr.find('td', class_=re.compile('price'))
+        if price_cell:
+            price_span = price_cell.find('span', class_='num')
+            if price_span and '万円' in price_cell.text:
+                price_num = price_span.text.strip()
+                price_text = f"{price_num}万円"
+                price_value = parse_price_from_text(price_text)
+                if price_value and price_value > 0:
+                    return (price_value, price_text)
+    
+    # c. Generic climb – first ancestor that contains ".price" in its classes
+    # or has a child <span class="num">
+    container = node
+    for _ in range(10):  # Look up to 10 levels
+        parent = container.parent
+        if not parent:
+            break
+        
+        # Check for price class
+        if hasattr(parent, 'get'):
+            parent_classes = parent.get('class', [])
+            if parent_classes and any('price' in str(c) for c in parent_classes):
+                price_text = parent.get_text(strip=True)
+                price_value = parse_price_from_text(price_text)
+                if price_value and price_value > 0:
+                    return (price_value, price_text)
+        
+        # Check for child with price
+        price_elem = parent.find(class_=re.compile('price'))
+        if price_elem:
+            price_text = price_elem.get_text(strip=True)
+            price_value = parse_price_from_text(price_text)
+            if price_value and price_value > 0:
+                return (price_value, price_text)
+        
+        container = parent
+    
+    return (None, None)
 
 # Alternative: Hybrid approach - use regex for URLs, BeautifulSoup for prices
 def extract_listings_with_prices_from_html(html_content):
     """Hybrid approach: regex for URLs (fast), BeautifulSoup for price extraction (reliable)"""
-    listings = []
-    seen_urls = set()
-    
-    # Quick regex to find all URLs
-    url_pattern = r'/mansion/b-(\d+)/?'
-    url_matches = re.finditer(url_pattern, html_content)
-    
-    # Parse HTML once
     soup = BeautifulSoup(html_content, 'lxml')
     
-    for url_match in url_matches:
-        url = url_match.group(0)
-        if url in seen_urls:
+    # Select tags that directly carry the link
+    tag_candidates = soup.select(
+        '[href*="/mansion/b-"], [data-linkurl*="/mansion/b-"], [onclick*="/mansion/b-"]'
+    )
+    
+    BASE_URL = "https://www.homes.co.jp"
+    listings, seen_urls, zero_price_count = [], set(), 0
+    
+    for tag in tag_candidates:
+        # 1️⃣ pull out the raw link
+        # pull out the raw link once
+        onclick_match = re.search(r"/mansion/b-\d+[^\s\"'>]*",
+                                  tag.get("onclick", ""))
+        href = (
+            tag.get("href")
+            or tag.get("data-linkurl")
+            or (onclick_match.group(0) if onclick_match else None)
+        )
+        
+        # skip if we somehow didn't extract
+        if not href or _is_inquiry_url(href):
+            continue    # skip empty or inquiry links
+        
+        # 2️⃣ canonicalise to absolute URL
+        absolute_url = href if href.startswith('http') else f"{BASE_URL}{href}"
+        
+        # 3️⃣ dedupe on the whole URL
+        if absolute_url in seen_urls:
             continue
-        seen_urls.add(url)
+        seen_urls.add(absolute_url)
         
-        absolute_url = f"https://www.homes.co.jp{url.rstrip('/')}"
+        # 4️⃣ find nearest price
+        price_value, price_text = _find_price(tag)
         
-        # Find the element containing this URL
-        url_element = soup.find('a', href=re.compile(re.escape(url)))
-        if not url_element:
-            listings.append({'url': absolute_url, 'price': 0, 'price_text': ''})
-            continue
-        
-        # Navigate up to find the containing structure
-        container = url_element
-        for _ in range(10):  # Look up to 10 levels
-            parent = container.parent
-            if not parent:
-                break
-                
-            # Check if this container has a price
-            price_td = parent.find('td', class_='price')
-            if price_td:
-                price_span = price_td.find('span', class_='num')
-                if price_span and '万円' in price_td.text:
-                    price_num = price_span.text.strip()
-                    price_text = f"{price_num}万円"
-                    price = parse_price_from_text(price_text)
-                    listings.append({
-                        'url': absolute_url,
-                        'price': price,
-                        'price_text': price_text
-                    })
-                    break
-            
-            container = parent
+        if price_value is not None:
+            listings.append({'url': absolute_url,
+                             'price': price_value,
+                             'price_text': price_text})
         else:
-            # No price found
-            listings.append({'url': absolute_url, 'price': 0, 'price_text': ''})
+            listings.append({'url': absolute_url,
+                             'price': 0,
+                             'price_text': ''})
+            zero_price_count += 1
+    
+    # Log warning if more than 5% of rows have zero price
+    if listings:
+        zero_price_percentage = (zero_price_count / len(listings)) * 100
+        if zero_price_percentage > 5:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"High zero-price rate: {zero_price_percentage:.1f}% ({zero_price_count}/{len(listings)}) rows have no price")
     
     return listings
 

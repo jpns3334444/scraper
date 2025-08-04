@@ -60,6 +60,7 @@ while [[ $# -gt 0 ]]; do
         SESSION_ID="${FUNCTION_NAME}-$(date +%s)-$$"
         PAYLOAD="{\"session_id\":\"$SESSION_ID\",\"output_bucket\":\"$DEFAULT_BUCKET\""
         shift 2 ;;
+    --parallel-instances) PARALLEL_INSTANCES="$2"; shift 2 ;;
     --output-bucket) OUTPUT_BUCKET="$2"; PAYLOAD="${PAYLOAD%,\"output_bucket\":*}},\"output_bucket\":\"$2\""; shift 2 ;;
     --max-properties) PAYLOAD="$PAYLOAD,\"max_properties\":$2"; shift 2 ;;
     --areas) PAYLOAD="$PAYLOAD,\"areas\":\"$2\""; shift 2 ;;
@@ -78,6 +79,7 @@ while [[ $# -gt 0 ]]; do
       echo ""
       echo "Options:"
       echo "  --function FUNC             Lambda function to trigger (required)"
+      echo "  --parallel-instances N      Launch N parallel Lambda instances"
       echo "  --output-bucket BUCKET      S3 bucket for output (default: $DEFAULT_BUCKET)"
       echo "  --max-properties N          Max properties to process"
       echo "  --areas AREAS               Comma-separated list of areas"
@@ -121,42 +123,108 @@ if [[ "$LOG_LEVEL" == "DEBUG" ]]; then
   echo "📋 Payload: $PAYLOAD"
 fi
 
-aws lambda invoke \
-  --function-name "$LAMBDA_FUNCTION" \
-  --invocation-type "$INVOCATION_TYPE" \
-  --payload "$PAYLOAD" \
-  --cli-binary-format raw-in-base64-out \
-  --region "$REGION" \
-  /tmp/${FUNCTION_NAME}-response.json >/dev/null 2>&1 || { echo "❌ Failed to trigger Lambda"; exit 1; }
-
-if [[ "${SYNC_MODE:-false}" == "true" ]]; then
-  echo "✅ Lambda completed"
-  echo "📄 Response:"
-  cat /tmp/${FUNCTION_NAME}-response.json | python3 -m json.tool 2>/dev/null || cat /tmp/${FUNCTION_NAME}-response.json
+# Handle parallel instance launching
+if [[ -n "${PARALLEL_INSTANCES:-}" ]] && [[ "$PARALLEL_INSTANCES" -gt 1 ]]; then
+    echo "🚀 Launching $PARALLEL_INSTANCES parallel instances..."
+    BASE_SESSION_ID="${FUNCTION_NAME}-parallel-$(date +%s)"
+    
+    for i in $(seq 1 $PARALLEL_INSTANCES); do
+        INSTANCE_SESSION_ID="${BASE_SESSION_ID}-instance-${i}"
+        INSTANCE_PAYLOAD=$(echo "$PAYLOAD" | jq --arg sid "$INSTANCE_SESSION_ID" '.session_id = $sid')
+        
+        echo "  🔄 Launching instance $i (session: $INSTANCE_SESSION_ID)..."
+        
+        aws lambda invoke \
+            --function-name "$LAMBDA_FUNCTION" \
+            --invocation-type "Event" \
+            --payload "$INSTANCE_PAYLOAD" \
+            --cli-binary-format raw-in-base64-out \
+            --region "$REGION" \
+            /tmp/${FUNCTION_NAME}-response-${i}.json >/dev/null 2>&1 || { echo "❌ Failed to trigger instance $i"; exit 1; }
+        
+        echo "  ✓ Instance $i launched"
+        sleep 0.5  # Small delay between launches
+    done
+    
+    echo "✅ All $PARALLEL_INSTANCES instances launched"
+    echo "📊 Monitor progress with:"
+    PARALLEL_TIMESTAMP=$(echo "$BASE_SESSION_ID" | sed 's/.*parallel-//')
+    echo "  aws logs tail /aws/lambda/$LAMBDA_FUNCTION --follow --since 5m | grep parallel-${PARALLEL_TIMESTAMP}"
 else
-  echo "✅ Lambda triggered"
-  echo "📊 Streaming logs..."
-  
-  # Stream logs filtered by session ID using built-in filter
-  sleep 2 # Give Lambda time to start
-  
-  # Start session ID logs in background
-  aws logs tail "/aws/lambda/$LAMBDA_FUNCTION" \
-    --region "$REGION" \
-    --follow \
-    --since 30s \
-    --filter-pattern "\"$SESSION_ID\"" \
-    --format short 2>/dev/null &
-  SESSION_PID=$!
-  
-  # Also stream ERROR logs in parallel
-  aws logs tail "/aws/lambda/$LAMBDA_FUNCTION" \
-    --region "$REGION" \
-    --follow \
-    --since 30s \
-    --filter-pattern "ERROR" \
-    --format short 2>/dev/null &
-  ERROR_PID=$!
+    # Single invocation (existing logic)
+    aws lambda invoke \
+      --function-name "$LAMBDA_FUNCTION" \
+      --invocation-type "$INVOCATION_TYPE" \
+      --payload "$PAYLOAD" \
+      --cli-binary-format raw-in-base64-out \
+      --region "$REGION" \
+      /tmp/${FUNCTION_NAME}-response.json >/dev/null 2>&1 || { echo "❌ Failed to trigger Lambda"; exit 1; }
+fi
+
+# Handle log streaming for both single and parallel instances
+if [[ "${SYNC_MODE:-false}" == "true" ]]; then
+  if [[ -n "${PARALLEL_INSTANCES:-}" ]] && [[ "$PARALLEL_INSTANCES" -gt 1 ]]; then
+    echo "⚠️  Sync mode not supported with parallel instances, switching to async mode"
+    SYNC_MODE=false
+  else
+    echo "✅ Lambda completed"
+    echo "📄 Response:"
+    cat /tmp/${FUNCTION_NAME}-response.json | python3 -m json.tool 2>/dev/null || cat /tmp/${FUNCTION_NAME}-response.json
+  fi
+fi
+
+if [[ "${SYNC_MODE:-false}" != "true" ]]; then
+  if [[ -n "${PARALLEL_INSTANCES:-}" ]] && [[ "$PARALLEL_INSTANCES" -gt 1 ]]; then
+    echo "✅ All parallel instances triggered"
+    echo "📊 Streaming logs for all instances..."
+    
+    # For parallel instances, stream logs with a broader filter
+    sleep 2 # Give Lambda time to start
+    
+    # Stream logs filtered by the base session ID pattern
+    PARALLEL_TIMESTAMP=$(echo "$BASE_SESSION_ID" | sed 's/.*parallel-//')
+    aws logs tail "/aws/lambda/$LAMBDA_FUNCTION" \
+      --region "$REGION" \
+      --follow \
+      --since 30s \
+      --filter-pattern "\"parallel-${PARALLEL_TIMESTAMP}\"" \
+      --format short 2>/dev/null &
+    SESSION_PID=$!
+    
+    # Also stream ERROR logs in parallel
+    aws logs tail "/aws/lambda/$LAMBDA_FUNCTION" \
+      --region "$REGION" \
+      --follow \
+      --since 30s \
+      --filter-pattern "ERROR" \
+      --format short 2>/dev/null &
+    ERROR_PID=$!
+    
+  else
+    echo "✅ Lambda triggered"
+    echo "📊 Streaming logs..."
+    
+    # Stream logs filtered by session ID using built-in filter
+    sleep 2 # Give Lambda time to start
+    
+    # Start session ID logs in background
+    aws logs tail "/aws/lambda/$LAMBDA_FUNCTION" \
+      --region "$REGION" \
+      --follow \
+      --since 30s \
+      --filter-pattern "\"$SESSION_ID\"" \
+      --format short 2>/dev/null &
+    SESSION_PID=$!
+    
+    # Also stream ERROR logs in parallel
+    aws logs tail "/aws/lambda/$LAMBDA_FUNCTION" \
+      --region "$REGION" \
+      --follow \
+      --since 30s \
+      --filter-pattern "ERROR" \
+      --format short 2>/dev/null &
+    ERROR_PID=$!
+  fi
   
   # Wait for either process to finish or user interrupt
   wait $SESSION_PID $ERROR_PID 2>/dev/null || echo "Log streaming ended"

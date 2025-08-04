@@ -28,21 +28,26 @@ class SessionLogger:
     
     def __init__(self, session_id, log_level='INFO'):
         self.session_id = session_id
+        # Extract instance number if present
+        self.instance_num = '1'
+        if '-instance-' in session_id:
+            self.instance_num = session_id.split('-instance-')[-1]
+        
         import logging
         self._logger = logging.getLogger(__name__)
         self._logger.setLevel(getattr(logging, log_level.upper()))
     
     def info(self, message):
-        self._logger.info(f"[{self.session_id}] {message}")
+        self._logger.info(f"[{self.session_id}][Instance-{self.instance_num}] {message}")
     
     def warning(self, message):
-        self._logger.warning(f"[{self.session_id}] {message}")
+        self._logger.warning(f"[{self.session_id}][Instance-{self.instance_num}] {message}")
     
     def error(self, message):
-        self._logger.error(f"[{self.session_id}] {message}")
+        self._logger.error(f"[{self.session_id}][Instance-{self.instance_num}] {message}")
     
     def debug(self, message):
-        self._logger.debug(f"[{self.session_id}] {message}")
+        self._logger.debug(f"[{self.session_id}][Instance-{self.instance_num}] {message}")
 
 class SessionPool:
     """Thread-safe pool of HTTP sessions with different headers"""
@@ -168,7 +173,8 @@ class RateLimiter:
 from core_scraper import create_session, extract_property_details
 from dynamodb_utils import (
     setup_dynamodb_client, save_complete_properties_to_dynamodb,
-    setup_url_tracking_table, scan_unprocessed_urls, mark_url_processed
+    setup_url_tracking_table, scan_unprocessed_urls, mark_url_processed,
+    scan_unprocessed_urls_batch, mark_urls_batch_processed
 )
 
 def parse_lambda_event(event):
@@ -281,8 +287,7 @@ def process_single_url(url_data, session_pool, rate_limiter, url_tracking_table,
         if not is_valid:
             result["validation_error"] = msg
             logger.warning(f"Property validation failed for {url}: {msg}")
-            # Mark URL as processed even if validation failed
-            mark_url_processed(url, url_tracking_table, logger)
+            # URL is already marked as processed before batch processing starts
             return result
         
         # Additional data quality checks
@@ -300,8 +305,7 @@ def process_single_url(url_data, session_pool, rate_limiter, url_tracking_table,
             logger.warning(f"Data quality issues for {url}: {', '.join(quality_issues)}")
             result['data_quality_issues'] = quality_issues
         
-        # Mark URL as processed in tracking table
-        mark_url_processed(url, url_tracking_table, logger)
+        # URL is already marked as processed before batch processing starts
         
         return result
         
@@ -311,11 +315,7 @@ def process_single_url(url_data, session_pool, rate_limiter, url_tracking_table,
             logger.error(f"Error processing {url}: {str(e)}")
             processed_urls.add(url)
         
-        # Still mark as processed to avoid retry loops
-        try:
-            mark_url_processed(url, url_tracking_table, logger)
-        except:
-            pass
+        # URL is already marked as processed before batch processing starts
         
         return {"url": url, "error": str(e)}
     
@@ -603,35 +603,88 @@ def main(event=None):
         # Setup URL tracking table
         _, url_tracking_table = setup_url_tracking_table(config['url_tracking_table'], logger)
         
-        # Get unprocessed URLs
-        logger.info("Scanning for unprocessed URLs...")
-        unprocessed_items = scan_unprocessed_urls(url_tracking_table, logger)
+        # Add Lambda instance identifier for debugging parallel execution
+        lambda_instance_id = f"instance-{os.environ.get('AWS_LAMBDA_LOG_STREAM_NAME', 'local')[-8:]}"
+        logger.info(f"Lambda instance ID: {lambda_instance_id}")
         
-        if not unprocessed_items:
-            logger.info("No unprocessed URLs found")
+        # New batch processing loop - scan and claim URLs in small batches
+        all_listings_data = []
+        total_urls_claimed = 0
+        batch_number = 0
+        
+        logger.info("Starting batch URL claiming and processing...")
+        logger.info(f"Configuration: {config['max_workers']} workers, {config['requests_per_second']} req/s, batch size {config['batch_size']}")
+        
+        while True:
+            batch_number += 1
+            
+            # Check runtime limit before each batch
+            elapsed_time = (datetime.now() - job_start_time).total_seconds()
+            if elapsed_time > (max_runtime_seconds - 60):
+                logger.warning(f"Approaching runtime limit, stopping after {batch_number-1} batches")
+                break
+            
+            # Get a small batch of unprocessed URLs
+            logger.info(f"Batch {batch_number}: Scanning for unprocessed URLs...")
+            batch_items = scan_unprocessed_urls_batch(url_tracking_table, batch_size=100, logger=logger)
+            
+            if not batch_items:
+                logger.info("No more unprocessed URLs found")
+                break
+                
+            # Apply max properties limit if set
+            if max_properties_limit > 0 and (total_urls_claimed + len(batch_items)) > max_properties_limit:
+                remaining_limit = max_properties_limit - total_urls_claimed
+                batch_items = batch_items[:remaining_limit]
+                logger.info(f"Limited batch to {len(batch_items)} URLs due to max properties limit")
+            
+            # Immediately mark this batch as processed to claim them
+            logger.info(f"Batch {batch_number}: Claiming {len(batch_items)} URLs...")
+            urls_marked = mark_urls_batch_processed(batch_items, url_tracking_table, logger)
+            
+            if not urls_marked:
+                logger.warning(f"Batch {batch_number}: Failed to claim any URLs, stopping")
+                break
+            
+            logger.info(f"Batch {batch_number}: Successfully claimed {len(urls_marked)} URLs for processing")
+            total_urls_claimed += len(urls_marked)
+            
+            # Process the successfully marked URLs
+            batch_listings = process_urls_in_batches(
+                urls_marked, config, logger, job_start_time, max_runtime_seconds
+            )
+            
+            all_listings_data.extend(batch_listings)
+            
+            logger.info(f"Batch {batch_number}: Processed {len(batch_listings)} URLs "
+                       f"(Total claimed: {total_urls_claimed}, Total processed: {len(all_listings_data)})")
+            
+            # Check if we've hit the max properties limit
+            if max_properties_limit > 0 and total_urls_claimed >= max_properties_limit:
+                logger.info(f"Reached max properties limit of {max_properties_limit}")
+                break
+            
+            # Check runtime limit again
+            elapsed_time = (datetime.now() - job_start_time).total_seconds()
+            if elapsed_time > (max_runtime_seconds - 60):
+                logger.warning(f"Approaching runtime limit, stopping after batch {batch_number}")
+                break
+        
+        listings_data = all_listings_data
+        
+        if not listings_data:
+            logger.info("No URLs were processed")
             summary_data = {
                 "status": "SUCCESS_NO_URLS",
                 "unprocessed_urls_found": 0,
-                "processed_count": 0
+                "processed_count": 0,
+                "total_batches": batch_number - 1,
+                "total_urls_claimed": total_urls_claimed
             }
             write_job_summary(summary_data)
             return summary_data
         
-        logger.info(f"Found {len(unprocessed_items)} unprocessed URLs")
-        
-        # Apply limits
-        items_to_process = unprocessed_items
-        if max_properties_limit > 0:
-            items_to_process = items_to_process[:max_properties_limit]
-            logger.info(f"Limited to {len(items_to_process)} properties")
-        
-        # Process URLs using parallel processing
-        logger.info(f"Processing {len(items_to_process)} properties with parallel execution...")
-        logger.info(f"Configuration: {config['max_workers']} workers, {config['requests_per_second']} req/s, {config['batch_size']} batch size")
-        
-        listings_data = process_urls_in_batches(
-            items_to_process, config, logger, job_start_time, max_runtime_seconds
-        )
+        logger.info(f"Completed parallel batch processing: {len(listings_data)} URLs processed across {batch_number-1} batches")
         
         # Calculate statistics from results
         success_count = len([r for r in listings_data if 'error' not in r and 'validation_error' not in r])
@@ -684,14 +737,16 @@ def main(event=None):
             "end_time": job_end_time.isoformat(),
             "duration_seconds": duration,
             "session_id": config['session_id'],
-            "unprocessed_urls_found": len(unprocessed_items),
-            "urls_attempted": len(items_to_process),
+            "total_batches_processed": batch_number - 1,
+            "total_urls_claimed": total_urls_claimed,
+            "urls_attempted": len(listings_data),
             "successful_extractions": success_count,
             "failed_extractions": error_count, 
             "urls_marked_processed": processed_urls,
             "dynamodb_saves": dynamodb_saved,
             "output_file": output_filename,
             "s3_upload_success": s3_upload_success,
+            "lambda_instance_id": lambda_instance_id,
             "status": "SUCCESS" if success_count > 0 else "NO_SUCCESS"
         }
         
@@ -722,6 +777,26 @@ def lambda_handler(event, context):
     
     logger.info("Property Processor Lambda execution started")
     logger.debug(f"Event: {json.dumps(event, indent=2)}")
+    
+    # Auto-spawn parallel instances if called from Step Functions
+    if event.get('source') == 'step-function' and not event.get('is_parallel_child'):
+        logger.info("Detected Step Function execution, spawning 2 additional parallel instances")
+        
+        lambda_client = boto3.client('lambda')
+        for i in range(2, 4):  # Spawn instances 2 and 3 (current is instance 1)
+            parallel_event = event.copy()
+            parallel_event['session_id'] = f"{session_id}-instance-{i}"
+            parallel_event['is_parallel_child'] = True
+            
+            try:
+                lambda_client.invoke(
+                    FunctionName=context.function_name,
+                    InvocationType='Event',
+                    Payload=json.dumps(parallel_event)
+                )
+                logger.info(f"Spawned parallel instance {i}")
+            except Exception as e:
+                logger.warning(f"Failed to spawn parallel instance {i}: {str(e)}")
     
     try:
         result = main(event)
