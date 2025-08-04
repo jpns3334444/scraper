@@ -6,10 +6,12 @@ from decimal import Decimal
 
 dynamodb = boto3.resource('dynamodb')
 sqs = boto3.client('sqs')
+s3 = boto3.client('s3')
 
 favorites_table = dynamodb.Table(os.environ['FAVORITES_TABLE'])
 properties_table = dynamodb.Table(os.environ['PROPERTIES_TABLE'])
 queue_url = os.environ['ANALYSIS_QUEUE_URL']
+output_bucket = os.environ.get('OUTPUT_BUCKET', 'tokyo-real-estate-ai-data')
 
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
@@ -28,8 +30,8 @@ def decimal_to_float(obj):
     return obj
 
 def lambda_handler(event, context):
-    method = event['httpMethod']
-    path = event['path']
+    method = event["requestContext"]["http"]["method"]
+    path = event["rawPath"]
     
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS}
@@ -41,10 +43,19 @@ def lambda_handler(event, context):
         return add_favorite(event, user_id)
     elif method == 'DELETE' and path.startswith('/favorites/'):
         return remove_favorite(event, user_id)
-    elif method == 'GET' and path == f'/favorites/{user_id}':
-        return get_user_favorites(user_id)
-    elif method == 'GET' and '/analysis' in path:
-        return get_analysis(event, user_id)
+    elif method == 'GET' and path.startswith('/favorites/'):
+        # Extract userId from path parameters
+        path_params = event.get('pathParameters', {})
+        if path_params and 'userId' in path_params:
+            return get_user_favorites(path_params['userId'])
+        elif '/analysis' in path:
+            return get_analysis(event, user_id)
+    
+    # Fallback to path parsing for compatibility
+    if method == 'GET' and path.count('/') == 2:  # /favorites/{userId}
+        path_parts = path.split('/')
+        if len(path_parts) == 3 and path_parts[1] == 'favorites':
+            return get_user_favorites(path_parts[2])
     
     return {'statusCode': 404, 'headers': CORS_HEADERS}
 
@@ -114,8 +125,14 @@ def add_favorite(event, user_id):
         }
 
 def remove_favorite(event, user_id):
-    path_parts = event['path'].split('/')
-    favorite_id = path_parts[-1]
+    # Try to get ID from path parameters first (HTTP API v2)
+    path_params = event.get('pathParameters', {})
+    if path_params and 'id' in path_params:
+        favorite_id = path_params['id']
+    else:
+        # Fallback to path parsing
+        path_parts = event['rawPath'].split('/')
+        favorite_id = path_parts[-1]
     
     try:
         # Verify ownership
@@ -156,6 +173,22 @@ def get_user_favorites(user_id):
         # Convert Decimal to float for JSON serialization
         favorites = decimal_to_float(favorites)
         
+        # Convert S3 keys to presigned URLs for images
+        for favorite in favorites:
+            property_summary = favorite.get('property_summary', {})
+            if property_summary.get('image_url'):
+                try:
+                    # Generate presigned URL for the image
+                    presigned_url = s3.generate_presigned_url(
+                        'get_object',
+                        Params={'Bucket': output_bucket, 'Key': property_summary['image_url']},
+                        ExpiresIn=3600
+                    )
+                    property_summary['image_url'] = presigned_url
+                except Exception as e:
+                    # If presigned URL generation fails, remove the image_url
+                    property_summary['image_url'] = None
+        
         return {
             'statusCode': 200,
             'headers': CORS_HEADERS,
@@ -170,8 +203,14 @@ def get_user_favorites(user_id):
         }
 
 def get_analysis(event, user_id):
-    path_parts = event['path'].split('/')
-    favorite_id = path_parts[-2]  # Assuming path like /favorites/{favorite_id}/analysis
+    # Try to get ID from path parameters first (HTTP API v2)
+    path_params = event.get('pathParameters', {})
+    if path_params and 'id' in path_params:
+        favorite_id = path_params['id']
+    else:
+        # Fallback to path parsing
+        path_parts = event['rawPath'].split('/')
+        favorite_id = path_parts[-2]  # Assuming path like /favorites/{favorite_id}/analysis
     
     try:
         # Verify ownership

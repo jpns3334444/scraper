@@ -19,19 +19,34 @@ STACK_PREFIX="${STACK_PREFIX:-tre-dash}"
 AI_STACK_NAME="${AI_STACK_NAME:-tokyo-real-estate-ai}"
 TEMPLATE_FILE="$SCRIPT_DIR/dashboard-stack.yaml"
 
-# Auto-detect DynamoDB table name from AI stack
-info "Getting DynamoDB table name from AI stack..."
+# Auto-detect resources from AI stack
+info "Getting resources from AI stack..."
 DYNAMODB_TABLE=$(aws cloudformation describe-stacks \
     --stack-name $AI_STACK_NAME \
     --region $REGION \
     --query 'Stacks[0].Outputs[?OutputKey==`DynamoDBTableName`].OutputValue' \
     --output text 2>/dev/null)
 
+FAVORITES_API_ARN=$(aws cloudformation describe-stacks \
+    --stack-name $AI_STACK_NAME \
+    --region $REGION \
+    --query 'Stacks[0].Outputs[?OutputKey==`FavoritesAPIFunctionArn`].OutputValue' \
+    --output text 2>/dev/null)
+
+# Get the favorites table name (construct it based on the AI stack naming pattern)
+FAVORITES_TABLE_NAME="${AI_STACK_NAME}-user-favorites"
+
 if [ -z "$DYNAMODB_TABLE" ] || [ "$DYNAMODB_TABLE" = "None" ]; then
     error "Could not get DynamoDB table name from AI stack '$AI_STACK_NAME'"
 fi
 
+if [ -z "$FAVORITES_API_ARN" ] || [ "$FAVORITES_API_ARN" = "None" ]; then
+    error "Could not get Favorites API Lambda ARN from AI stack '$AI_STACK_NAME'"
+fi
+
 info "Using DynamoDB table: $DYNAMODB_TABLE"
+info "Using Favorites table: $FAVORITES_TABLE_NAME" 
+info "Using Favorites API ARN: $FAVORITES_API_ARN"
 
 echo "🚀 Tokyo Real Estate Dashboard Deployment"
 echo "=========================================="
@@ -72,6 +87,8 @@ aws cloudformation deploy \
     --parameter-overrides \
         StackNamePrefix=$STACK_PREFIX \
         DynamoDBTableName=$DYNAMODB_TABLE \
+        FavoritesTableName=$FAVORITES_TABLE_NAME \
+        FavoritesApiLambdaArn=$FAVORITES_API_ARN \
     --no-fail-on-empty-changeset
 
 if [ $? -eq 0 ]; then

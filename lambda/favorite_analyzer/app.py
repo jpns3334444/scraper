@@ -1,9 +1,14 @@
 import json
 import boto3
 import os
+import logging
 from datetime import datetime
 from openai import OpenAI
 from decimal import Decimal
+
+# Setup logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 dynamodb = boto3.resource('dynamodb')
 s3_client = boto3.client('s3')
@@ -20,7 +25,7 @@ def lambda_handler(event, context):
         try:
             analyze_favorite(message)
         except Exception as e:
-            print(f"Error analyzing favorite: {str(e)}")
+            logger.error(f"Error analyzing favorite: {str(e)}")
             # Message will return to queue if not deleted
 
 def analyze_favorite(message):
@@ -97,8 +102,8 @@ def build_property_data_package(property_id):
         response = s3_client.get_object(Bucket=bucket, Key=s3_key)
         raw_data = json.loads(response['Body'].read())
     except Exception as e:
-        print(f"Raw property data not found in S3: {s3_key}")
-        print(f"Could not load raw data from S3 key {s3_key}: {e}")
+        logger.warning(f"Raw property data not found in S3: {s3_key}")
+        logger.debug(f"Could not load raw data from S3 key {s3_key}: {e}")
     
     # 3. Get image URLs
     image_urls = []
@@ -113,7 +118,7 @@ def build_property_data_package(property_id):
                     )
                     image_urls.append(url)
                 except Exception as e:
-                    print(f"Failed to generate presigned URL for {s3_key}: {e}")
+                    logger.warning(f"Failed to generate presigned URL for {s3_key}: {e}")
     
     return {
         'enriched': enriched_data,
@@ -276,11 +281,11 @@ def get_openai_api_key():
         return api_key
         
     except Exception as e:
-        print(f"Failed to get OpenAI API key: {e}")
+        logger.error(f"Failed to get OpenAI API key: {e}")
         # Try fallback to environment variable
         fallback_key = os.environ.get('OPENAI_API_KEY')
         if fallback_key:
-            print("Using fallback API key from environment variable")
+            logger.info("Using fallback API key from environment variable")
             return fallback_key
         else:
             raise Exception(f"Failed to get OpenAI API key: {str(e)}")

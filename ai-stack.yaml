@@ -11,27 +11,6 @@ Parameters:
     Type: String
   EmailTo:
     Type: String
-  ETLCodeVersion:
-    Type: String
-    Default: latest
-  PromptBuilderCodeVersion:
-    Type: String
-    Default: latest
-  LLMBatchCodeVersion:
-    Type: String
-    Default: latest
-  ReportSenderCodeVersion:
-    Type: String
-    Default: latest
-  DynamoDBWriterCodeVersion:
-    Type: String
-    Default: latest
-  SnapshotGeneratorCodeVersion:
-    Type: String
-    Default: latest
-  DailyDigestCodeVersion:
-    Type: String
-    Default: latest
   DashboardAPICodeVersion:
     Type: String
     Default: latest
@@ -149,14 +128,17 @@ Resources:
                 Action:
                   - sqs:SendMessage
                 Resource:
-                  - !GetAtt ETLDeadLetterQueue.Arn
-                  - !GetAtt PromptBuilderDeadLetterQueue.Arn
-                  - !GetAtt LLMBatchDeadLetterQueue.Arn
-                  - !GetAtt ReportSenderDeadLetterQueue.Arn
-                  - !GetAtt DynamoDBWriterDeadLetterQueue.Arn
-                  - !GetAtt SnapshotGeneratorDeadLetterQueue.Arn
-                  - !GetAtt DailyDigestDeadLetterQueue.Arn
                   - !GetAtt DashboardAPIDeadLetterQueue.Arn
+                  - !GetAtt URLCollectorDeadLetterQueue.Arn
+                  - !GetAtt PropertyProcessorDeadLetterQueue.Arn
+                  - !GetAtt PropertyAnalyzerDeadLetterQueue.Arn
+                  - !GetAtt FavoriteAnalysisQueue.Arn
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource:
                   - !GetAtt FavoriteAnalysisQueue.Arn
 
   # Simplified IAM Role for URL collection and property processing functions
@@ -213,7 +195,6 @@ Resources:
                   - !GetAtt URLCollectorDeadLetterQueue.Arn
                   - !GetAtt PropertyProcessorDeadLetterQueue.Arn
                   - !GetAtt PropertyAnalyzerDeadLetterQueue.Arn
-                  - !GetAtt DashboardAPIDeadLetterQueue.Arn
 
   # DynamoDB Table for Real Estate Analysis
   RealEstateAnalysisDB:
@@ -335,180 +316,6 @@ Resources:
             ProjectionType: ALL
 
   # Lambda Functions (using AWS prebuilt layers + our OpenAI layer)
-  ETLFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${AWS::StackName}-etl'
-      Runtime: python3.12
-      Handler: app.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/etl.zip
-        S3ObjectVersion: !Ref ETLCodeVersion
-      Timeout: 900
-      MemorySize: 2048
-      Layers:
-        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
-      DeadLetterConfig:
-        TargetArn: !GetAtt ETLDeadLetterQueue.Arn
-      Environment:
-        Variables:
-          OUTPUT_BUCKET: !Ref OutputBucket
-          DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
-          LEAN_MODE: !Ref LeanMode
-          LEAN_SCORING: '1'
-          LEAN_PROMPT: '1'
-          LEAN_SCHEMA_ENFORCE: '1'
-          MAX_CANDIDATES_PER_DAY: '120'
-
-  PromptBuilderFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${AWS::StackName}-prompt-builder'
-      Runtime: python3.12
-      Handler: app.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/prompt_builder.zip
-        S3ObjectVersion: !Ref PromptBuilderCodeVersion
-      Timeout: 900
-      MemorySize: 1024
-      Layers:
-        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
-        - !Ref OpenAILayer
-      DeadLetterConfig:
-        TargetArn: !GetAtt PromptBuilderDeadLetterQueue.Arn
-      Environment:
-        Variables:
-          OUTPUT_BUCKET: !Ref OutputBucket
-          DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
-          LEAN_MODE: !Ref LeanMode
-          LEAN_PROMPT: '1'
-          MAX_COMPARABLES: '8'
-
-  LLMBatchFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${AWS::StackName}-llm-batch'
-      Runtime: python3.12
-      Handler: app.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/llm_batch.zip
-        S3ObjectVersion: !Ref LLMBatchCodeVersion
-      Timeout: 900  # Maximum Lambda timeout (15 minutes)
-      MemorySize: 3008
-      Layers:
-        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
-        - !Ref OpenAILayer
-      DeadLetterConfig:
-        TargetArn: !GetAtt LLMBatchDeadLetterQueue.Arn
-      Environment:
-        Variables:
-          OUTPUT_BUCKET: !Ref OutputBucket
-          OPENAI_MODEL: o3  # Use 'gpt-4o' for consistent model across all functions
-          OPENAI_SECRET_NAME: ai-scraper/openai-api-key
-          LEAN_MODE: !Ref LeanMode
-          LEAN_SCHEMA_ENFORCE: '1'
-
-  ReportSenderFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${AWS::StackName}-report-sender'
-      Runtime: python3.12
-      Handler: app.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/report_sender.zip
-        S3ObjectVersion: !Ref ReportSenderCodeVersion
-      Timeout: 900
-      MemorySize: 1024
-      Layers:
-        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
-        - !Ref OpenAILayer
-      DeadLetterConfig:
-        TargetArn: !GetAtt ReportSenderDeadLetterQueue.Arn
-      Environment:
-        Variables:
-          OUTPUT_BUCKET: !Ref OutputBucket
-          EMAIL_FROM: !Ref EmailFrom
-          EMAIL_TO: !Ref EmailTo
-          LEAN_MODE: !Ref LeanMode
-
-  DynamoDBWriterFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${AWS::StackName}-dynamodb-writer'
-      Runtime: python3.12
-      Handler: app.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/dynamodb_writer.zip
-        S3ObjectVersion: !Ref DynamoDBWriterCodeVersion
-      Timeout: 300
-      MemorySize: 1024
-      Layers:
-        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
-      DeadLetterConfig:
-        TargetArn: !GetAtt DynamoDBWriterDeadLetterQueue.Arn
-      Environment:
-        Variables:
-          DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
-          LEAN_MODE: !Ref LeanMode
-
-  SnapshotGeneratorFunction:
-    Type: AWS::Lambda::Function
-    Condition: IsLeanModeEnabled
-    Properties:
-      FunctionName: !Sub '${AWS::StackName}-snapshot-generator'
-      Runtime: python3.12
-      Handler: app.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/snapshot_generator.zip
-        S3ObjectVersion: !Ref SnapshotGeneratorCodeVersion
-      Timeout: 900
-      MemorySize: 1024
-      Layers:
-        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
-      DeadLetterConfig:
-        TargetArn: !GetAtt SnapshotGeneratorDeadLetterQueue.Arn
-      Environment:
-        Variables:
-          OUTPUT_BUCKET: !Ref OutputBucket
-          LEAN_MODE: !Ref LeanMode
-
-  DailyDigestFunction:
-    Type: AWS::Lambda::Function
-    Condition: IsLeanModeEnabled
-    Properties:
-      FunctionName: !Sub '${AWS::StackName}-daily-digest'
-      Runtime: python3.12
-      Handler: app.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/daily_digest.zip
-        S3ObjectVersion: !Ref DailyDigestCodeVersion
-      Timeout: 900
-      MemorySize: 1024
-      Layers:
-        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
-      DeadLetterConfig:
-        TargetArn: !GetAtt DailyDigestDeadLetterQueue.Arn
-      Environment:
-        Variables:
-          OUTPUT_BUCKET: !Ref OutputBucket
-          EMAIL_FROM: !Ref EmailFrom
-          EMAIL_TO: !Ref EmailTo
-          LEAN_MODE: !Ref LeanMode
-
   # Dashboard API Function
   DashboardAPIFunction:
     Type: AWS::Lambda::Function
@@ -628,6 +435,7 @@ Resources:
           FAVORITES_TABLE: !Ref UserFavoritesTable
           PROPERTIES_TABLE: !Ref RealEstateAnalysisDB
           ANALYSIS_QUEUE_URL: !Ref FavoriteAnalysisQueue
+          OUTPUT_BUCKET: !Ref OutputBucket
 
   # Favorite Analyzer Lambda Function
   FavoriteAnalyzerFunction:
@@ -643,7 +451,6 @@ Resources:
         S3ObjectVersion: !Ref FavoriteAnalyzerCodeVersion
       Timeout: 900  # 15 minutes for analysis
       MemorySize: 1024
-      ReservedConcurrentExecutions: 5  # Limit concurrent executions
       Layers:
         - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
         - !Ref OpenAILayer
@@ -662,609 +469,7 @@ Resources:
       FunctionName: !GetAtt FavoriteAnalyzerFunction.Arn
       BatchSize: 1
 
-  # Step Functions
-  StepFunctionsExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: states.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: LambdaInvokePolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - lambda:InvokeFunction
-                Resource:
-                  - !GetAtt ETLFunction.Arn
-                  - !GetAtt PromptBuilderFunction.Arn
-                  - !GetAtt LLMBatchFunction.Arn
-                  - !GetAtt ReportSenderFunction.Arn
-                  - !GetAtt DynamoDBWriterFunction.Arn
-                  - !GetAtt URLCollectorFunction.Arn
-                  - !GetAtt PropertyProcessorFunction.Arn
-                  - !GetAtt PropertyAnalyzerFunction.Arn
-                  - !If 
-                    - IsLeanModeEnabled
-                    - !GetAtt SnapshotGeneratorFunction.Arn
-                    - !Ref AWS::NoValue
-                  - !If 
-                    - IsLeanModeEnabled
-                    - !GetAtt DailyDigestFunction.Arn
-                    - !Ref AWS::NoValue
-
-  AIAnalysisStateMachine:
-    Type: AWS::StepFunctions::StateMachine
-    Properties:
-      StateMachineName: !Sub '${AWS::StackName}-ai-analysis'
-      RoleArn: !GetAtt StepFunctionsExecutionRole.Arn
-      DefinitionSubstitutions:
-        URLCollectorFunctionArn: !GetAtt URLCollectorFunction.Arn
-        PropertyProcessorFunctionArn: !GetAtt PropertyProcessorFunction.Arn
-        PropertyAnalyzerFunctionArn: !GetAtt PropertyAnalyzerFunction.Arn
-        ETLFunctionArn: !GetAtt ETLFunction.Arn
-        PromptBuilderFunctionArn: !GetAtt PromptBuilderFunction.Arn
-        LLMBatchFunctionArn: !GetAtt LLMBatchFunction.Arn
-        DynamoDBWriterFunctionArn: !GetAtt DynamoDBWriterFunction.Arn
-        ReportSenderFunctionArn: !GetAtt ReportSenderFunction.Arn
-      DefinitionString: |
-        {
-          "Comment": "AI analysis workflow for real estate listings - URLCollector → PropertyProcessor → PropertyAnalyzer → ETL → PromptBuilder → LLMBatch → DynamoDBWriter → ReportSender",
-          "StartAt": "URLCollector",
-          "States": {
-              "URLCollector": {
-                  "Type": "Task",
-                  "Resource": "arn:aws:states:::lambda:invoke",
-                  "Parameters": {
-                      "FunctionName": "${URLCollectorFunctionArn}",
-                      "Payload": {
-                          "session_id.$": "$$.Execution.Name",
-                          "areas": "",
-                          "max_concurrent_areas": 5
-                      }
-                  },
-                  "ResultPath": "$.url_collector_result",
-                  "ResultSelector": {
-                      "new_urls_tracked.$": "$.Payload.new_urls_tracked",
-                      "existing_listings.$": "$.Payload.existing_listings",
-                      "successful_areas.$": "$.Payload.successful_areas"
-                  },
-                  "Retry": [
-                      {
-                          "ErrorEquals": [
-                              "States.TaskFailed",
-                              "States.ExecutionLimitExceeded",
-                              "States.Runtime"
-                          ],
-                          "IntervalSeconds": 30,
-                          "MaxAttempts": 3,
-                          "BackoffRate": 2
-                      }
-                  ],
-                  "Catch": [
-                      {
-                          "ErrorEquals": [
-                              "States.ALL"
-                          ],
-                          "Next": "URLCollectorFailed",
-                          "ResultPath": "$.error"
-                      }
-                  ],
-                  "Next": "CheckNewURLs"
-              },
-              "CheckNewURLs": {
-                  "Type": "Choice",
-                  "Choices": [
-                      {
-                          "Variable": "$.url_collector_result.new_urls_tracked",
-                          "NumericGreaterThan": 0,
-                          "Next": "PropertyProcessor"
-                      }
-                  ],
-                  "Default": "NoNewURLsFound"
-              },
-              "NoNewURLsFound": {
-                  "Type": "Succeed",
-                  "Comment": "No new URLs found, skipping property processing and AI analysis"
-              },
-              "PropertyProcessor": {
-                  "Type": "Task",
-                  "Resource": "arn:aws:states:::lambda:invoke",
-                  "Parameters": {
-                      "FunctionName": "${PropertyProcessorFunctionArn}",
-                      "Payload": {
-                          "session_id.$": "$$.Execution.Name",
-                          "max_properties": 0,
-                          "max_runtime_minutes": 14
-                      }
-                  },
-                  "ResultPath": "$.property_processor_result",
-                  "ResultSelector": {
-                      "successful_extractions.$": "$.Payload.successful_extractions",
-                      "failed_extractions.$": "$.Payload.failed_extractions",
-                      "urls_marked_processed.$": "$.Payload.urls_marked_processed"
-                  },
-                  "Retry": [
-                      {
-                          "ErrorEquals": [
-                              "States.TaskFailed",
-                              "States.ExecutionLimitExceeded",
-                              "States.Runtime"
-                          ],
-                          "IntervalSeconds": 30,
-                          "MaxAttempts": 3,
-                          "BackoffRate": 2
-                      }
-                  ],
-                  "Catch": [
-                      {
-                          "ErrorEquals": [
-                              "States.ALL"
-                          ],
-                          "Next": "PropertyProcessorFailed",
-                          "ResultPath": "$.error"
-                      }
-                  ],
-                  "Next": "CheckProcessedProperties"
-              },
-              "CheckProcessedProperties": {
-                  "Type": "Choice",
-                  "Choices": [
-                      {
-                          "Variable": "$.property_processor_result.successful_extractions",
-                          "NumericGreaterThan": 0,
-                          "Next": "PropertyAnalyzer"
-                      }
-                  ],
-                  "Default": "NoPropertiesProcessed"
-              },
-              "NoPropertiesProcessed": {
-                  "Type": "Succeed",
-                  "Comment": "No properties successfully processed, skipping AI analysis"
-              },
-              "PropertyAnalyzer": {
-                  "Type": "Task",
-                  "Resource": "arn:aws:states:::lambda:invoke",
-                  "Parameters": {
-                      "FunctionName": "${PropertyAnalyzerFunctionArn}",
-                      "Payload": {
-                          "session_id.$": "$$.Execution.Name",
-                          "days_back": 7,
-                          "analyze_all": false
-                      }
-                  },
-                  "ResultPath": "$.property_analyzer_result",
-                  "ResultSelector": {
-                      "analyzed.$": "$.Payload.analyzed",
-                      "errors.$": "$.Payload.errors",
-                      "duration_seconds.$": "$.Payload.duration_seconds"
-                  },
-                  "Retry": [
-                      {
-                          "ErrorEquals": [
-                              "States.TaskFailed",
-                              "States.ExecutionLimitExceeded",
-                              "States.Runtime"
-                          ],
-                          "IntervalSeconds": 30,
-                          "MaxAttempts": 3,
-                          "BackoffRate": 2
-                      }
-                  ],
-                  "Catch": [
-                      {
-                          "ErrorEquals": [
-                              "States.ALL"
-                          ],
-                          "Next": "PropertyAnalyzerFailed",
-                          "ResultPath": "$.error"
-                      }
-                  ],
-                  "Next": "ETL"
-              },
-              "ETL": {
-                  "Type": "Task",
-                  "Resource": "arn:aws:states:::lambda:invoke",
-                  "Parameters": {
-                      "FunctionName": "${ETLFunctionArn}",
-                      "Payload": {
-                          "date.$": "$.date",
-                          "execution_time.$": "$$.State.EnteredTime"
-                      }
-                  },
-                  "ResultPath": "$.etl_result",
-                  "ResultSelector": {
-                      "date.$": "$.Payload.date",
-                      "bucket.$": "$.Payload.bucket",
-                      "jsonl_key.$": "$.Payload.jsonl_key",
-                      "listings_count.$": "$.Payload.listings_count",
-                      "candidates.$": "$.Payload.candidates"
-                  },
-                  "Retry": [
-                      {
-                          "ErrorEquals": [
-                              "States.TaskFailed",
-                              "States.ExecutionLimitExceeded",
-                              "States.Runtime"
-                          ],
-                          "IntervalSeconds": 30,
-                          "MaxAttempts": 3,
-                          "BackoffRate": 2
-                      }
-                  ],
-                  "Catch": [
-                      {
-                          "ErrorEquals": [
-                              "States.ALL"
-                          ],
-                          "Next": "ETLFailed",
-                          "ResultPath": "$.error"
-                      }
-                  ],
-                  "Next": "PromptBuilder"
-              },
-              "PromptBuilder": {
-                  "Type": "Task",
-                  "Resource": "arn:aws:states:::lambda:invoke",
-                  "Parameters": {
-                      "FunctionName": "${PromptBuilderFunctionArn}",
-                      "Payload": {
-                          "date.$": "$.etl_result.date",
-                          "bucket.$": "$.etl_result.bucket",
-                          "jsonl_key.$": "$.etl_result.jsonl_key",
-                          "candidates.$": "$.etl_result.candidates"
-                      }
-                  },
-                  "ResultPath": "$.prompt_result",
-                  "ResultSelector": {
-                      "date.$": "$.Payload.date",
-                      "bucket.$": "$.Payload.bucket",
-                      "prompt_key.$": "$.Payload.prompt_key",
-                      "listings_count.$": "$.Payload.listings_count",
-                      "total_images.$": "$.Payload.total_images"
-                  },
-                  "Retry": [
-                      {
-                          "ErrorEquals": [
-                              "States.TaskFailed",
-                              "States.ExecutionLimitExceeded",
-                              "States.Runtime"
-                          ],
-                          "IntervalSeconds": 30,
-                          "MaxAttempts": 3,
-                          "BackoffRate": 2
-                      }
-                  ],
-                  "Catch": [
-                      {
-                          "ErrorEquals": [
-                              "States.ALL"
-                          ],
-                          "Next": "PromptBuilderFailed",
-                          "ResultPath": "$.error"
-                      }
-                  ],
-                  "Next": "LLMBatch"
-              },
-              "LLMBatch": {
-                  "Type": "Task",
-                  "Resource": "arn:aws:states:::lambda:invoke",
-                  "Parameters": {
-                      "FunctionName": "${LLMBatchFunctionArn}",
-                      "Payload": {
-                          "date.$": "$.prompt_result.date",
-                          "bucket.$": "$.prompt_result.bucket",
-                          "prompt_key.$": "$.prompt_result.prompt_key"
-                      }
-                  },
-                  "ResultPath": "$.llm_result",
-                  "ResultSelector": {
-                      "date.$": "$.Payload.date",
-                      "bucket.$": "$.Payload.bucket",
-                      "result_key.$": "$.Payload.result_key",
-                      "batch_id.$": "$.Payload.batch_id",
-                      "batch_result.$": "$.Payload.batch_result"
-                  },
-                  "TimeoutSeconds": 3600,
-                  "Retry": [
-                      {
-                          "ErrorEquals": [
-                              "States.TaskFailed",
-                              "States.ExecutionLimitExceeded"
-                          ],
-                          "IntervalSeconds": 60,
-                          "MaxAttempts": 2,
-                          "BackoffRate": 2
-                      },
-                      {
-                          "ErrorEquals": [
-                              "States.Runtime"
-                          ],
-                          "IntervalSeconds": 30,
-                          "MaxAttempts": 1,
-                          "BackoffRate": 1
-                      }
-                  ],
-                  "Catch": [
-                      {
-                          "ErrorEquals": [
-                              "States.ALL"
-                          ],
-                          "Next": "LLMBatchFailed",
-                          "ResultPath": "$.error"
-                      }
-                  ],
-                  "Next": "DynamoDBWriter"
-              },
-              "DynamoDBWriter": {
-                  "Type": "Task",
-                  "Resource": "arn:aws:states:::lambda:invoke",
-                  "Parameters": {
-                      "FunctionName": "${DynamoDBWriterFunctionArn}",
-                      "Payload": {
-                          "batch_result.$": "$.llm_result.batch_result"
-                      }
-                  },
-                  "ResultPath": "$.dynamodb_writer_result",
-                  "ResultSelector": {
-                      "statusCode.$": "$.Payload.statusCode",
-                      "processed_count.$": "$.Payload.body"
-                  },
-                  "Retry": [
-                      {
-                          "ErrorEquals": [
-                              "States.TaskFailed",
-                              "States.ExecutionLimitExceeded",
-                              "States.Runtime"
-                          ],
-                          "IntervalSeconds": 30,
-                          "MaxAttempts": 3,
-                          "BackoffRate": 2
-                      }
-                  ],
-                  "Catch": [
-                      {
-                          "ErrorEquals": [
-                              "States.ALL"
-                          ],
-                          "Next": "DynamoDBWriterFailed",
-                          "ResultPath": "$.error"
-                      }
-                  ],
-                  "Next": "ReportSender"
-              },
-              "ReportSender": {
-                  "Type": "Task",
-                  "Resource": "arn:aws:states:::lambda:invoke",
-                  "Parameters": {
-                      "FunctionName": "${ReportSenderFunctionArn}",
-                      "Payload": {
-                          "date.$": "$.llm_result.date",
-                          "bucket.$": "$.llm_result.bucket",
-                          "result_key.$": "$.llm_result.result_key",
-                          "batch_result.$": "$.llm_result.batch_result"
-                      }
-                  },
-                  "ResultPath": "$.report_result",
-                  "ResultSelector": {
-                      "date.$": "$.Payload.date",
-                      "bucket.$": "$.Payload.bucket",
-                      "report_key.$": "$.Payload.report_key",
-                      "top_picks_count.$": "$.Payload.top_picks_count",
-                      "email_sent.$": "$.Payload.email_sent"
-                  },
-                  "Retry": [
-                      {
-                          "ErrorEquals": [
-                              "States.TaskFailed",
-                              "States.ExecutionLimitExceeded",
-                              "States.Runtime"
-                          ],
-                          "IntervalSeconds": 30,
-                          "MaxAttempts": 3,
-                          "BackoffRate": 2
-                      }
-                  ],
-                  "Catch": [
-                      {
-                          "ErrorEquals": [
-                              "States.ALL"
-                          ],
-                          "Next": "ReportSenderFailed",
-                          "ResultPath": "$.error"
-                      }
-                  ],
-                  "Next": "Success"
-              },
-              "Success": {
-                  "Type": "Succeed",
-                  "Comment": "AI analysis workflow completed successfully"
-              },
-              "URLCollectorFailed": {
-                  "Type": "Fail",
-                  "Cause": "URL collector step failed",
-                  "Error": "URLCollectorError"
-              },
-              "PropertyProcessorFailed": {
-                  "Type": "Fail",
-                  "Cause": "Property processor step failed",
-                  "Error": "PropertyProcessorError"
-              },
-              "PropertyAnalyzerFailed": {
-                  "Type": "Fail",
-                  "Cause": "Property analyzer step failed",
-                  "Error": "PropertyAnalyzerError"
-              },
-              "ETLFailed": {
-                  "Type": "Fail",
-                  "Cause": "ETL step failed",
-                  "Error": "ETLError"
-              },
-              "PromptBuilderFailed": {
-                  "Type": "Fail",
-                  "Cause": "Prompt builder step failed",
-                  "Error": "PromptBuilderError"
-              },
-              "LLMBatchFailed": {
-                  "Type": "Fail",
-                  "Cause": "LLM batch processing step failed",
-                  "Error": "LLMBatchError"
-              },
-              "DynamoDBWriterFailed": {
-                  "Type": "Fail",
-                  "Cause": "DynamoDB writer step failed",
-                  "Error": "DynamoDBWriterError"
-              },
-              "ReportSenderFailed": {
-                  "Type": "Fail",
-                  "Cause": "Report sender step failed",
-                  "Error": "ReportSenderError"
-              }
-          }
-        }
-
-  # EventBridge rule for daily execution (optional)
-  DailyAnalysisRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub '${AWS::StackName}-daily-analysis'
-      Description: 'Trigger AI analysis daily at 18:00 UTC (03:00 JST)'
-      ScheduleExpression: 'cron(0 18 * * ? *)'
-      State: ENABLED
-      Targets:
-        - Arn: !Ref AIAnalysisStateMachine
-          Id: 'AIAnalysisTarget'
-          RoleArn: !GetAtt EventBridgeExecutionRole.Arn
-          Input: !Sub |
-            {
-              "date": "$$.State.EnteredTime"
-            }
-
-  # Daily snapshot generation rule (08:55 JST = 23:55 UTC)
-  DailySnapshotRule:
-    Type: AWS::Events::Rule
-    Condition: IsLeanModeEnabled
-    Properties:
-      Name: !Sub '${AWS::StackName}-daily-snapshot'
-      Description: 'Generate market snapshots daily at 08:55 JST (23:55 UTC)'
-      ScheduleExpression: 'cron(55 23 * * ? *)'
-      State: ENABLED
-      Targets:
-        - Arn: !GetAtt SnapshotGeneratorFunction.Arn
-          Id: 'SnapshotGeneratorTarget'
-          Input: !Sub |
-            {
-              "date": "$$.State.EnteredTime",
-              "lean_mode": true
-            }
-
-  # Daily digest generation rule (09:00 JST = 00:00 UTC next day)
-  DailyDigestRule:
-    Type: AWS::Events::Rule
-    Condition: IsLeanModeEnabled
-    Properties:
-      Name: !Sub '${AWS::StackName}-daily-digest'
-      Description: 'Send daily digest at 09:00 JST (00:00 UTC next day)'
-      ScheduleExpression: 'cron(0 0 * * ? *)'
-      State: ENABLED
-      Targets:
-        - Arn: !GetAtt DailyDigestFunction.Arn
-          Id: 'DailyDigestTarget'
-          Input: !Sub |
-            {
-              "date": "$$.State.EnteredTime", 
-              "lean_mode": true
-            }
-
-  # Lambda permissions for EventBridge
-  SnapshotGeneratorEventPermission:
-    Type: AWS::Lambda::Permission
-    Condition: IsLeanModeEnabled
-    Properties:
-      FunctionName: !Ref SnapshotGeneratorFunction
-      Action: lambda:InvokeFunction
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt DailySnapshotRule.Arn
-
-  DailyDigestEventPermission:
-    Type: AWS::Lambda::Permission
-    Condition: IsLeanModeEnabled
-    Properties:
-      FunctionName: !Ref DailyDigestFunction
-      Action: lambda:InvokeFunction
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt DailyDigestRule.Arn
-
-  # EventBridge execution role
-  EventBridgeExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: events.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: StepFunctionsExecutionPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - states:StartExecution
-                Resource: !Ref AIAnalysisStateMachine
-
   # Dead Letter Queues for Lambda functions
-  ETLDeadLetterQueue:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: !Sub '${AWS::StackName}-etl-dlq'
-      MessageRetentionPeriod: 1209600  # 14 days
-
-  PromptBuilderDeadLetterQueue:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: !Sub '${AWS::StackName}-prompt-builder-dlq'
-      MessageRetentionPeriod: 1209600  # 14 days
-
-  LLMBatchDeadLetterQueue:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: !Sub '${AWS::StackName}-llm-batch-dlq'
-      MessageRetentionPeriod: 1209600  # 14 days
-
-  ReportSenderDeadLetterQueue:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: !Sub '${AWS::StackName}-report-sender-dlq'
-      MessageRetentionPeriod: 1209600  # 14 days
-
-  DynamoDBWriterDeadLetterQueue:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: !Sub '${AWS::StackName}-dynamodb-writer-dlq'
-      MessageRetentionPeriod: 1209600  # 14 days
-
-  SnapshotGeneratorDeadLetterQueue:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: !Sub '${AWS::StackName}-snapshot-generator-dlq'
-      MessageRetentionPeriod: 1209600  # 14 days
-
-  DailyDigestDeadLetterQueue:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: !Sub '${AWS::StackName}-daily-digest-dlq'
-      MessageRetentionPeriod: 1209600  # 14 days
-
   DashboardAPIDeadLetterQueue:
     Type: AWS::SQS::Queue
     Properties:
@@ -1294,7 +499,7 @@ Resources:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: !Sub '${AWS::StackName}-favorite-analysis'
-      VisibilityTimeoutSeconds: 900
+      VisibilityTimeout: 900
       MessageRetentionPeriod: 1209600
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt FavoriteAnalysisDLQ.Arn
@@ -1306,19 +511,74 @@ Resources:
       QueueName: !Sub '${AWS::StackName}-favorite-analysis-dlq'
       MessageRetentionPeriod: 1209600  # 14 days
 
-Outputs:
-  StateMachineArn:
-    Description: 'ARN of the Step Functions state machine'
-    Value: !Ref AIAnalysisStateMachine
-    Export:
-      Name: !Sub '${AWS::StackName}-StateMachineArn'
-  
-  ETLFunctionArn:
-    Description: 'ARN of the ETL Lambda function'
-    Value: !GetAtt ETLFunction.Arn
-    Export:
-      Name: !Sub '${AWS::StackName}-ETLFunctionArn'
+  # HTTP API Gateway for Favorites
+  FavoritesHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${AWS::StackName}-favorites-api'
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowCredentials: false
+        AllowHeaders:
+          - Content-Type
+          - X-User-Id
+        AllowMethods:
+          - GET
+          - POST
+          - DELETE
+          - OPTIONS
+        AllowOrigins:
+          - '*'
 
+  # Lambda integration for Favorites API
+  FavoritesApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref FavoritesHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FavoritesAPIFunction.Arn}/invocations'
+      PayloadFormatVersion: '2.0'
+
+  # Routes for Favorites API
+  PostFavoritesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref FavoritesHttpApi
+      RouteKey: 'POST /favorites'
+      Target: !Sub 'integrations/${FavoritesApiIntegration}'
+
+  GetUserFavoritesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref FavoritesHttpApi
+      RouteKey: 'GET /favorites/{userId}'
+      Target: !Sub 'integrations/${FavoritesApiIntegration}'
+
+  DeleteFavoriteRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref FavoritesHttpApi
+      RouteKey: 'DELETE /favorites/{id}'
+      Target: !Sub 'integrations/${FavoritesApiIntegration}'
+
+  # API Gateway Stage
+  FavoritesApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref FavoritesHttpApi
+      StageName: 'prod'
+      AutoDeploy: true
+
+  # Lambda permission for API Gateway
+  FavoritesApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref FavoritesAPIFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${FavoritesHttpApi}/*/*'
+
+Outputs:
   OpenAILayerArn:
     Description: 'ARN of the OpenAI layer'
     Value: !Ref OpenAILayer
@@ -1336,26 +596,6 @@ Outputs:
     Value: !Ref RealEstateAnalysisDB
     Export:
       Name: !Sub '${AWS::StackName}-DynamoDBTableName'
-
-  DynamoDBWriterFunctionArn:
-    Description: 'ARN of the DynamoDB Writer Lambda function'
-    Value: !GetAtt DynamoDBWriterFunction.Arn
-    Export:
-      Name: !Sub '${AWS::StackName}-DynamoDBWriterFunctionArn'
-
-  SnapshotGeneratorFunctionArn:
-    Condition: IsLeanModeEnabled
-    Description: 'ARN of the Snapshot Generator Lambda function'
-    Value: !GetAtt SnapshotGeneratorFunction.Arn
-    Export:
-      Name: !Sub '${AWS::StackName}-SnapshotGeneratorFunctionArn'
-
-  DailyDigestFunctionArn:
-    Condition: IsLeanModeEnabled
-    Description: 'ARN of the Daily Digest Lambda function'
-    Value: !GetAtt DailyDigestFunction.Arn
-    Export:
-      Name: !Sub '${AWS::StackName}-DailyDigestFunctionArn'
 
   DashboardAPIFunctionArn:
     Description: 'ARN of the Dashboard API Lambda function'
@@ -1386,6 +626,24 @@ Outputs:
     Value: !GetAtt PropertyAnalyzerFunction.Arn
     Export:
       Name: !Sub '${AWS::StackName}-PropertyAnalyzerFunctionArn'
+
+  FavoritesAPIFunctionArn:
+    Description: 'ARN of the Favorites API Lambda function'
+    Value: !GetAtt FavoritesAPIFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-FavoritesAPIFunctionArn'
+
+  FavoriteAnalyzerFunctionArn:
+    Description: 'ARN of the Favorite Analyzer Lambda function'
+    Value: !GetAtt FavoriteAnalyzerFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-FavoriteAnalyzerFunctionArn'
+
+  FavoritesHttpApiEndpoint:
+    Description: 'Endpoint URL for the Favorites HTTP API'
+    Value: !Sub 'https://${FavoritesHttpApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+    Export:
+      Name: !Sub '${AWS::StackName}-FavoritesHttpApiEndpoint'
   
   URLTrackingDBArn:
     Description: 'ARN of the URL Tracking DynamoDB table'

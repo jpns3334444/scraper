@@ -125,13 +125,6 @@ fi
 status "Packaging Lambda functions..."
 
 # Initialize version variables
-ETL_VERSION="latest"
-PROMPT_BUILDER_VERSION="latest"
-LLM_BATCH_VERSION="latest"
-REPORT_SENDER_VERSION="latest"
-DYNAMODB_WRITER_VERSION="latest"
-SNAPSHOT_GENERATOR_VERSION="latest"
-DAILY_DIGEST_VERSION="latest"
 URL_COLLECTOR_VERSION="latest"
 PROPERTY_PROCESSOR_VERSION="latest"
 PROPERTY_ANALYZER_VERSION="latest"
@@ -139,7 +132,7 @@ DASHBOARD_API_VERSION="latest"
 FAVORITES_API_VERSION="latest"
 FAVORITE_ANALYZER_VERSION="latest"
 
-for func in etl prompt_builder llm_batch report_sender dynamodb_writer snapshot_generator daily_digest url_collector property_processor property_analyzer dashboard_api favorites_api favorite_analyzer; do
+for func in url_collector property_processor property_analyzer dashboard_api favorites_api favorite_analyzer; do
     [ -d "lambda/$func" ] || error "Function directory lambda/$func not found"
     
     info "Packaging $func..."
@@ -243,27 +236,6 @@ print('Created $func.zip with shared modules')
     
     # Store version in appropriate variable
     case $func in
-        etl)
-            ETL_VERSION="$OBJECT_VERSION"
-            ;;
-        prompt_builder)
-            PROMPT_BUILDER_VERSION="$OBJECT_VERSION"
-            ;;
-        llm_batch)
-            LLM_BATCH_VERSION="$OBJECT_VERSION"
-            ;;
-        report_sender)
-            REPORT_SENDER_VERSION="$OBJECT_VERSION"
-            ;;
-        dynamodb_writer)
-            DYNAMODB_WRITER_VERSION="$OBJECT_VERSION"
-            ;;
-        snapshot_generator)
-            SNAPSHOT_GENERATOR_VERSION="$OBJECT_VERSION"
-            ;;
-        daily_digest)
-            DAILY_DIGEST_VERSION="$OBJECT_VERSION"
-            ;;
         url_collector)
             URL_COLLECTOR_VERSION="$OBJECT_VERSION"
             ;;
@@ -345,13 +317,6 @@ aws cloudformation deploy \
       OutputBucket=tokyo-real-estate-ai-data \
       EmailFrom=jpns3334444@gmail.com \
       EmailTo=jpns3334444@gmail.com \
-      ETLCodeVersion=$ETL_VERSION \
-      PromptBuilderCodeVersion=$PROMPT_BUILDER_VERSION \
-      LLMBatchCodeVersion=$LLM_BATCH_VERSION \
-      ReportSenderCodeVersion=$REPORT_SENDER_VERSION \
-      DynamoDBWriterCodeVersion=$DYNAMODB_WRITER_VERSION \
-      SnapshotGeneratorCodeVersion=$SNAPSHOT_GENERATOR_VERSION \
-      DailyDigestCodeVersion=$DAILY_DIGEST_VERSION \
       URLCollectorCodeVersion=$URL_COLLECTOR_VERSION \
       PropertyProcessorCodeVersion=$PROPERTY_PROCESSOR_VERSION \
       PropertyAnalyzerCodeVersion=$PROPERTY_ANALYZER_VERSION \
@@ -364,18 +329,6 @@ status "✅ CloudFormation stack deployed"
 
 # Get stack outputs
 info "Retrieving stack information..."
-STATE_MACHINE_ARN=$(aws cloudformation describe-stacks \
-    --stack-name $STACK_NAME \
-    --region $REGION \
-    --query 'Stacks[0].Outputs[?OutputKey==`StateMachineArn`].OutputValue' \
-    --output text 2>/dev/null)
-
-ETL_FUNCTION_ARN=$(aws cloudformation describe-stacks \
-    --stack-name $STACK_NAME \
-    --region $REGION \
-    --query 'Stacks[0].Outputs[?OutputKey==`ETLFunctionArn`].OutputValue' \
-    --output text 2>/dev/null)
-
 DASHBOARD_API_FUNCTION_ARN=$(aws cloudformation describe-stacks \
     --stack-name $STACK_NAME \
     --region $REGION \
@@ -400,6 +353,12 @@ PROPERTY_ANALYZER_FUNCTION_ARN=$(aws cloudformation describe-stacks \
     --query 'Stacks[0].Outputs[?OutputKey==`PropertyAnalyzerFunctionArn`].OutputValue' \
     --output text 2>/dev/null)
 
+FAVORITES_API_FUNCTION_ARN=$(aws cloudformation describe-stacks \
+    --stack-name $STACK_NAME \
+    --region $REGION \
+    --query 'Stacks[0].Outputs[?OutputKey==`FavoritesAPIFunctionArn`].OutputValue' \
+    --output text 2>/dev/null)
+
 # Success summary
 echo ""
 status "🎉 Deployment completed successfully!"
@@ -411,17 +370,13 @@ echo "  Bucket: $BUCKET_NAME"
 echo "  OpenAI Layer: v$CURRENT_OPENAI_VERSION"
 echo ""
 echo "🔧 Stack Resources:"
-echo "  State Machine: $STATE_MACHINE_ARN"
-echo "  ETL Function: $ETL_FUNCTION_ARN"
 echo "  URL Collector Function: $URL_COLLECTOR_FUNCTION_ARN"
 echo "  Property Processor Function: $PROPERTY_PROCESSOR_FUNCTION_ARN"
 echo "  Property Analyzer Function: $PROPERTY_ANALYZER_FUNCTION_ARN"
 echo "  Dashboard API Function: $DASHBOARD_API_FUNCTION_ARN"
+echo "  Favorites API Function: $FAVORITES_API_FUNCTION_ARN"
 echo ""
 echo "🧪 Test Commands:"
-echo "  # Test ETL function"
-echo "  aws lambda invoke --function-name $STACK_NAME-etl --payload '{\"date\":\"$(date +%Y-%m-%d)\"}' test-response.json --region $REGION"
-echo ""
 echo "  # Test Dashboard API function"
 echo "  aws lambda invoke --function-name $STACK_NAME-dashboard-api --payload '{}' dashboard-api-response.json --region $REGION"
 echo ""
@@ -434,14 +389,14 @@ echo ""
 echo "  # Test Property Analyzer function"
 echo "  aws lambda invoke --function-name $STACK_NAME-property-analyzer --payload '{\"days_back\":7}' property-analyzer-response.json --region $REGION"
 echo ""
+echo "  # Test Favorites API function"
+echo "  aws lambda invoke --function-name $STACK_NAME-favorites-api --payload '{\"userId\":\"test\"}' favorites-api-response.json --region $REGION"
+echo ""
 echo "  # Run scraper with trigger script"
 echo "  cd $SCRIPT_DIR && ./trigger-lambda.sh --function property-processor --max-properties 5 --sync"
 echo ""
 echo "  # Run property analyzer with trigger script"
 echo "  cd $SCRIPT_DIR && ./trigger-lambda.sh --function property-analyzer --sync"
-echo ""
-echo "  # Run full AI workflow"
-echo "  aws stepfunctions start-execution --state-machine-arn $STATE_MACHINE_ARN --input '{\"date\":\"$(date +%Y-%m-%d)\"}' --region $REGION"
 echo ""
 echo "💡 Next Deployments:"
 echo "  - Layer will be cached (fast deployments)"

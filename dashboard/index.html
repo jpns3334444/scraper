@@ -125,7 +125,7 @@
             z-index: 10;
             font-weight: 700;
             font-size: 13px;
-            text-align: left;
+            text-align: center;
             text-transform: uppercase;
             letter-spacing: 0.1em;
             color: #333333;
@@ -146,7 +146,7 @@
         
         .column-header {
             display: flex;
-            justify-content: space-between;
+            justify-content: center;
             align-items: center;
             padding: 14px 16px;
             cursor: pointer;
@@ -224,6 +224,15 @@
             background: #f3f0f8 !important;
             transform: translateY(-1px) scale(1.002);
             box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+        }
+        
+        /* Clickable row */
+        tbody tr {
+            cursor: pointer;
+        }
+        
+        tbody tr.no-link {
+            cursor: default;
         }
         
         .property-image {
@@ -599,6 +608,177 @@
             background: #e2e8f0;
             color: #4a5568;
         }
+        
+        /* Style for the new favorites list */
+        .fav-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        
+        .fav-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #eee;
+            padding: 14px 8px;
+            font-size: 14px;
+        }
+        
+        .fav-status {
+            font-size: 12px;
+            font-style: italic;
+            color: #666;
+        }
+        
+        .fav-status.completed {
+            color: #22543d;
+            cursor: pointer;
+            text-decoration: underline;
+        }
+        
+        .fav-status.completed:hover {
+            color: #276749;
+        }
+
+        
+        /* Column Filter Dropdown */
+        .filter-dropdown {
+            position: relative;
+            display: inline-block;
+            margin-left: 8px;
+        }
+        
+        .filter-btn {
+            background: none;
+            border: none;
+            font-size: 12px;
+            color: #999999;
+            cursor: pointer;
+            padding: 2px 6px;
+            transition: all 120ms ease;
+        }
+        
+        .filter-btn:hover {
+            color: #695b8d;
+            background: rgba(105, 91, 141, 0.1);
+            border-radius: 4px;
+        }
+        
+        .filter-btn.active {
+            color: #695b8d;
+            font-weight: 700;
+        }
+        
+        .filter-dropdown-content {
+            display: none;
+            position: absolute;
+            background: #ffffff;
+            min-width: 160px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            z-index: 30;
+            border-radius: 4px;
+            border: 1px solid #e0e0e0;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            margin-top: 4px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .filter-dropdown-content.show {
+            display: block;
+        }
+        
+        .filter-dropdown-content label {
+            display: block;
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 120ms ease;
+        }
+        
+        .filter-dropdown-content label:hover {
+            background: #f3f0f8;
+        }
+        
+        .filter-dropdown-content input[type="checkbox"] {
+            margin-right: 8px;
+        }
+        
+        .filter-dropdown-content .filter-actions {
+            padding: 8px 12px;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            gap: 8px;
+        }
+        
+        .filter-dropdown-content button {
+            padding: 4px 8px;
+            font-size: 12px;
+            border: 1px solid #cccccc;
+            background: #ffffff;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 120ms ease;
+        }
+        
+        .filter-dropdown-content button:hover {
+            background: #f3f0f8;
+        }
+        
+        /* Pagination at bottom */
+        .pagination-container {
+            margin-top: 20px;
+            padding: 20px;
+            background: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        /* Pagination */
+        .pagination {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        
+        .pagination button {
+            padding: 6px 12px;
+            border: 1px solid #cccccc;
+            background: #ffffff;
+            border-radius: 4px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 120ms ease;
+            font-family: 'Noto Sans JP', sans-serif;
+        }
+        
+        .pagination button:hover:not(:disabled) {
+            background: #f3f0f8;
+            border-color: #695b8d;
+        }
+        
+        .pagination button.active {
+            background: #695b8d;
+            color: #ffffff;
+            border-color: #695b8d;
+        }
+        
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .pagination .page-info {
+            font-size: 13px;
+            color: #666666;
+            margin: 0 8px;
+        }
 
         /* Mobile Responsiveness */
         @media (max-width: 768px) {
@@ -673,14 +853,12 @@
 
         <!-- Favorites Tab -->
         <div id="favorites-tab" class="tab-pane" style="display: none;">
-            <div class="favorites-grid" id="favoritesGrid">
-                <!-- Favorites will be loaded here -->
-            </div>
+            <ul class="fav-list" id="favoritesList"></ul>
         </div>
         
         <div class="loading" id="loading">
             <div class="skeleton-row">
-                <div class="skeleton-cell link skeleton"></div>
+                <div class="skeleton-cell numeric skeleton" style="width: 40px;"></div>
                 <div class="skeleton-cell price skeleton"></div>
                 <div class="skeleton-cell price skeleton"></div>
                 <div class="skeleton-cell price skeleton"></div>
@@ -696,7 +874,7 @@
                 <div class="skeleton-cell verdict skeleton"></div>
             </div>
             <div class="skeleton-row">
-                <div class="skeleton-cell link skeleton"></div>
+                <div class="skeleton-cell numeric skeleton" style="width: 40px;"></div>
                 <div class="skeleton-cell price skeleton"></div>
                 <div class="skeleton-cell price skeleton"></div>
                 <div class="skeleton-cell price skeleton"></div>
@@ -712,7 +890,7 @@
                 <div class="skeleton-cell verdict skeleton"></div>
             </div>
             <div class="skeleton-row">
-                <div class="skeleton-cell link skeleton"></div>
+                <div class="skeleton-cell numeric skeleton" style="width: 40px;"></div>
                 <div class="skeleton-cell price skeleton"></div>
                 <div class="skeleton-cell price skeleton"></div>
                 <div class="skeleton-cell price skeleton"></div>
@@ -734,7 +912,6 @@
                 <thead>
                     <tr>
                         <th>♥</th>
-                        <th>View Listing</th>
                         <th class="sortable" onclick="sortTable('price')">
                             <div class="column-header">
                                 Price
@@ -757,6 +934,16 @@
                             <div class="column-header">
                                 Ward
                                 <span class="sort-arrows" id="sort-ward">▲▼</span>
+                                <div class="filter-dropdown">
+                                    <button class="filter-btn" onclick="toggleFilterDropdown(event, 'ward')" id="filter-btn-ward">▼</button>
+                                    <div class="filter-dropdown-content" id="filter-dropdown-ward">
+                                        <div id="ward-filter-options"></div>
+                                        <div class="filter-actions">
+                                            <button onclick="applyColumnFilter('ward')">Apply</button>
+                                            <button onclick="clearColumnFilter('ward')">Clear</button>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </th>
                         <th class="sortable" onclick="sortTable('ward_discount_pct')">
@@ -796,14 +983,46 @@
                                 <span class="sort-arrows" id="sort-size_sqm">▲▼</span>
                             </div>
                         </th>
-                        <th>Primary Light</th>
-                        <th>Verdict</th>
+                        <th>
+                            <div class="column-header">
+                                Primary Light
+                                <div class="filter-dropdown">
+                                    <button class="filter-btn" onclick="toggleFilterDropdown(event, 'primary_light')" id="filter-btn-primary_light">▼</button>
+                                    <div class="filter-dropdown-content" id="filter-dropdown-primary_light">
+                                        <div id="primary_light-filter-options"></div>
+                                        <div class="filter-actions">
+                                            <button onclick="applyColumnFilter('primary_light')">Apply</button>
+                                            <button onclick="clearColumnFilter('primary_light')">Clear</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </th>
+                        <th>
+                            <div class="column-header">
+                                Verdict
+                                <div class="filter-dropdown">
+                                    <button class="filter-btn" onclick="toggleFilterDropdown(event, 'verdict')" id="filter-btn-verdict">▼</button>
+                                    <div class="filter-dropdown-content" id="filter-dropdown-verdict">
+                                        <div id="verdict-filter-options"></div>
+                                        <div class="filter-actions">
+                                            <button onclick="applyColumnFilter('verdict')">Apply</button>
+                                            <button onclick="clearColumnFilter('verdict')">Clear</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </th>
                     </tr>
                 </thead>
                 <tbody id="propertiesTable">
                 </tbody>
             </table>
-            <div id="scrollSentinel"></div>
+        </div>
+        
+        <!-- Pagination at bottom -->
+        <div class="pagination-container" id="paginationContainer" style="display: none;">
+            <div class="pagination" id="pagination"></div>
         </div>
     </div>
     
@@ -816,62 +1035,107 @@
         let cursor = null;          // null = first page; false = no more pages
         let loading = false;
         let allProperties = [];
+        let filteredProperties = [];
         let currentSort = { field: 'price', direction: 'desc' };
+        let currentPage = 1;
+        let itemsPerPage = 100;
+        let favorites = new Set();
+        let currentFilters = {
+            ward: [],
+            primary_light: [],
+            verdict: []
+        };
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
-            loadNext();   // initial page
-            setupInfiniteScroll();
-            updateSortArrows(); // show initial sort state
-            updateFavoritesCount(); // update favorites count
+            loadFavoritesFromStorage();
+            loadAllProperties();
+            updateSortArrows();
+            updateFavoritesCount();
         });
         
-        function setupInfiniteScroll() {
-            window.addEventListener('scroll', () => {
-                if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 200) {
-                    loadNext();
+        // Load favorites from localStorage
+        function loadFavoritesFromStorage() {
+            const storedFavorites = localStorage.getItem('favorites');
+            if (storedFavorites) {
+                try {
+                    favorites = new Set(JSON.parse(storedFavorites));
+                } catch (e) {
+                    favorites = new Set();
                 }
-            });
+            }
         }
         
-        async function loadNext() {
-            if (loading || cursor === false) return;
+        // Save favorites to localStorage
+        function saveFavoritesToStorage() {
+            localStorage.setItem('favorites', JSON.stringify([...favorites]));
+        }
+        
+        // Sync favorites with backend
+        async function syncFavorites() {
+            try {
+                const response = await fetch(`${API_URL}/favorites/${getUserId()}`, {
+                    headers: { 'X-User-Id': getUserId() }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.favorites && data.favorites.length > 0) {
+                        // Get property IDs from backend favorites
+                        const backendFavorites = new Set(data.favorites.map(f => f.property_id));
+                        
+                        // Merge with localStorage favorites
+                        favorites = new Set([...favorites, ...backendFavorites]);
+                        saveFavoritesToStorage();
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to sync favorites:', error);
+            }
+        }
+        
+        async function loadAllProperties() {
             loading = true;
+            let tempCursor = null;
+            let tempProperties = [];
             
             try {
-                const url = API_URL + '/properties?limit=' + limit +
-                           (cursor ? '&cursor=' + encodeURIComponent(JSON.stringify(cursor)) : '');
-                const res = await fetch(url, {
-                    headers: {
-                        'X-User-Id': getUserId()
-                    }
-                });
-                if (!res.ok) { 
-                    loading = false; 
-                    return; 
-                }
-                
-                const { items, cursor: next } = await res.json();
-                
-                // First load: show the table and hide loading
-                if (allProperties.length === 0) {
-                    document.getElementById('loading').style.display = 'none';
-                    document.getElementById('tableContainer').style.display = 'block';
-                }
-                
-                // Add items to our properties array
-                allProperties = allProperties.concat(items || []);
-                
-                // Append rows to table
-                appendRows(items);
-                
-                // Update cursor
-                cursor = next ?? false;
-                
-                // Update results count
-                document.getElementById('resultsCount').textContent = 
-                    `Showing ${allProperties.length} properties${cursor === false ? ' (all loaded)' : '...'}`;
+                // Load all properties
+                while (tempCursor !== false) {
+                    const url = API_URL + '/properties?limit=' + limit +
+                               (tempCursor ? '&cursor=' + encodeURIComponent(JSON.stringify(tempCursor)) : '');
+                    const res = await fetch(url, {
+                        headers: {
+                            'X-User-Id': getUserId()
+                        }
+                    });
+                    if (!res.ok) break;
                     
+                    const { items, cursor: next } = await res.json();
+                    tempProperties = tempProperties.concat(items || []);
+                    tempCursor = next ?? false;
+                }
+                
+                // Sync favorites with backend
+                await syncFavorites();
+                
+                // Update favorite status based on synced favorites
+                tempProperties.forEach(property => {
+                    property.is_favorited = favorites.has(property.property_id);
+                });
+                
+                allProperties = tempProperties;
+                filteredProperties = [...allProperties];
+                
+                // Hide loading and show table
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('tableContainer').style.display = 'block';
+                
+                // Apply initial sort and render
+                applySort();
+                renderCurrentPage();
+                populateColumnFilters();
+                
             } catch (error) {
                 console.error('Error:', error);
                 document.getElementById('resultsCount').textContent = 'Connection error';
@@ -880,10 +1144,42 @@
             }
         }
         
-        // Append rows to the table
-        function appendRows(items) {
+        // Render current page
+        function renderCurrentPage() {
             const tbody = document.getElementById('propertiesTable');
-            tbody.insertAdjacentHTML('beforeend', items.map(renderRow).join(''));
+            const start = (currentPage - 1) * itemsPerPage;
+            const end = start + itemsPerPage;
+            const pageItems = filteredProperties.slice(start, end);
+            
+            tbody.innerHTML = pageItems.map(renderRow).join('');
+            
+            updateResultsInfo();
+            renderPagination();
+            
+            // Show/hide pagination container
+            const paginationContainer = document.getElementById('paginationContainer');
+            if (filteredProperties.length > 0) {
+                paginationContainer.style.display = 'block';
+            } else {
+                paginationContainer.style.display = 'none';
+            }
+        }
+        
+        // Update results info
+        function updateResultsInfo() {
+            const start = (currentPage - 1) * itemsPerPage + 1;
+            const end = Math.min(currentPage * itemsPerPage, filteredProperties.length);
+            const filterText = hasActiveFilters() ? ' (filtered)' : '';
+            
+            document.getElementById('resultsCount').textContent = 
+                `Showing ${start}-${end} of ${filteredProperties.length} properties${filterText}`;
+        }
+        
+        // Check if filters are active
+        function hasActiveFilters() {
+            return currentFilters.ward.length > 0 || 
+                   currentFilters.primary_light.length > 0 || 
+                   currentFilters.verdict.length > 0;
         }
         
         function renderRow(property) {
@@ -907,22 +1203,16 @@
             const primaryLight = property.primary_light || '<span class="no-data">—</span>';
             const verdict = property.verdict || property.recommendation || 'pass';
             const hasLink = property.listing_url && property.listing_url.trim();
-            const isFavorited = property.is_favorited || false;
+            const isFavorited = favorites.has(property.property_id);
             
             return `
-                <tr>
+                <tr ${hasLink ? `onclick="openListing(event, '${property.listing_url}')"` : 'class="no-link"'}>
                     <td style="text-align: center;">
                         <button class="heart-btn ${isFavorited ? 'favorited' : ''}" 
                                 onclick="toggleFavorite('${property.property_id}', this)"
                                 data-property-id="${property.property_id}">
                             ${isFavorited ? '♥' : '♡'}
                         </button>
-                    </td>
-                    <td style="text-align: center;">
-                        ${hasLink ? 
-                            `<a href="${property.listing_url}" target="_blank" class="link-button">View</a>` :
-                            '<span class="no-data">—</span>'
-                        }
                     </td>
                     <td class="price">${price}</td>
                     <td class="price">${pricePerSqm}</td>
@@ -953,10 +1243,16 @@
                 currentSort.direction = 'desc';
             }
             
-            // Sort the loaded properties
-            allProperties.sort((a, b) => {
-                let valA = a[field];
-                let valB = b[field];
+            applySort();
+            currentPage = 1;
+            renderCurrentPage();
+        }
+        
+        // Apply sort to filtered properties
+        function applySort() {
+            filteredProperties.sort((a, b) => {
+                let valA = a[currentSort.field];
+                let valB = b[currentSort.field];
                 
                 // Handle null/undefined values
                 if (valA == null && valB == null) return 0;
@@ -974,11 +1270,6 @@
                 return currentSort.direction === 'asc' ? result : -result;
             });
             
-            // Re-render the table
-            const tbody = document.getElementById('propertiesTable');
-            tbody.innerHTML = allProperties.map(renderRow).join('');
-            
-            // Update sort arrows
             updateSortArrows();
         }
         
@@ -1034,12 +1325,34 @@
             event.target.classList.add('active');
             
             if (tabName === 'favorites') {
+                document.getElementById('tableContainer').style.display = 'none';
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('paginationContainer').style.display = 'none';
                 loadFavorites();
+            } else {
+                document.getElementById('tableContainer').style.display = 'block';
+                document.getElementById('paginationContainer').style.display = 'block';
             }
         }
+        
+        // Helper for instant favorites counter update
+        function deltaFavorites(delta) {
+            const el = document.getElementById('favoritesCount');
+            el.textContent = Math.max(0, (parseInt(el.textContent) || 0) + delta);
+        }
 
+        // Open listing in new tab
+        function openListing(event, url) {
+            // Don't open if clicking on buttons or other interactive elements
+            if (event.target.tagName === 'BUTTON' || event.target.closest('button')) {
+                return;
+            }
+            window.open(url, '_blank');
+        }
+        
         // Toggle favorite
         async function toggleFavorite(propertyId, button) {
+            event.stopPropagation(); // Prevent row click
             button.disabled = true;
             const isFavorited = button.classList.contains('favorited');
             
@@ -1051,10 +1364,18 @@
                     });
                     button.classList.remove('favorited');
                     button.textContent = '♡';
+                    favorites.delete(propertyId);
+                    saveFavoritesToStorage();
+                    deltaFavorites(-1);
                     
                     // Update property in allProperties array
                     const property = allProperties.find(p => p.property_id === propertyId);
                     if (property) property.is_favorited = false;
+                    
+                    // If on favorites tab, reload the list
+                    if (document.getElementById('favorites-tab').classList.contains('active')) {
+                        loadFavorites();
+                    }
                 } else {
                     await fetch(`${API_URL}/favorites`, {
                         method: 'POST',
@@ -1066,12 +1387,15 @@
                     });
                     button.classList.add('favorited');
                     button.textContent = '♥';
+                    favorites.add(propertyId);
+                    saveFavoritesToStorage();
+                    deltaFavorites(+1);
                     
                     // Update property in allProperties array
                     const property = allProperties.find(p => p.property_id === propertyId);
                     if (property) property.is_favorited = true;
                 }
-                updateFavoritesCount();
+                // Update count is handled by deltaFavorites
             } catch (error) {
                 console.error('Failed to toggle favorite:', error);
             } finally {
@@ -1080,61 +1404,52 @@
         }
 
         // Load favorites view
-        async function loadFavorites() {
-            const userId = getUserId();
-            try {
-                const response = await fetch(`${API_URL}/favorites/${userId}`, {
-                    headers: { 'X-User-Id': userId }
-                });
-                
-                const data = await response.json();
-                const grid = document.getElementById('favoritesGrid');
-                
-                if (!data.favorites || data.favorites.length === 0) {
-                    grid.innerHTML = '<div style="text-align: center; color: #999; padding: 40px;">No favorites yet. Add some properties to your favorites!</div>';
-                    return;
-                }
-                
-                grid.innerHTML = data.favorites.map(fav => `
-                    <div class="favorite-card" onclick="viewProperty('${fav.property_id}')">
-                        <div class="favorite-image">
-                            ${fav.property_summary.image_url ? 
-                                `<img src="${fav.property_summary.image_url}" alt="Property">` :
-                                '<div class="no-image">No Image</div>'
-                            }
-                        </div>
-                        <div class="favorite-details">
-                            <div class="favorite-price">¥${(fav.property_summary.price * 10000).toLocaleString()}</div>
-                            <div class="favorite-location">${fav.property_summary.ward} - ${fav.property_summary.station}</div>
-                            <div class="favorite-size">${fav.property_summary.size_sqm}m²</div>
-                            <div class="status status-${fav.analysis_status}">
-                                ${fav.analysis_status === 'completed' ? 'Analysis Ready' : 
-                                  fav.analysis_status === 'processing' ? 'Analyzing...' : 
-                                  fav.analysis_status === 'failed' ? 'Analysis Failed' : 'Pending Analysis'}
-                            </div>
-                        </div>
-                    </div>
-                `).join('');
-            } catch (error) {
-                console.error('Failed to load favorites:', error);
-                const grid = document.getElementById('favoritesGrid');
-                grid.innerHTML = '<div style="text-align: center; color: #999; padding: 40px;">Failed to load favorites.</div>';
+        function loadFavorites() {
+            const list = document.getElementById('favoritesList');
+            
+            // Get favorited properties from the full list
+            const favoritedProperties = allProperties.filter(p => favorites.has(p.property_id));
+            
+            if (favoritedProperties.length === 0) {
+                list.innerHTML = '<li style="padding:20px; color:#999;">No favorites yet.</li>';
+                return;
             }
+            
+            // Sort favorited properties by price descending
+            favoritedProperties.sort((a, b) => (b.price || 0) - (a.price || 0));
+            
+            list.innerHTML = favoritedProperties.map(property => {
+                const price = property.price ? `¥${(property.price * 10000).toLocaleString()}` : '—';
+                const size = property.size_sqm || property.total_sqm ? 
+                    `${Math.round(property.size_sqm || property.total_sqm)}m²` : '—';
+                const ward = property.ward || '—';
+                const wardDiscount = property.ward_discount_pct;
+                const wardDiscountText = wardDiscount !== undefined && wardDiscount !== null ? 
+                    (wardDiscount > 0 ? `+${wardDiscount.toFixed(1)}%` : `${wardDiscount.toFixed(1)}%`) : '';
+                const station = property.closest_station || 'No station';
+                const verdict = property.verdict || property.recommendation || 'pass';
+                const url = property.listing_url || '#';
+                
+                return `
+                    <li class="fav-item">
+                        <span>
+                            <a href="${url}" target="_blank" style="color: #333; text-decoration: none;">
+                                ${price}
+                            </a>
+                            — ${size}
+                            — ${ward}${wardDiscountText ? ` (${wardDiscountText})` : ''}
+                            — ${station}
+                        </span>
+                        <span class="verdict verdict-${verdict}" style="font-size: 11px;">
+                            ${verdict.toUpperCase()}
+                        </span>
+                    </li>`;
+            }).join('');
         }
 
-        // Update favorites count
-        async function updateFavoritesCount() {
-            const userId = getUserId();
-            try {
-                const response = await fetch(`${API_URL}/favorites/${userId}`, {
-                    headers: { 'X-User-Id': userId }
-                });
-                const data = await response.json();
-                const count = data.favorites ? data.favorites.length : 0;
-                document.getElementById('favoritesCount').textContent = count;
-            } catch (error) {
-                console.error('Failed to update favorites count:', error);
-            }
+        // Update favorites count from localStorage
+        function updateFavoritesCount() {
+            document.getElementById('favoritesCount').textContent = favorites.size;
         }
 
         // View property details (placeholder)
@@ -1146,6 +1461,185 @@
             } else {
                 alert('Property details not available');
             }
+        }
+        
+        // View analysis (placeholder for future implementation)
+        function viewAnalysis(propertyId) {
+            // This would navigate to the analysis page once implemented
+            alert('Analysis view coming soon!');
+        }
+        
+        // Render pagination
+        function renderPagination() {
+            const totalPages = Math.ceil(filteredProperties.length / itemsPerPage);
+            const paginationDiv = document.getElementById('pagination');
+            
+            if (totalPages <= 1) {
+                paginationDiv.innerHTML = '';
+                return;
+            }
+            
+            let html = '';
+            
+            // Previous button
+            html += `<button onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>Previous</button>`;
+            
+            // Page numbers
+            const maxVisiblePages = 7;
+            let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+            let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+            
+            if (endPage - startPage < maxVisiblePages - 1) {
+                startPage = Math.max(1, endPage - maxVisiblePages + 1);
+            }
+            
+            if (startPage > 1) {
+                html += `<button onclick="goToPage(1)">1</button>`;
+                if (startPage > 2) html += '<span class="page-info">...</span>';
+            }
+            
+            for (let i = startPage; i <= endPage; i++) {
+                html += `<button onclick="goToPage(${i})" class="${i === currentPage ? 'active' : ''}">${i}</button>`;
+            }
+            
+            if (endPage < totalPages) {
+                if (endPage < totalPages - 1) html += '<span class="page-info">...</span>';
+                html += `<button onclick="goToPage(${totalPages})">${totalPages}</button>`;
+            }
+            
+            // Next button
+            html += `<button onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>Next</button>`;
+            
+            paginationDiv.innerHTML = html;
+        }
+        
+        // Go to page
+        function goToPage(page) {
+            const totalPages = Math.ceil(filteredProperties.length / itemsPerPage);
+            if (page < 1 || page > totalPages) return;
+            
+            currentPage = page;
+            renderCurrentPage();
+            
+            // Scroll to top
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+        
+        // Toggle filter dropdown
+        function toggleFilterDropdown(event, column) {
+            event.stopPropagation();
+            const dropdown = document.getElementById(`filter-dropdown-${column}`);
+            const btn = document.getElementById(`filter-btn-${column}`);
+            
+            // Close all other dropdowns
+            document.querySelectorAll('.filter-dropdown-content').forEach(d => {
+                if (d !== dropdown) d.classList.remove('show');
+            });
+            
+            dropdown.classList.toggle('show');
+        }
+        
+        // Close dropdowns when clicking outside
+        document.addEventListener('click', function(event) {
+            if (!event.target.matches('.filter-btn') && !event.target.closest('.filter-dropdown-content')) {
+                document.querySelectorAll('.filter-dropdown-content').forEach(dropdown => {
+                    dropdown.classList.remove('show');
+                });
+            }
+        });
+        
+        // Apply column filter
+        function applyColumnFilter(column) {
+            const checkboxes = document.querySelectorAll(`#${column}-filter-options input[type="checkbox"]:checked`);
+            currentFilters[column] = Array.from(checkboxes).map(cb => cb.value);
+            
+            applyAllFilters();
+            
+            // Update filter button appearance
+            const btn = document.getElementById(`filter-btn-${column}`);
+            if (currentFilters[column].length > 0) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+            
+            // Close dropdown
+            document.getElementById(`filter-dropdown-${column}`).classList.remove('show');
+        }
+        
+        // Clear column filter
+        function clearColumnFilter(column) {
+            currentFilters[column] = [];
+            const checkboxes = document.querySelectorAll(`#${column}-filter-options input[type="checkbox"]`);
+            checkboxes.forEach(cb => cb.checked = false);
+            
+            applyAllFilters();
+            
+            // Update filter button appearance
+            document.getElementById(`filter-btn-${column}`).classList.remove('active');
+            
+            // Close dropdown
+            document.getElementById(`filter-dropdown-${column}`).classList.remove('show');
+        }
+        
+        // Apply all filters
+        function applyAllFilters() {
+            filteredProperties = allProperties.filter(property => {
+                // Ward filter
+                if (currentFilters.ward.length > 0 && !currentFilters.ward.includes(property.ward)) {
+                    return false;
+                }
+                
+                // Primary light filter
+                if (currentFilters.primary_light.length > 0 && !currentFilters.primary_light.includes(property.primary_light)) {
+                    return false;
+                }
+                
+                // Verdict filter
+                if (currentFilters.verdict.length > 0) {
+                    const propertyVerdict = property.verdict || property.recommendation || 'pass';
+                    if (!currentFilters.verdict.includes(propertyVerdict.toLowerCase())) {
+                        return false;
+                    }
+                }
+                
+                return true;
+            });
+            
+            // Reset to first page and re-sort
+            currentPage = 1;
+            applySort();
+            renderCurrentPage();
+        }
+        
+        // Populate column filters
+        function populateColumnFilters() {
+            // Ward filter
+            const wards = [...new Set(allProperties.map(p => p.ward).filter(Boolean))].sort();
+            const wardOptions = document.getElementById('ward-filter-options');
+            wardOptions.innerHTML = wards.map(ward => `
+                <label>
+                    <input type="checkbox" value="${ward}"> ${ward}
+                </label>
+            `).join('');
+            
+            // Primary light filter
+            const lights = [...new Set(allProperties.map(p => p.primary_light).filter(Boolean))].sort();
+            const lightOptions = document.getElementById('primary_light-filter-options');
+            lightOptions.innerHTML = lights.map(light => `
+                <label>
+                    <input type="checkbox" value="${light}"> ${light}
+                </label>
+            `).join('');
+            
+            // Verdict filter
+            const verdicts = [...new Set(allProperties.map(p => (p.verdict || p.recommendation || 'pass').toLowerCase()))].sort();
+            const verdictOptions = document.getElementById('verdict-filter-options');
+            verdictOptions.innerHTML = verdicts.map(verdict => `
+                <label>
+                    <input type="checkbox" value="${verdict}"> ${verdict.toUpperCase()}
+                </label>
+            `).join('');
         }
         
     </script>
