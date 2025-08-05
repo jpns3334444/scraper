@@ -89,6 +89,7 @@ aws cloudformation deploy \
         DynamoDBTableName=$DYNAMODB_TABLE \
         FavoritesTableName=$FAVORITES_TABLE_NAME \
         FavoritesApiLambdaArn=$FAVORITES_API_ARN \
+        AIStackName=$AI_STACK_NAME \
     --no-fail-on-empty-changeset
 
 if [ $? -eq 0 ]; then

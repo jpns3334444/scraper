@@ -16,20 +16,23 @@ def validate_email(email):
 def validate_password(password):
     return len(password) >= 8
 
+# CORS headers matching dashboard API pattern
+CORS_HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-User-Id,X-User-Email',
+    'Access-Control-Allow-Methods': 'POST,OPTIONS'
+}
+
 def lambda_handler(event, context):
-    headers = {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS'
-    }
+    # Debug logging
+    print(f"Received event: {json.dumps(event)}")
     
     try:
-        # Handle OPTIONS request for CORS
-        if event.get('requestContext', {}).get('http', {}).get('method') == 'OPTIONS':
+        # Handle OPTIONS request for CORS (REST API format)
+        if event.get('httpMethod') == 'OPTIONS':
             return {
                 'statusCode': 200,
-                'headers': headers,
+                'headers': CORS_HEADERS,
                 'body': ''
             }
         
@@ -42,7 +45,7 @@ def lambda_handler(event, context):
         if not email or not password:
             return {
                 'statusCode': 400,
-                'headers': headers,
+                'headers': CORS_HEADERS,
                 'body': json.dumps({
                     'success': False,
                     'error': 'Email and password are required'
@@ -52,7 +55,7 @@ def lambda_handler(event, context):
         if not validate_email(email):
             return {
                 'statusCode': 400,
-                'headers': headers,
+                'headers': CORS_HEADERS,
                 'body': json.dumps({
                     'success': False,
                     'error': 'Invalid email format'
@@ -62,7 +65,7 @@ def lambda_handler(event, context):
         if not validate_password(password):
             return {
                 'statusCode': 400,
-                'headers': headers,
+                'headers': CORS_HEADERS,
                 'body': json.dumps({
                     'success': False,
                     'error': 'Password must be at least 8 characters long'
@@ -74,7 +77,7 @@ def lambda_handler(event, context):
         if 'Item' in existing_user:
             return {
                 'statusCode': 409,
-                'headers': headers,
+                'headers': CORS_HEADERS,
                 'body': json.dumps({
                     'success': False,
                     'error': 'Email already registered'
@@ -101,7 +104,7 @@ def lambda_handler(event, context):
         
         return {
             'statusCode': 201,
-            'headers': headers,
+            'headers': CORS_HEADERS,
             'body': json.dumps({
                 'success': True,
                 'email': email,
@@ -113,7 +116,7 @@ def lambda_handler(event, context):
         print(f"Error in register_user: {str(e)}")
         return {
             'statusCode': 500,
-            'headers': headers,
+            'headers': CORS_HEADERS,
             'body': json.dumps({
                 'success': False,
                 'error': 'Internal server error'

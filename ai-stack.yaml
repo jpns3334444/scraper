@@ -72,6 +72,7 @@ Resources:
       Content:
         S3Bucket: !Ref DeploymentBucket
         S3Key: layers/bcrypt-layer.zip
+        S3ObjectVersion: !Ref BcryptLayerObjectVersion
 
   # IAM Role for Lambda functions
   LambdaExecutionRole:
@@ -138,8 +139,8 @@ Resources:
                 Resource: 
                   - !GetAtt RealEstateAnalysisDB.Arn
                   - !Sub '${RealEstateAnalysisDB.Arn}/index/*'
-                  - !GetAtt UserFavoritesTable.Arn
-                  - !Sub '${UserFavoritesTable.Arn}/index/*'
+                  - !GetAtt UserPreferencesTable.Arn
+                  - !Sub '${UserPreferencesTable.Arn}/index/*'
                   - !GetAtt UsersTable.Arn
         - PolicyName: SQSAccess
           PolicyDocument:
@@ -315,37 +316,47 @@ Resources:
         - AttributeName: email
           KeyType: HASH
 
-  # DynamoDB Table for User Favorites
-  UserFavoritesTable:
+  # DynamoDB Table for User Preferences (Favorites and Hidden)
+  UserPreferencesTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub '${AWS::StackName}-user-favorites'
+      TableName: !Sub '${AWS::StackName}-user-preferences'
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: favorite_id
+        - AttributeName: preference_id
           AttributeType: S
         - AttributeName: user_id
           AttributeType: S
-        - AttributeName: favorited_at
+        - AttributeName: created_at
           AttributeType: S
         - AttributeName: property_id
           AttributeType: S
+        - AttributeName: preference_type
+          AttributeType: S
       KeySchema:
-        - AttributeName: favorite_id
+        - AttributeName: preference_id
           KeyType: HASH
       GlobalSecondaryIndexes:
-        - IndexName: user-favorites-index
+        - IndexName: user-preferences-index
           KeySchema:
             - AttributeName: user_id
               KeyType: HASH
-            - AttributeName: favorited_at
+            - AttributeName: created_at
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
-        - IndexName: property-favorites-index
+        - IndexName: property-preferences-index
           KeySchema:
             - AttributeName: property_id
               KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: user-type-index
+          KeySchema:
+            - AttributeName: user_id
+              KeyType: HASH
+            - AttributeName: preference_type
+              KeyType: RANGE
           Projection:
             ProjectionType: ALL
 
@@ -371,7 +382,7 @@ Resources:
       Environment:
         Variables:
           DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
-          FAVORITES_TABLE: !Ref UserFavoritesTable
+          PREFERENCES_TABLE: !Ref UserPreferencesTable
 
   # URL Collector Lambda Function
   URLCollectorFunction:
@@ -466,7 +477,7 @@ Resources:
         - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
       Environment:
         Variables:
-          FAVORITES_TABLE: !Ref UserFavoritesTable
+          PREFERENCES_TABLE: !Ref UserPreferencesTable
           PROPERTIES_TABLE: !Ref RealEstateAnalysisDB
           ANALYSIS_QUEUE_URL: !Ref FavoriteAnalysisQueue
           OUTPUT_BUCKET: !Ref OutputBucket
@@ -530,7 +541,7 @@ Resources:
         - !Ref OpenAILayer
       Environment:
         Variables:
-          FAVORITES_TABLE: !Ref UserFavoritesTable
+          PREFERENCES_TABLE: !Ref UserPreferencesTable
           PROPERTIES_TABLE: !Ref RealEstateAnalysisDB
           DATA_BUCKET: !Ref OutputBucket
           OPENAI_SECRET_NAME: ai-scraper/openai-api-key
@@ -585,104 +596,510 @@ Resources:
       QueueName: !Sub '${AWS::StackName}-favorite-analysis-dlq'
       MessageRetentionPeriod: 1209600  # 14 days
 
-  # HTTP API Gateway for Favorites
-  FavoritesHttpApi:
-    Type: AWS::ApiGatewayV2::Api
+  # Unified REST API Gateway for all endpoints
+  UnifiedRestApi:
+    Type: AWS::ApiGateway::RestApi
     Properties:
-      Name: !Sub '${AWS::StackName}-favorites-api'
-      ProtocolType: HTTP
-      CorsConfiguration:
-        AllowCredentials: false
-        AllowHeaders:
-          - Content-Type
-          - X-User-Id
-        AllowMethods:
-          - GET
-          - POST
-          - DELETE
-          - OPTIONS
-        AllowOrigins:
-          - '*'
+      Name: !Sub '${AWS::StackName}-api'
+      Description: 'Unified REST API for Real Estate Application'
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
 
-  # Lambda integration for Favorites API
-  FavoritesApiIntegration:
-    Type: AWS::ApiGatewayV2::Integration
+  # REST API Deployment
+  UnifiedApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - PropertiesMethod
+      - PropertiesOptionsMethod
+      - FavoritesPostMethod
+      - FavoritesOptionsMethod
+      - FavoritesGetMethod
+      - FavoritesUserOptionsMethod
+      - FavoritesDeleteMethod
+      - FavoritesDeleteOptionsMethod
+      - HiddenPostMethod
+      - HiddenOptionsMethod
+      - HiddenGetMethod
+      - HiddenUserOptionsMethod
+      - HiddenDeleteMethod
+      - HiddenDeleteOptionsMethod
+      - AuthRegisterMethod
+      - AuthRegisterOptionsMethod
+      - AuthLoginMethod
+      - AuthLoginOptionsMethod
     Properties:
-      ApiId: !Ref FavoritesHttpApi
-      IntegrationType: AWS_PROXY
-      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FavoritesAPIFunction.Arn}/invocations'
-      PayloadFormatVersion: '2.0'
+      RestApiId: !Ref UnifiedRestApi
+      Description: 'Unified API Deployment'
 
-  # Routes for Favorites API
-  PostFavoritesRoute:
-    Type: AWS::ApiGatewayV2::Route
+  # REST API Stage
+  UnifiedApiStage:
+    Type: AWS::ApiGateway::Stage
     Properties:
-      ApiId: !Ref FavoritesHttpApi
-      RouteKey: 'POST /favorites'
-      Target: !Sub 'integrations/${FavoritesApiIntegration}'
-
-  GetUserFavoritesRoute:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref FavoritesHttpApi
-      RouteKey: 'GET /favorites/{userId}'
-      Target: !Sub 'integrations/${FavoritesApiIntegration}'
-
-  DeleteFavoriteRoute:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref FavoritesHttpApi
-      RouteKey: 'DELETE /favorites/{id}'
-      Target: !Sub 'integrations/${FavoritesApiIntegration}'
-
-  # Routes for Authentication API
-  RegisterRoute:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref FavoritesHttpApi
-      RouteKey: 'POST /auth/register'
-      Target: !Sub 'integrations/${AuthApiIntegration}'
-
-  LoginRoute:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref FavoritesHttpApi
-      RouteKey: 'POST /auth/login'
-      Target: !Sub 'integrations/${LoginApiIntegration}'
-
-  # Lambda integrations for Auth API
-  AuthApiIntegration:
-    Type: AWS::ApiGatewayV2::Integration
-    Properties:
-      ApiId: !Ref FavoritesHttpApi
-      IntegrationType: AWS_PROXY
-      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RegisterUserFunction.Arn}/invocations'
-      PayloadFormatVersion: '2.0'
-
-  LoginApiIntegration:
-    Type: AWS::ApiGatewayV2::Integration
-    Properties:
-      ApiId: !Ref FavoritesHttpApi
-      IntegrationType: AWS_PROXY
-      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LoginUserFunction.Arn}/invocations'
-      PayloadFormatVersion: '2.0'
-
-  # API Gateway Stage
-  FavoritesApiStage:
-    Type: AWS::ApiGatewayV2::Stage
-    Properties:
-      ApiId: !Ref FavoritesHttpApi
+      RestApiId: !Ref UnifiedRestApi
+      DeploymentId: !Ref UnifiedApiDeployment
       StageName: 'prod'
-      AutoDeploy: true
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          ThrottlingBurstLimit: 100
+          ThrottlingRateLimit: 50
 
-  # Lambda permissions for API Gateway
+  # Gateway Responses for CORS on errors
+  GatewayResponse4xx:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResponseType: DEFAULT_4XX
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-User-Id,X-User-Email'"
+        gatewayresponse.header.Access-Control-Allow-Methods: "'GET,POST,DELETE,OPTIONS'"
+
+  GatewayResponse5xx:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResponseType: DEFAULT_5XX
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-User-Id,X-User-Email'"
+        gatewayresponse.header.Access-Control-Allow-Methods: "'GET,POST,DELETE,OPTIONS'"
+
+  # /properties resource
+  PropertiesResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ParentId: !GetAtt UnifiedRestApi.RootResourceId
+      PathPart: 'properties'
+
+  PropertiesMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResourceId: !Ref PropertiesResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DashboardAPIFunction.Arn}/invocations'
+
+  PropertiesOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResourceId: !Ref PropertiesResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-User-Id,X-User-Email'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # /favorites resource
+  FavoritesResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ParentId: !GetAtt UnifiedRestApi.RootResourceId
+      PathPart: 'favorites'
+
+  FavoritesPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResourceId: !Ref FavoritesResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FavoritesAPIFunction.Arn}/invocations'
+
+  FavoritesOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResourceId: !Ref FavoritesResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-User-Id,X-User-Email'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # /favorites/user/{userId} resource
+  FavoritesUserResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ParentId: !Ref FavoritesResource
+      PathPart: 'user'
+
+  FavoritesUserIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ParentId: !Ref FavoritesUserResource
+      PathPart: '{userId}'
+
+  FavoritesGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResourceId: !Ref FavoritesUserIdResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FavoritesAPIFunction.Arn}/invocations'
+
+  FavoritesUserOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResourceId: !Ref FavoritesUserIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-User-Id,X-User-Email'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # /favorites/{id} resource for DELETE
+  FavoritesIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ParentId: !Ref FavoritesResource
+      PathPart: '{id}'
+
+  FavoritesDeleteMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResourceId: !Ref FavoritesIdResource
+      HttpMethod: DELETE
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FavoritesAPIFunction.Arn}/invocations'
+
+  FavoritesDeleteOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResourceId: !Ref FavoritesIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-User-Id,X-User-Email'"
+              method.response.header.Access-Control-Allow-Methods: "'DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # /hidden resource
+  HiddenResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ParentId: !GetAtt UnifiedRestApi.RootResourceId
+      PathPart: 'hidden'
+
+  HiddenPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResourceId: !Ref HiddenResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FavoritesAPIFunction.Arn}/invocations'
+
+  HiddenOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResourceId: !Ref HiddenResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-User-Id,X-User-Email'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # /hidden/user/{userId} resource
+  HiddenUserResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ParentId: !Ref HiddenResource
+      PathPart: 'user'
+
+  HiddenUserIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ParentId: !Ref HiddenUserResource
+      PathPart: '{userId}'
+
+  HiddenGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResourceId: !Ref HiddenUserIdResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FavoritesAPIFunction.Arn}/invocations'
+
+  HiddenUserOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResourceId: !Ref HiddenUserIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-User-Id,X-User-Email'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # /hidden/{id} resource for DELETE
+  HiddenIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ParentId: !Ref HiddenResource
+      PathPart: '{id}'
+
+  HiddenDeleteMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResourceId: !Ref HiddenIdResource
+      HttpMethod: DELETE
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FavoritesAPIFunction.Arn}/invocations'
+
+  HiddenDeleteOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResourceId: !Ref HiddenIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-User-Id,X-User-Email'"
+              method.response.header.Access-Control-Allow-Methods: "'DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # /auth resource
+  AuthResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ParentId: !GetAtt UnifiedRestApi.RootResourceId
+      PathPart: 'auth'
+
+  # /auth/register resource
+  AuthRegisterResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ParentId: !Ref AuthResource
+      PathPart: 'register'
+
+  AuthRegisterMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResourceId: !Ref AuthRegisterResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RegisterUserFunction.Arn}/invocations'
+
+  AuthRegisterOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResourceId: !Ref AuthRegisterResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-User-Id,X-User-Email'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # /auth/login resource
+  AuthLoginResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ParentId: !Ref AuthResource
+      PathPart: 'login'
+
+  AuthLoginMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResourceId: !Ref AuthLoginResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LoginUserFunction.Arn}/invocations'
+
+  AuthLoginOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UnifiedRestApi
+      ResourceId: !Ref AuthLoginResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-User-Id,X-User-Email'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # Lambda permissions for Unified REST API Gateway
+  DashboardApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DashboardAPIFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${UnifiedRestApi}/*/*'
+
   RegisterApiInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref RegisterUserFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${FavoritesHttpApi}/*/*'
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${UnifiedRestApi}/*/*'
 
   LoginApiInvokePermission:
     Type: AWS::Lambda::Permission
@@ -690,7 +1107,7 @@ Resources:
       FunctionName: !Ref LoginUserFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${FavoritesHttpApi}/*/*'
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${UnifiedRestApi}/*/*'
 
   FavoritesApiInvokePermission:
     Type: AWS::Lambda::Permission
@@ -698,7 +1115,7 @@ Resources:
       FunctionName: !Ref FavoritesAPIFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${FavoritesHttpApi}/*/*'
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${UnifiedRestApi}/*/*'
 
 Outputs:
   OpenAILayerArn:
@@ -761,11 +1178,17 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}-FavoriteAnalyzerFunctionArn'
 
-  FavoritesHttpApiEndpoint:
-    Description: 'Endpoint URL for the Favorites HTTP API'
-    Value: !Sub 'https://${FavoritesHttpApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+  UnifiedRestApiEndpoint:
+    Description: 'Endpoint URL for the Unified REST API'
+    Value: !Sub 'https://${UnifiedRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
     Export:
-      Name: !Sub '${AWS::StackName}-FavoritesHttpApiEndpoint'
+      Name: !Sub '${AWS::StackName}-UnifiedRestApiEndpoint'
+
+  UnifiedRestApiId:
+    Description: 'ID of the Unified REST API'
+    Value: !Ref UnifiedRestApi
+    Export:
+      Name: !Sub '${AWS::StackName}-UnifiedRestApiId'
   
   URLTrackingDBArn:
     Description: 'ARN of the URL Tracking DynamoDB table'
@@ -778,3 +1201,15 @@ Outputs:
     Value: !Ref URLTrackingDB
     Export:
       Name: !Sub '${AWS::StackName}-URLTrackingDBName'
+
+  RegisterUserFunctionArn:
+    Description: 'ARN of the Register User Lambda function'
+    Value: !GetAtt RegisterUserFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-RegisterUserFunctionArn'
+
+  LoginUserFunctionArn:
+    Description: 'ARN of the Login User Lambda function'
+    Value: !GetAtt LoginUserFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LoginUserFunctionArn'

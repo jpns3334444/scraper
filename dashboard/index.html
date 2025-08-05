@@ -1219,6 +1219,7 @@
     <script>
         // Configuration
         const API_URL = 'https://nbgnatp0pd.execute-api.ap-northeast-1.amazonaws.com/prod';
+        const FAVORITES_API_URL = 'https://4qjxa4sny4.execute-api.ap-northeast-1.amazonaws.com/prod';
         const limit = 500;
         
         // State
@@ -1267,7 +1268,7 @@
             
             try {
                 const endpoint = isLogin ? '/auth/login' : '/auth/register';
-                const response = await fetch(API_URL + endpoint, {
+                const response = await fetch(FAVORITES_API_URL + endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ email, password })
@@ -1353,7 +1354,7 @@
             if (!currentUser) return;
             
             try {
-                const response = await fetch(`${API_URL}/favorites/${currentUser.email}`, {
+                const response = await fetch(`${FAVORITES_API_URL}/favorites/${currentUser.email}`, {
                     headers: { 
                         'X-User-Email': currentUser.email,
                         'Authorization': `Bearer ${currentUser.token}`
@@ -1703,7 +1704,7 @@
             
             try {
                 if (isFavorited) {
-                    await fetch(`${API_URL}/favorites/${currentUser.email}_${propertyId}`, {
+                    await fetch(`${FAVORITES_API_URL}/favorites/${propertyId}`, {
                         method: 'DELETE',
                         headers: { 
                             'X-User-Email': currentUser.email,
@@ -1724,7 +1725,7 @@
                         loadFavorites();
                     }
                 } else {
-                    await fetch(`${API_URL}/favorites`, {
+                    await fetch(`${FAVORITES_API_URL}/favorites`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',

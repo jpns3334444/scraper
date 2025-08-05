@@ -1,0 +1,13 @@
+{
+  "requestContext": {
+    "http": {
+      "method": "POST"
+    }
+  },
+  "rawPath": "/favorites",
+  "headers": {
+    "x-user-email": "test@example.com",
+    "content-type": "application/json"
+  },
+  "body": "{\"property_id\":\"test123\"}"
+}

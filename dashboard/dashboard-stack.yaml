@@ -26,13 +26,10 @@ Parameters:
     Type: String
     Description: "ARN of the Favorites API Lambda function"
     
-  RegisterUserLambdaArn:
+  AIStackName:
     Type: String
-    Description: "ARN of the Register User Lambda function"
-    
-  LoginUserLambdaArn:
-    Type: String
-    Description: "ARN of the Login User Lambda function"
+    Default: "tokyo-real-estate-ai"
+    Description: "Name of the AI stack to import resources from"
 
 Conditions:
   CreateBucketName: !Equals [!Ref S3BucketName, ""]
@@ -233,19 +230,6 @@ Resources:
       Name: !Sub "${StackNamePrefix}-api"
       Description: "API for Tokyo Real Estate Dashboard"
       ProtocolType: "HTTP"
-      CorsConfiguration:
-        AllowOrigins:
-          - "*"
-        AllowMethods:
-          - GET
-          - POST
-          - DELETE
-          - OPTIONS
-        AllowHeaders:
-          - "*"
-          - X-User-Email
-          - Authorization
-        MaxAge: 86400
 
   # API Gateway Stage
   PropertiesApiStage:
@@ -358,7 +342,7 @@ Resources:
     Properties:
       ApiId: !Ref PropertiesApi
       IntegrationType: "AWS_PROXY"
-      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RegisterUserLambdaArn}/invocations"
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AIStackName}-register-user/invocations"
       PayloadFormatVersion: "2.0"
       TimeoutInMillis: 30000
 
@@ -367,7 +351,7 @@ Resources:
     Properties:
       ApiId: !Ref PropertiesApi
       IntegrationType: "AWS_PROXY"
-      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LoginUserLambdaArn}/invocations"
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AIStackName}-login-user/invocations"
       PayloadFormatVersion: "2.0"
       TimeoutInMillis: 30000
 
@@ -379,6 +363,13 @@ Resources:
       RouteKey: "POST /auth/register"
       Target: !Sub "integrations/${RegisterApiIntegration}"
 
+  RegisterOptionsRoute:
+    Type: "AWS::ApiGatewayV2::Route"
+    Properties:
+      ApiId: !Ref PropertiesApi
+      RouteKey: "OPTIONS /auth/register"
+      Target: !Sub "integrations/${RegisterApiIntegration}"
+
   LoginRoute:
     Type: "AWS::ApiGatewayV2::Route"
     Properties:
@@ -386,11 +377,18 @@ Resources:
       RouteKey: "POST /auth/login"
       Target: !Sub "integrations/${LoginApiIntegration}"
 
+  LoginOptionsRoute:
+    Type: "AWS::ApiGatewayV2::Route"
+    Properties:
+      ApiId: !Ref PropertiesApi
+      RouteKey: "OPTIONS /auth/login"
+      Target: !Sub "integrations/${LoginApiIntegration}"
+
   # Lambda Permissions for Auth APIs
   RegisterApiInvokePermission:
     Type: "AWS::Lambda::Permission"
     Properties:
-      FunctionName: !Ref RegisterUserLambdaArn
+      FunctionName: !Sub "${AIStackName}-register-user"
       Action: "lambda:InvokeFunction"
       Principal: "apigateway.amazonaws.com"
       SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PropertiesApi}/*/*"
@@ -398,7 +396,7 @@ Resources:
   LoginApiInvokePermission:
     Type: "AWS::Lambda::Permission"
     Properties:
-      FunctionName: !Ref LoginUserLambdaArn
+      FunctionName: !Sub "${AIStackName}-login-user"
       Action: "lambda:InvokeFunction"
       Principal: "apigateway.amazonaws.com"
       SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PropertiesApi}/*/*"

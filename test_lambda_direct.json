@@ -1,0 +1,11 @@
+{
+  "requestContext": {
+    "http": {
+      "method": "GET"
+    }
+  },
+  "rawPath": "/favorites/test@example.com",
+  "headers": {
+    "x-user-email": "test@example.com"
+  }
+}
