@@ -13,6 +13,7 @@ properties_table = dynamodb.Table(os.environ['PROPERTIES_TABLE'])
 queue_url = os.environ['ANALYSIS_QUEUE_URL']
 output_bucket = os.environ.get('OUTPUT_BUCKET', 'tokyo-real-estate-ai-data')
 
+# EXACT same CORS headers as dashboard API
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-User-Id,X-User-Email',
@@ -30,67 +31,79 @@ def decimal_to_float(obj):
     return obj
 
 def lambda_handler(event, context):
-    # Handle OPTIONS request for CORS (REST API format)
-    if event.get('httpMethod') == 'OPTIONS':
-        return {
-            'statusCode': 200,
-            'headers': CORS_HEADERS,
-            'body': ''
-        }
-    
-    # Use REST API event structure
-    method = event.get('httpMethod')
-    path = event.get('path')
-    
-    # Extract user email from header (authenticated user) - handle both cases
-    headers = event.get('headers', {})
-    user_email = headers.get('x-user-email') or headers.get('X-User-Email') or 'anonymous'
-    # For backward compatibility, use email as user_id
-    user_id = user_email
-    
-    if method == 'POST' and path == '/favorites':
-        return add_preference(event, user_id, 'favorite')
-    elif method == 'POST' and path == '/hidden':
-        return add_preference(event, user_id, 'hidden')
-    elif method == 'DELETE' and path.startswith('/favorites/'):
-        return remove_preference(event, user_id, 'favorite')
-    elif method == 'DELETE' and path.startswith('/hidden/'):
-        return remove_preference(event, user_id, 'hidden')
-    elif method == 'GET' and '/favorites/' in path:
-        # Extract userId from path parameters (REST API format)
-        path_params = event.get('pathParameters', {})
-        if path_params and 'userId' in path_params:
-            return get_user_preferences(path_params['userId'], 'favorite')
-        elif path_params and 'id' in path_params and '/analysis' in path:
-            return get_analysis(event, user_id)
-    elif method == 'GET' and '/hidden/' in path:
-        # Extract userId from path parameters (REST API format)
-        path_params = event.get('pathParameters', {})
-        if path_params and 'userId' in path_params:
-            return get_user_preferences(path_params['userId'], 'hidden')
-    
-    # Fallback to path parsing for compatibility
-    if method == 'GET' and path.count('/') == 2:  # /favorites/{userId} or /hidden/{userId}
-        path_parts = path.split('/')
-        if len(path_parts) == 3 and path_parts[1] == 'favorites':
-            return get_user_preferences(path_parts[2], 'favorite')
-        elif len(path_parts) == 3 and path_parts[1] == 'hidden':
-            return get_user_preferences(path_parts[2], 'hidden')
-    
-    return {
-        'statusCode': 404,
-        'headers': CORS_HEADERS,
-        'body': json.dumps({'error': 'Not Found'})
-    }
-
-def add_preference(event, user_id, preference_type):
-    body = json.loads(event['body'])
-    property_id = body['property_id']
-    
-    # Create unique preference ID
-    preference_id = f"{user_id}_{property_id}_{preference_type}"
+    # Log the event for debugging
+    print(f"Received event: {json.dumps(event)}")
     
     try:
+        # Handle OPTIONS request for CORS (REST API format)
+        if event.get('httpMethod') == 'OPTIONS':
+            return {
+                'statusCode': 200,
+                'headers': CORS_HEADERS,
+                'body': ''
+            }
+        
+        # Use REST API event structure
+        method = event.get('httpMethod', '')
+        path = event.get('path', '')
+        
+        # Extract user email from header (authenticated user) - handle both cases
+        headers = event.get('headers', {})
+        user_email = headers.get('x-user-email') or headers.get('X-User-Email') or 'anonymous'
+        # For backward compatibility, use email as user_id
+        user_id = user_email
+        
+        # Route handling
+        if method == 'POST' and path == '/favorites':
+            return add_preference(event, user_id, 'favorite')
+        elif method == 'POST' and path == '/hidden':
+            return add_preference(event, user_id, 'hidden')
+        elif method == 'DELETE' and path.startswith('/favorites/'):
+            return remove_preference(event, user_id, 'favorite')
+        elif method == 'DELETE' and path.startswith('/hidden/'):
+            return remove_preference(event, user_id, 'hidden')
+        elif method == 'GET' and '/favorites/user/' in path:
+            # Extract userId from path
+            path_params = event.get('pathParameters', {})
+            if path_params and 'userId' in path_params:
+                return get_user_preferences(path_params['userId'], 'favorite')
+        elif method == 'GET' and '/hidden/user/' in path:
+            # Extract userId from path
+            path_params = event.get('pathParameters', {})
+            if path_params and 'userId' in path_params:
+                return get_user_preferences(path_params['userId'], 'hidden')
+        
+        # If no route matched, return 404
+        return {
+            'statusCode': 404,
+            'headers': CORS_HEADERS,
+            'body': json.dumps({'error': 'Not Found'})
+        }
+        
+    except Exception as e:
+        print(f"Error in lambda_handler: {str(e)}")
+        # ALWAYS return CORS headers even on error
+        return {
+            'statusCode': 500,
+            'headers': CORS_HEADERS,
+            'body': json.dumps({'error': 'Internal server error'})
+        }
+
+def add_preference(event, user_id, preference_type):
+    try:
+        body = json.loads(event.get('body', '{}'))
+        property_id = body.get('property_id')
+        
+        if not property_id:
+            return {
+                'statusCode': 400,
+                'headers': CORS_HEADERS,
+                'body': json.dumps({'error': 'property_id is required'})
+            }
+        
+        # Create unique preference ID
+        preference_id = f"{user_id}_{property_id}_{preference_type}"
+        
         # Check if preference already exists
         existing = preferences_table.get_item(Key={'preference_id': preference_id})
         
@@ -150,6 +163,7 @@ def add_preference(event, user_id, preference_type):
         }
         
     except Exception as e:
+        print(f"Error in add_preference: {str(e)}")
         return {
             'statusCode': 500,
             'headers': CORS_HEADERS,
@@ -157,17 +171,26 @@ def add_preference(event, user_id, preference_type):
         }
 
 def remove_preference(event, user_id, preference_type):
-    # Try to get ID from path parameters first (REST API format)
-    path_params = event.get('pathParameters', {})
-    if path_params and 'id' in path_params:
-        preference_id = path_params['id']
-    else:
-        # Fallback to path parsing - extract property_id and reconstruct preference_id
-        path_parts = event.get('path', '').split('/')
-        property_id = path_parts[-1]
-        preference_id = f"{user_id}_{property_id}_{preference_type}"
-    
     try:
+        # Get ID from path parameters (REST API format)
+        path_params = event.get('pathParameters', {})
+        if path_params and 'id' in path_params:
+            property_id = path_params['id']
+            # Construct the full preference_id
+            preference_id = f"{user_id}_{property_id}_{preference_type}"
+        else:
+            # Fallback - try to extract from path
+            path_parts = event.get('path', '').split('/')
+            if len(path_parts) > 2:
+                property_id = path_parts[-1]
+                preference_id = f"{user_id}_{property_id}_{preference_type}"
+            else:
+                return {
+                    'statusCode': 400,
+                    'headers': CORS_HEADERS,
+                    'body': json.dumps({'error': 'Invalid path'})
+                }
+        
         # Verify ownership
         if not preference_id.startswith(user_id + '_'):
             return {
@@ -185,6 +208,7 @@ def remove_preference(event, user_id, preference_type):
         }
         
     except Exception as e:
+        print(f"Error in remove_preference: {str(e)}")
         return {
             'statusCode': 500,
             'headers': CORS_HEADERS,
@@ -235,55 +259,7 @@ def get_user_preferences(user_id, preference_type):
         }
         
     except Exception as e:
-        return {
-            'statusCode': 500,
-            'headers': CORS_HEADERS,
-            'body': json.dumps({'error': str(e)})
-        }
-
-def get_analysis(event, user_id):
-    # Try to get ID from path parameters first (REST API format)
-    path_params = event.get('pathParameters', {})
-    if path_params and 'id' in path_params:
-        preference_id = path_params['id']
-    else:
-        # Fallback to path parsing
-        path_parts = event.get('path', '').split('/')
-        preference_id = path_parts[-2]  # Assuming path like /favorites/{preference_id}/analysis
-    
-    try:
-        # Verify ownership
-        if not preference_id.startswith(user_id + '_'):
-            return {
-                'statusCode': 403,
-                'headers': CORS_HEADERS,
-                'body': json.dumps({'error': 'Unauthorized'})
-            }
-        
-        # Get preference record
-        response = preferences_table.get_item(Key={'preference_id': preference_id})
-        
-        if 'Item' not in response:
-            return {
-                'statusCode': 404,
-                'headers': CORS_HEADERS,
-                'body': json.dumps({'error': 'Preference not found'})
-            }
-        
-        preference = decimal_to_float(response['Item'])
-        
-        return {
-            'statusCode': 200,
-            'headers': CORS_HEADERS,
-            'body': json.dumps({
-                'preference_id': preference_id,
-                'analysis_status': preference.get('analysis_status'),
-                'analysis_result': preference.get('analysis_result'),
-                'analysis_completed_at': preference.get('analysis_completed_at')
-            })
-        }
-        
-    except Exception as e:
+        print(f"Error in get_user_preferences: {str(e)}")
         return {
             'statusCode': 500,
             'headers': CORS_HEADERS,

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Tokyo Real Estate Dashboard deployment script
+# Tokyo Real Estate Frontend Stack deployment script
 set -e
 
 # Get the directory of this script
@@ -14,42 +14,29 @@ info() { echo -e "${B}INFO:${NC} $1"; }
 
 # Configuration
 REGION="${AWS_REGION:-ap-northeast-1}"
-STACK_NAME="${STACK_NAME:-tokyo-real-estate-dashboard}"
-STACK_PREFIX="${STACK_PREFIX:-tre-dash}"
+STACK_NAME="${STACK_NAME:-tokyo-real-estate-frontend}"
+STACK_PREFIX="${STACK_PREFIX:-tre-frontend}"
 AI_STACK_NAME="${AI_STACK_NAME:-tokyo-real-estate-ai}"
-TEMPLATE_FILE="$SCRIPT_DIR/dashboard-stack.yaml"
+DEPLOYMENT_BUCKET="${DEPLOYMENT_BUCKET:-ai-scraper-artifacts-$REGION}"
+TEMPLATE_FILE="$SCRIPT_DIR/front-end-stack.yaml"
 
-# Auto-detect resources from AI stack
-info "Getting resources from AI stack..."
-DYNAMODB_TABLE=$(aws cloudformation describe-stacks \
-    --stack-name $AI_STACK_NAME \
-    --region $REGION \
-    --query 'Stacks[0].Outputs[?OutputKey==`DynamoDBTableName`].OutputValue' \
-    --output text 2>/dev/null)
-
-FAVORITES_API_ARN=$(aws cloudformation describe-stacks \
-    --stack-name $AI_STACK_NAME \
-    --region $REGION \
-    --query 'Stacks[0].Outputs[?OutputKey==`FavoritesAPIFunctionArn`].OutputValue' \
-    --output text 2>/dev/null)
-
-# Get the favorites table name (construct it based on the AI stack naming pattern)
-FAVORITES_TABLE_NAME="${AI_STACK_NAME}-user-favorites"
-
-if [ -z "$DYNAMODB_TABLE" ] || [ "$DYNAMODB_TABLE" = "None" ]; then
-    error "Could not get DynamoDB table name from AI stack '$AI_STACK_NAME'"
+# Verify deployment bucket exists
+info "Checking deployment bucket '$DEPLOYMENT_BUCKET'..."
+if ! aws s3 ls s3://$DEPLOYMENT_BUCKET/ --region $REGION >/dev/null 2>&1; then
+    error "Deployment bucket '$DEPLOYMENT_BUCKET' not found. Please run deploy-ai.sh first to create it."
 fi
 
-if [ -z "$FAVORITES_API_ARN" ] || [ "$FAVORITES_API_ARN" = "None" ]; then
-    error "Could not get Favorites API Lambda ARN from AI stack '$AI_STACK_NAME'"
+# Verify AI stack exists and has required exports
+info "Verifying AI stack exports..."
+if ! aws cloudformation describe-stacks --stack-name $AI_STACK_NAME --region $REGION >/dev/null 2>&1; then
+    error "AI stack '$AI_STACK_NAME' not found. Please deploy the AI stack first."
 fi
 
-info "Using DynamoDB table: $DYNAMODB_TABLE"
-info "Using Favorites table: $FAVORITES_TABLE_NAME" 
-info "Using Favorites API ARN: $FAVORITES_API_ARN"
+info "Using AI stack: $AI_STACK_NAME"
+info "Using deployment bucket: $DEPLOYMENT_BUCKET"
 
-echo "🚀 Tokyo Real Estate Dashboard Deployment"
-echo "=========================================="
+echo "🚀 Tokyo Real Estate Frontend Stack Deployment"
+echo "============================================="
 
 # Change to the script's directory
 cd "$SCRIPT_DIR"
@@ -70,15 +57,11 @@ aws cloudformation validate-template \
 
 status "✅ Template validation passed"
 
-# Check if DynamoDB table exists
-info "Checking DynamoDB table '$DYNAMODB_TABLE'..."
-if ! aws dynamodb describe-table --table-name $DYNAMODB_TABLE --region $REGION >/dev/null 2>&1; then
-    error "DynamoDB table '$DYNAMODB_TABLE' not found. Please ensure the analysis table exists."
-fi
-status "✅ DynamoDB table exists"
+# The DynamoDB tables are now managed by the AI stack
+# Frontend stack will import them via CloudFormation exports
 
 # Deploy CloudFormation stack
-status "Deploying dashboard stack..."
+status "Deploying frontend stack..."
 aws cloudformation deploy \
     --template-file $TEMPLATE_FILE \
     --stack-name $STACK_NAME \
@@ -86,10 +69,8 @@ aws cloudformation deploy \
     --region $REGION \
     --parameter-overrides \
         StackNamePrefix=$STACK_PREFIX \
-        DynamoDBTableName=$DYNAMODB_TABLE \
-        FavoritesTableName=$FAVORITES_TABLE_NAME \
-        FavoritesApiLambdaArn=$FAVORITES_API_ARN \
         AIStackName=$AI_STACK_NAME \
+        DeploymentBucket=$DEPLOYMENT_BUCKET \
     --no-fail-on-empty-changeset
 
 if [ $? -eq 0 ]; then
@@ -103,7 +84,7 @@ info "Retrieving stack outputs..."
 API_ENDPOINT=$(aws cloudformation describe-stacks \
     --stack-name $STACK_NAME \
     --region $REGION \
-    --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
+    --query 'Stacks[0].Outputs[?OutputKey==`FrontendApiEndpoint`].OutputValue' \
     --output text 2>/dev/null)
 
 WEBSITE_URL=$(aws cloudformation describe-stacks \
@@ -118,10 +99,17 @@ S3_BUCKET=$(aws cloudformation describe-stacks \
     --query 'Stacks[0].Outputs[?OutputKey==`S3BucketName`].OutputValue' \
     --output text 2>/dev/null)
 
-LAMBDA_FUNCTION=$(aws cloudformation describe-stacks \
+# Get all Lambda function ARNs for reference
+DASHBOARD_FUNCTION_ARN=$(aws cloudformation describe-stacks \
     --stack-name $STACK_NAME \
     --region $REGION \
-    --query 'Stacks[0].Outputs[?OutputKey==`LambdaFunctionName`].OutputValue' \
+    --query 'Stacks[0].Outputs[?OutputKey==`DashboardAPIFunctionArn`].OutputValue' \
+    --output text 2>/dev/null)
+
+FAVORITES_FUNCTION_ARN=$(aws cloudformation describe-stacks \
+    --stack-name $STACK_NAME \
+    --region $REGION \
+    --query 'Stacks[0].Outputs[?OutputKey==`FavoritesAPIFunctionArn`].OutputValue' \
     --output text 2>/dev/null)
 
 # Validate outputs
@@ -134,8 +122,9 @@ status "Updating dashboard HTML with API endpoint..."
 # Create a backup first
 cp index.html index.html.bak
 
-# Replace the API_URL in the JavaScript
+# Replace both API_URL and FAVORITES_API_URL (since they're now the same)
 sed -i.tmp "s|const API_URL = '[^']*';|const API_URL = '${API_ENDPOINT}';|g" index.html
+sed -i.tmp "s|const FAVORITES_API_URL = '[^']*';|const FAVORITES_API_URL = API_URL;|g" index.html
 rm -f index.html.tmp
 
 # Verify the replacement worked
@@ -168,33 +157,44 @@ mv index.html.bak index.html
 
 # Success summary
 echo ""
-status "🎉 Dashboard deployment completed successfully!"
+status "🎉 Frontend stack deployment completed successfully!"
 echo ""
-echo "📋 Dashboard Details:"
+echo "📋 Frontend Stack Details:"
 echo "  Stack Name: $STACK_NAME"
 echo "  Region: $REGION"
-echo "  DynamoDB Table: $DYNAMODB_TABLE"
-echo "  Lambda Function: $LAMBDA_FUNCTION"
+echo "  AI Stack: $AI_STACK_NAME"
+echo "  Deployment Bucket: $DEPLOYMENT_BUCKET"
 echo "  S3 Bucket: $S3_BUCKET"
+echo ""
+echo "🔎 Lambda Functions Deployed:"
+echo "  Dashboard API: $(basename $DASHBOARD_FUNCTION_ARN 2>/dev/null || echo 'N/A')"
+echo "  Favorites API: $(basename $FAVORITES_FUNCTION_ARN 2>/dev/null || echo 'N/A')"
+echo "  Register User: $STACK_PREFIX-register-user"
+echo "  Login User: $STACK_PREFIX-login-user"
 echo ""
 echo "🌐 Access your dashboard at:"
 echo "  $WEBSITE_URL"
 echo ""
-echo "🔧 API Endpoint:"
-echo "  $API_ENDPOINT/properties"
+echo "🔧 Unified API Endpoint (all routes):"
+echo "  $API_ENDPOINT"
+echo "  Routes: /properties, /favorites/*, /hidden/*, /auth/*"
 echo ""
 echo "💡 Next Steps:"
 echo "  1. Open the dashboard URL in your browser"
-echo "  2. The dashboard will automatically load property data from DynamoDB"
-echo "  3. Use the terminal-style interface to filter and sort properties"
-echo "  4. Properties are loaded with GET /properties?limit=1000"
+echo "  2. Register a new user account or login"
+echo "  3. Browse properties and add favorites"
+echo "  4. All API calls now go through a single endpoint"
 echo ""
 echo "🔧 Troubleshooting:"
-echo "  - If no data appears, check that the '$DYNAMODB_TABLE' table has property records"
-echo "  - Check CloudWatch logs for the Lambda function: /aws/lambda/$LAMBDA_FUNCTION"
-echo "  - Test API directly: curl '${API_ENDPOINT}/properties?limit=5'"
-echo "  - Ensure your properties have the expected fields (district, price, recommendation, etc.)"
+echo "  - Test properties endpoint: curl '${API_ENDPOINT}/properties?limit=5'"
+echo "  - Test auth endpoint: curl -X OPTIONS '${API_ENDPOINT}/auth/register'"
+echo "  - Check CloudWatch logs for any Lambda function issues"
+echo "  - Ensure AI stack '$AI_STACK_NAME' is deployed with data"
 echo ""
 echo "🗑️  To delete the stack:"
 echo "  aws cloudformation delete-stack --stack-name $STACK_NAME --region $REGION"
+echo ""
+echo "📝 Usage:"
+echo "  DEPLOYMENT_BUCKET=your-bucket ./deploy-frontend.sh"
+echo "  AWS_REGION=ap-northeast-1 STACK_NAME=my-frontend ./deploy-frontend.sh"
 echo ""
