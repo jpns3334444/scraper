@@ -29,7 +29,11 @@
       "Bash(export API_URL=\"https://nbgnatp0pd.execute-api.ap-northeast-1.amazonaws.com/prod\")",
       "Bash(export:*)",
       "Bash(export S3_ASSET_URL=\"https://tokyo-real-estate-ai-data.s3.amazonaws.com/test.jpg\")",
-      "Bash(./cors_diagnose.sh:*)"
+      "Bash(./cors_diagnose.sh:*)",
+      "Bash(ls:*)",
+      "Bash(zip:*)",
+      "Bash(aws s3 cp:*)",
+      "Bash(aws s3api head-object:*)"
     ],
     "deny": []
   }

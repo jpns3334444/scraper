@@ -131,8 +131,10 @@ PROPERTY_ANALYZER_VERSION="latest"
 DASHBOARD_API_VERSION="latest"
 FAVORITES_API_VERSION="latest"
 FAVORITE_ANALYZER_VERSION="latest"
+REGISTER_USER_VERSION="latest"
+LOGIN_USER_VERSION="latest"
 
-for func in url_collector property_processor property_analyzer dashboard_api favorites_api favorite_analyzer; do
+for func in url_collector property_processor property_analyzer dashboard_api favorites_api favorite_analyzer register_user login_user; do
     [ -d "lambda/$func" ] || error "Function directory lambda/$func not found"
     
     info "Packaging $func..."
@@ -254,6 +256,12 @@ print('Created $func.zip with shared modules')
         favorite_analyzer)
             FAVORITE_ANALYZER_VERSION="$OBJECT_VERSION"
             ;;
+        register_user)
+            REGISTER_USER_VERSION="$OBJECT_VERSION"
+            ;;
+        login_user)
+            LOGIN_USER_VERSION="$OBJECT_VERSION"
+            ;;
     esac
     
     rm $func.zip
@@ -323,7 +331,10 @@ aws cloudformation deploy \
       DashboardAPICodeVersion=$DASHBOARD_API_VERSION \
       FavoritesAPICodeVersion=$FAVORITES_API_VERSION \
       FavoriteAnalyzerCodeVersion=$FAVORITE_ANALYZER_VERSION \
-      OpenAILayerObjectVersion=$LAYER_OBJECT_VERSION
+      RegisterUserCodeVersion=$REGISTER_USER_VERSION \
+      LoginUserCodeVersion=$LOGIN_USER_VERSION \
+      OpenAILayerObjectVersion=$LAYER_OBJECT_VERSION \
+      BcryptLayerObjectVersion=XJj0pHRvvqRmqUCWYGdGcnoYtKHe6WO_
 
 status "✅ CloudFormation stack deployed"
 

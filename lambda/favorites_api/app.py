@@ -15,7 +15,7 @@ output_bucket = os.environ.get('OUTPUT_BUCKET', 'tokyo-real-estate-ai-data')
 
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type,X-User-Id',
+    'Access-Control-Allow-Headers': 'Content-Type,X-User-Email,Authorization',
     'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS'
 }
 
@@ -36,8 +36,10 @@ def lambda_handler(event, context):
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS}
     
-    # Extract user_id from header
-    user_id = event['headers'].get('X-User-Id', 'anonymous')
+    # Extract user email from header (authenticated user)
+    user_email = event['headers'].get('x-user-email', event['headers'].get('X-User-Email', 'anonymous'))
+    # For backward compatibility, use email as user_id
+    user_id = user_email
     
     if method == 'POST' and path == '/favorites':
         return add_favorite(event, user_id)

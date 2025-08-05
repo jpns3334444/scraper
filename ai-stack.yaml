@@ -29,9 +29,19 @@ Parameters:
   FavoriteAnalyzerCodeVersion:
     Type: String
     Default: latest
+  RegisterUserCodeVersion:
+    Type: String
+    Default: latest
+  LoginUserCodeVersion:
+    Type: String
+    Default: latest
   OpenAILayerObjectVersion:
     Type: String
     Description: S3 object version ID for openai-layer.zip
+  BcryptLayerObjectVersion:
+    Type: String
+    Description: S3 object version ID for bcrypt-layer.zip
+    Default: latest
   LeanMode:
     Type: String
     Default: '1'
@@ -52,6 +62,16 @@ Resources:
         S3Bucket: !Ref DeploymentBucket
         S3Key: layers/openai-layer.zip
         S3ObjectVersion: !Ref OpenAILayerObjectVersion
+
+  BcryptLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: !Sub '${AWS::StackName}-bcrypt'
+      CompatibleRuntimes: [ python3.12 ]
+      Description: Bcrypt password hashing layer
+      Content:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: layers/bcrypt-layer.zip
 
   # IAM Role for Lambda functions
   LambdaExecutionRole:
@@ -120,6 +140,7 @@ Resources:
                   - !Sub '${RealEstateAnalysisDB.Arn}/index/*'
                   - !GetAtt UserFavoritesTable.Arn
                   - !Sub '${UserFavoritesTable.Arn}/index/*'
+                  - !GetAtt UsersTable.Arn
         - PolicyName: SQSAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -281,6 +302,19 @@ Resources:
           KeyType: HASH
       BillingMode: PAY_PER_REQUEST
 
+  # DynamoDB Table for Users (Authentication)
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-users'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+
   # DynamoDB Table for User Favorites
   UserFavoritesTable:
     Type: AWS::DynamoDB::Table
@@ -437,6 +471,46 @@ Resources:
           ANALYSIS_QUEUE_URL: !Ref FavoriteAnalysisQueue
           OUTPUT_BUCKET: !Ref OutputBucket
 
+  # Register User Lambda Function
+  RegisterUserFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-register-user'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/register_user.zip
+        S3ObjectVersion: !Ref RegisterUserCodeVersion
+      Timeout: 30
+      MemorySize: 512
+      Layers:
+        - !Ref BcryptLayer
+      Environment:
+        Variables:
+          USERS_TABLE: !Ref UsersTable
+
+  # Login User Lambda Function
+  LoginUserFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-login-user'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/login_user.zip
+        S3ObjectVersion: !Ref LoginUserCodeVersion
+      Timeout: 30
+      MemorySize: 512
+      Layers:
+        - !Ref BcryptLayer
+      Environment:
+        Variables:
+          USERS_TABLE: !Ref UsersTable
+
   # Favorite Analyzer Lambda Function
   FavoriteAnalyzerFunction:
     Type: AWS::Lambda::Function
@@ -561,6 +635,38 @@ Resources:
       RouteKey: 'DELETE /favorites/{id}'
       Target: !Sub 'integrations/${FavoritesApiIntegration}'
 
+  # Routes for Authentication API
+  RegisterRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref FavoritesHttpApi
+      RouteKey: 'POST /auth/register'
+      Target: !Sub 'integrations/${AuthApiIntegration}'
+
+  LoginRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref FavoritesHttpApi
+      RouteKey: 'POST /auth/login'
+      Target: !Sub 'integrations/${LoginApiIntegration}'
+
+  # Lambda integrations for Auth API
+  AuthApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref FavoritesHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RegisterUserFunction.Arn}/invocations'
+      PayloadFormatVersion: '2.0'
+
+  LoginApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref FavoritesHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LoginUserFunction.Arn}/invocations'
+      PayloadFormatVersion: '2.0'
+
   # API Gateway Stage
   FavoritesApiStage:
     Type: AWS::ApiGatewayV2::Stage
@@ -569,7 +675,23 @@ Resources:
       StageName: 'prod'
       AutoDeploy: true
 
-  # Lambda permission for API Gateway
+  # Lambda permissions for API Gateway
+  RegisterApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RegisterUserFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${FavoritesHttpApi}/*/*'
+
+  LoginApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LoginUserFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${FavoritesHttpApi}/*/*'
+
   FavoritesApiInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:

@@ -517,6 +517,28 @@
             cursor: not-allowed;
         }
         
+        /* Hide Button */
+        .hide-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            padding: 4px 6px;
+            transition: all 0.2s;
+            color: #cccccc;
+            margin-left: 4px;
+        }
+        
+        .hide-btn:hover {
+            color: #999999;
+            transform: scale(1.1);
+        }
+        
+        .hide-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
         /* Favorites Grid */
         .favorites-grid {
             display: grid;
@@ -827,9 +849,169 @@
                 gap: 12px;
             }
         }
+        
+        /* Authentication Modal Styles */
+        .modal {
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        .modal-content {
+            background-color: #fefefe;
+            margin: 15% auto;
+            padding: 40px;
+            border: 1px solid #ddd;
+            width: 400px;
+            max-width: 90%;
+            border-radius: 8px;
+            font-family: 'Noto Sans JP', sans-serif;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            animation: slideDown 0.3s ease;
+        }
+        
+        @keyframes slideDown {
+            from { transform: translateY(-20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        
+        .modal h2 {
+            margin-bottom: 24px;
+            color: #333;
+            font-size: 24px;
+            font-weight: 700;
+            text-align: center;
+        }
+        
+        .modal input {
+            width: 100%;
+            padding: 12px;
+            margin: 8px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: 'Noto Sans JP', sans-serif;
+            transition: border-color 0.2s;
+        }
+        
+        .modal input:focus {
+            outline: none;
+            border-color: #695b8d;
+        }
+        
+        .modal button {
+            width: 100%;
+            padding: 12px;
+            background: #695b8d;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 16px;
+            font-family: 'Noto Sans JP', sans-serif;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+        
+        .modal button:hover {
+            background: #574a75;
+        }
+        
+        .auth-switch {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .auth-switch a {
+            color: #695b8d;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        
+        .auth-switch a:hover {
+            text-decoration: underline;
+        }
+        
+        .error-message {
+            color: #d32f2f;
+            margin-top: 10px;
+            font-size: 14px;
+            text-align: center;
+        }
+        
+        /* User info display */
+        .user-info {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 100;
+            background: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .user-info span {
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .user-info button {
+            padding: 6px 12px;
+            background: #695b8d;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+        
+        .user-info button:hover {
+            background: #574a75;
+        }
     </style>
 </head>
 <body>
+    <!-- Authentication Modal -->
+    <div id="authModal" class="modal">
+        <div class="modal-content">
+            <h2 id="authTitle">Sign In</h2>
+            <form id="authForm">
+                <input type="email" id="email" placeholder="Email" required>
+                <input type="password" id="password" placeholder="Password" required>
+                <button type="submit" id="authSubmit">Sign In</button>
+            </form>
+            <p class="auth-switch">
+                <span id="authSwitchText">Don't have an account?</span>
+                <a href="#" id="authSwitchLink">Sign Up</a>
+            </p>
+            <div id="authError" class="error-message"></div>
+        </div>
+    </div>
+    
+    <!-- User Info Display -->
+    <div id="userInfo" class="user-info" style="display: none;">
+        <span id="userEmail"></span>
+        <button onclick="logout()">Logout</button>
+    </div>
     
     <div class="container">
         <h1>東京 Real Estate</h1>
@@ -841,6 +1023,9 @@
             </button>
             <button class="tab-button" onclick="switchTab('favorites')">
                 Favorites <span class="favorites-count" id="favoritesCount">0</span>
+            </button>
+            <button class="tab-button" onclick="switchTab('hidden')">
+                Hidden <span class="favorites-count" id="hiddenCount" style="background: #999;">0</span>
             </button>
         </div>
 
@@ -854,6 +1039,11 @@
         <!-- Favorites Tab -->
         <div id="favorites-tab" class="tab-pane" style="display: none;">
             <ul class="fav-list" id="favoritesList"></ul>
+        </div>
+        
+        <!-- Hidden Tab -->
+        <div id="hidden-tab" class="tab-pane" style="display: none;">
+            <ul class="fav-list" id="hiddenList"></ul>
         </div>
         
         <div class="loading" id="loading">
@@ -911,7 +1101,7 @@
             <table>
                 <thead>
                     <tr>
-                        <th>♥</th>
+                        <th style="width: 80px;">♥/✕</th>
                         <th class="sortable" onclick="sortTable('price')">
                             <div class="column-header">
                                 Price
@@ -1040,18 +1230,111 @@
         let currentPage = 1;
         let itemsPerPage = 100;
         let favorites = new Set();
+        let hidden = new Set();
         let currentFilters = {
             ward: [],
             primary_light: [],
             verdict: []
         };
         
+        // Authentication state
+        let currentUser = null;
+        
+        // Authentication functions
+        function checkAuth() {
+            const savedEmail = localStorage.getItem('user_email');
+            const savedToken = localStorage.getItem('auth_token');
+            
+            if (savedEmail && savedToken) {
+                currentUser = { email: savedEmail, token: savedToken };
+                document.getElementById('authModal').style.display = 'none';
+                document.getElementById('userInfo').style.display = 'flex';
+                document.getElementById('userEmail').textContent = savedEmail;
+                return true;
+            } else {
+                document.getElementById('authModal').style.display = 'block';
+                document.getElementById('userInfo').style.display = 'none';
+                return false;
+            }
+        }
+        
+        // Handle auth form submission
+        document.getElementById('authForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const isLogin = document.getElementById('authTitle').textContent === 'Sign In';
+            
+            try {
+                const endpoint = isLogin ? '/auth/login' : '/auth/register';
+                const response = await fetch(API_URL + endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    localStorage.setItem('user_email', email);
+                    localStorage.setItem('auth_token', data.token || email);
+                    currentUser = { email, token: data.token || email };
+                    document.getElementById('authModal').style.display = 'none';
+                    document.getElementById('userInfo').style.display = 'flex';
+                    document.getElementById('userEmail').textContent = email;
+                    document.getElementById('authError').textContent = '';
+                    
+                    // Clear old anonymous favorites
+                    localStorage.removeItem('favorites');
+                    localStorage.removeItem('user_id');
+                    favorites.clear();
+                    
+                    // Reload with authenticated user
+                    loadFavoritesFromServer();
+                    loadAllProperties();
+                } else {
+                    document.getElementById('authError').textContent = data.error || 'Authentication failed';
+                }
+            } catch (error) {
+                document.getElementById('authError').textContent = 'Network error. Please try again.';
+            }
+        });
+        
+        // Toggle between login/register
+        document.getElementById('authSwitchLink').addEventListener('click', (e) => {
+            e.preventDefault();
+            const isLogin = document.getElementById('authTitle').textContent === 'Sign In';
+            
+            if (isLogin) {
+                document.getElementById('authTitle').textContent = 'Sign Up';
+                document.getElementById('authSubmit').textContent = 'Sign Up';
+                document.getElementById('authSwitchText').textContent = 'Already have an account?';
+                document.getElementById('authSwitchLink').textContent = 'Sign In';
+            } else {
+                document.getElementById('authTitle').textContent = 'Sign In';
+                document.getElementById('authSubmit').textContent = 'Sign In';
+                document.getElementById('authSwitchText').textContent = "Don't have an account?";
+                document.getElementById('authSwitchLink').textContent = 'Sign Up';
+            }
+            
+            document.getElementById('authError').textContent = '';
+        });
+        
+        function logout() {
+            localStorage.clear();
+            location.reload();
+        }
+        
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
-            loadFavoritesFromStorage();
-            loadAllProperties();
+            if (checkAuth()) {
+                loadFavoritesFromServer();
+                loadHiddenFromStorage();
+                loadAllProperties();
+            }
             updateSortArrows();
             updateFavoritesCount();
+            updateHiddenCount();
         });
         
         // Load favorites from localStorage
@@ -1066,9 +1349,46 @@
             }
         }
         
+        async function loadFavoritesFromServer() {
+            if (!currentUser) return;
+            
+            try {
+                const response = await fetch(`${API_URL}/favorites/${currentUser.email}`, {
+                    headers: { 
+                        'X-User-Email': currentUser.email,
+                        'Authorization': `Bearer ${currentUser.token}`
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    favorites = new Set(data.favorites.map(fav => fav.property_id));
+                }
+            } catch (error) {
+                console.error('Failed to load favorites from server:', error);
+            }
+        }
+        
         // Save favorites to localStorage
         function saveFavoritesToStorage() {
             localStorage.setItem('favorites', JSON.stringify([...favorites]));
+        }
+        
+        // Load hidden from localStorage
+        function loadHiddenFromStorage() {
+            const storedHidden = localStorage.getItem('hidden');
+            if (storedHidden) {
+                try {
+                    hidden = new Set(JSON.parse(storedHidden));
+                } catch (e) {
+                    hidden = new Set();
+                }
+            }
+        }
+        
+        // Save hidden to localStorage
+        function saveHiddenToStorage() {
+            localStorage.setItem('hidden', JSON.stringify([...hidden]));
         }
         
         // Sync favorites with backend
@@ -1112,7 +1432,10 @@
                     if (!res.ok) break;
                     
                     const { items, cursor: next } = await res.json();
-                    tempProperties = tempProperties.concat(items || []);
+                    // Filter out properties above 30 million yen (3000 in 万円 units)
+                    tempProperties = tempProperties.concat((items || []).filter(item => {
+                        return !item.price || item.price <= 3000;
+                    }));
                     tempCursor = next ?? false;
                 }
                 
@@ -1204,14 +1527,20 @@
             const verdict = property.verdict || property.recommendation || 'pass';
             const hasLink = property.listing_url && property.listing_url.trim();
             const isFavorited = favorites.has(property.property_id);
+            const isHidden = hidden.has(property.property_id);
             
             return `
                 <tr ${hasLink ? `onclick="openListing(event, '${property.listing_url}')"` : 'class="no-link"'}>
-                    <td style="text-align: center;">
+                    <td style="text-align: center; white-space: nowrap;">
                         <button class="heart-btn ${isFavorited ? 'favorited' : ''}" 
                                 onclick="toggleFavorite('${property.property_id}', this)"
                                 data-property-id="${property.property_id}">
                             ${isFavorited ? '♥' : '♡'}
+                        </button>
+                        <button class="hide-btn" 
+                                onclick="toggleHidden('${property.property_id}', this)"
+                                data-property-id="${property.property_id}">
+                            ✕
                         </button>
                     </td>
                     <td class="price">${price}</td>
@@ -1304,6 +1633,11 @@
 
         // User ID management
         function getUserId() {
+            // Use authenticated user email if available, otherwise fallback to anonymous
+            if (currentUser) {
+                return currentUser.email;
+            }
+            
             let userId = localStorage.getItem('user_id');
             if (!userId) {
                 userId = 'user_' + Math.random().toString(36).substr(2, 9);
@@ -1329,6 +1663,11 @@
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('paginationContainer').style.display = 'none';
                 loadFavorites();
+            } else if (tabName === 'hidden') {
+                document.getElementById('tableContainer').style.display = 'none';
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('paginationContainer').style.display = 'none';
+                loadHidden();
             } else {
                 document.getElementById('tableContainer').style.display = 'block';
                 document.getElementById('paginationContainer').style.display = 'block';
@@ -1353,19 +1692,27 @@
         // Toggle favorite
         async function toggleFavorite(propertyId, button) {
             event.stopPropagation(); // Prevent row click
+            
+            if (!currentUser) {
+                alert('Please sign in to save favorites');
+                return;
+            }
+            
             button.disabled = true;
             const isFavorited = button.classList.contains('favorited');
             
             try {
                 if (isFavorited) {
-                    await fetch(`${API_URL}/favorites/${getUserId()}_${propertyId}`, {
+                    await fetch(`${API_URL}/favorites/${currentUser.email}_${propertyId}`, {
                         method: 'DELETE',
-                        headers: { 'X-User-Id': getUserId() }
+                        headers: { 
+                            'X-User-Email': currentUser.email,
+                            'Authorization': `Bearer ${currentUser.token}`
+                        }
                     });
                     button.classList.remove('favorited');
                     button.textContent = '♡';
                     favorites.delete(propertyId);
-                    saveFavoritesToStorage();
                     deltaFavorites(-1);
                     
                     // Update property in allProperties array
@@ -1381,14 +1728,14 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'X-User-Id': getUserId()
+                            'X-User-Email': currentUser.email,
+                            'Authorization': `Bearer ${currentUser.token}`
                         },
                         body: JSON.stringify({ property_id: propertyId })
                     });
                     button.classList.add('favorited');
                     button.textContent = '♥';
                     favorites.add(propertyId);
-                    saveFavoritesToStorage();
                     deltaFavorites(+1);
                     
                     // Update property in allProperties array
@@ -1406,6 +1753,18 @@
         // Load favorites view
         function loadFavorites() {
             const list = document.getElementById('favoritesList');
+            
+            // Check if properties are loaded
+            if (allProperties.length === 0) {
+                list.innerHTML = '<li style="padding:20px; color:#999;">Loading properties...</li>';
+                // Try again after a short delay
+                setTimeout(() => {
+                    if (allProperties.length > 0) {
+                        loadFavorites();
+                    }
+                }, 500);
+                return;
+            }
             
             // Get favorited properties from the full list
             const favoritedProperties = allProperties.filter(p => favorites.has(p.property_id));
@@ -1450,6 +1809,95 @@
         // Update favorites count from localStorage
         function updateFavoritesCount() {
             document.getElementById('favoritesCount').textContent = favorites.size;
+        }
+        
+        // Update hidden count
+        function updateHiddenCount() {
+            document.getElementById('hiddenCount').textContent = hidden.size;
+        }
+        
+        // Toggle hidden
+        function toggleHidden(propertyId, button) {
+            event.stopPropagation();
+            button.disabled = true;
+            
+            if (hidden.has(propertyId)) {
+                hidden.delete(propertyId);
+            } else {
+                hidden.add(propertyId);
+            }
+            
+            saveHiddenToStorage();
+            updateHiddenCount();
+            
+            // Remove from current view if on main properties tab
+            if (document.getElementById('properties-tab').classList.contains('active')) {
+                applyAllFilters();
+            }
+            
+            button.disabled = false;
+        }
+        
+        // Load hidden view
+        function loadHidden() {
+            const list = document.getElementById('hiddenList');
+            
+            // Check if properties are loaded
+            if (allProperties.length === 0) {
+                list.innerHTML = '<li style="padding:20px; color:#999;">Loading properties...</li>';
+                // Try again after a short delay
+                setTimeout(() => {
+                    if (allProperties.length > 0) {
+                        loadHidden();
+                    }
+                }, 500);
+                return;
+            }
+            
+            // Get hidden properties from the full list
+            const hiddenProperties = allProperties.filter(p => hidden.has(p.property_id));
+            
+            if (hiddenProperties.length === 0) {
+                list.innerHTML = '<li style="padding:20px; color:#999;">No hidden properties.</li>';
+                return;
+            }
+            
+            // Sort hidden properties by price descending
+            hiddenProperties.sort((a, b) => (b.price || 0) - (a.price || 0));
+            
+            list.innerHTML = hiddenProperties.map(property => {
+                const price = property.price ? `¥${(property.price * 10000).toLocaleString()}` : '—';
+                const size = property.size_sqm || property.total_sqm ? 
+                    `${Math.round(property.size_sqm || property.total_sqm)}m²` : '—';
+                const ward = property.ward || '—';
+                const wardDiscount = property.ward_discount_pct;
+                const wardDiscountText = wardDiscount !== undefined && wardDiscount !== null ? 
+                    (wardDiscount > 0 ? `+${wardDiscount.toFixed(1)}%` : `${wardDiscount.toFixed(1)}%`) : '';
+                const station = property.closest_station || 'No station';
+                const verdict = property.verdict || property.recommendation || 'pass';
+                const url = property.listing_url || '#';
+                
+                return `
+                    <li class="fav-item">
+                        <span>
+                            <a href="${url}" target="_blank" style="color: #333; text-decoration: none;">
+                                ${price}
+                            </a>
+                            — ${size}
+                            — ${ward}${wardDiscountText ? ` (${wardDiscountText})` : ''}
+                            — ${station}
+                            <button class="hide-btn" 
+                                    onclick="toggleHidden('${property.property_id}', this)"
+                                    style="margin-left: 10px;"
+                                    title="Unhide this property">
+                                ↺
+                            </button>
+                        </span>
+                        <span class="verdict verdict-${verdict}" style="font-size: 11px;">
+                            ${verdict.toUpperCase()}
+                        </span>
+                    </li>`;
+            }).join('');
         }
 
         // View property details (placeholder)
@@ -1585,6 +2033,11 @@
         // Apply all filters
         function applyAllFilters() {
             filteredProperties = allProperties.filter(property => {
+                // Filter out hidden properties
+                if (hidden.has(property.property_id)) {
+                    return false;
+                }
+                
                 // Ward filter
                 if (currentFilters.ward.length > 0 && !currentFilters.ward.includes(property.ward)) {
                     return false;

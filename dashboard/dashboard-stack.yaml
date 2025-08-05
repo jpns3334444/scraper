@@ -25,6 +25,14 @@ Parameters:
   FavoritesApiLambdaArn:
     Type: String
     Description: "ARN of the Favorites API Lambda function"
+    
+  RegisterUserLambdaArn:
+    Type: String
+    Description: "ARN of the Register User Lambda function"
+    
+  LoginUserLambdaArn:
+    Type: String
+    Description: "ARN of the Login User Lambda function"
 
 Conditions:
   CreateBucketName: !Equals [!Ref S3BucketName, ""]
@@ -235,6 +243,8 @@ Resources:
           - OPTIONS
         AllowHeaders:
           - "*"
+          - X-User-Email
+          - Authorization
         MaxAge: 86400
 
   # API Gateway Stage
@@ -338,6 +348,57 @@ Resources:
     Type: "AWS::Lambda::Permission"
     Properties:
       FunctionName: !Ref FavoritesApiLambdaArn
+      Action: "lambda:InvokeFunction"
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PropertiesApi}/*/*"
+
+  # Auth API Integrations
+  RegisterApiIntegration:
+    Type: "AWS::ApiGatewayV2::Integration"
+    Properties:
+      ApiId: !Ref PropertiesApi
+      IntegrationType: "AWS_PROXY"
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RegisterUserLambdaArn}/invocations"
+      PayloadFormatVersion: "2.0"
+      TimeoutInMillis: 30000
+
+  LoginApiIntegration:
+    Type: "AWS::ApiGatewayV2::Integration"
+    Properties:
+      ApiId: !Ref PropertiesApi
+      IntegrationType: "AWS_PROXY"
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LoginUserLambdaArn}/invocations"
+      PayloadFormatVersion: "2.0"
+      TimeoutInMillis: 30000
+
+  # Auth Routes
+  RegisterRoute:
+    Type: "AWS::ApiGatewayV2::Route"
+    Properties:
+      ApiId: !Ref PropertiesApi
+      RouteKey: "POST /auth/register"
+      Target: !Sub "integrations/${RegisterApiIntegration}"
+
+  LoginRoute:
+    Type: "AWS::ApiGatewayV2::Route"
+    Properties:
+      ApiId: !Ref PropertiesApi
+      RouteKey: "POST /auth/login"
+      Target: !Sub "integrations/${LoginApiIntegration}"
+
+  # Lambda Permissions for Auth APIs
+  RegisterApiInvokePermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      FunctionName: !Ref RegisterUserLambdaArn
+      Action: "lambda:InvokeFunction"
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PropertiesApi}/*/*"
+
+  LoginApiInvokePermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      FunctionName: !Ref LoginUserLambdaArn
       Action: "lambda:InvokeFunction"
       Principal: "apigateway.amazonaws.com"
       SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PropertiesApi}/*/*"
