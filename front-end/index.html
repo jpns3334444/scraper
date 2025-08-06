@@ -987,6 +987,33 @@
         .user-info button:hover {
             background: #574a75;
         }
+        
+        /* Error Banner */
+        .error-banner {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: #ff4444;
+            color: white;
+            padding: 12px 20px;
+            z-index: 1001;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 14px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        }
+        
+        .error-banner button {
+            background: none;
+            border: none;
+            color: white;
+            cursor: pointer;
+            font-size: 18px;
+            padding: 0;
+            margin-left: 10px;
+        }
     </style>
 </head>
 <body>
@@ -1011,6 +1038,17 @@
     <div id="userInfo" class="user-info" style="display: none;">
         <span id="userEmail"></span>
         <button onclick="logout()">Logout</button>
+    </div>
+    
+    <!-- Sign In Button for Anonymous Users -->
+    <div id="signInPrompt" class="user-info" style="display: none;">
+        <button onclick="document.getElementById('authModal').style.display = 'block'">Sign In</button>
+    </div>
+    
+    <!-- Error Banner -->
+    <div id="errorBanner" class="error-banner" style="display: none;">
+        <span id="errorMessage"></span>
+        <button onclick="hideErrorBanner()">✕</button>
     </div>
     
     <div class="container">
@@ -1219,9 +1257,9 @@
     <script>
         // Configuration
         // Single unified API endpoint for all frontend operations
-        const API_URL = 'https://YOUR-FRONTEND-API-ID.execute-api.ap-northeast-1.amazonaws.com/prod';
+        const API_URL = 'https://whxu6x5b08.execute-api.ap-northeast-1.amazonaws.com/prod';
         const FAVORITES_API_URL = API_URL; // Same API endpoint now
-        const limit = 500;
+        const limit = 100;
         
         // State
         let cursor = null;          // null = first page; false = no more pages
@@ -1251,11 +1289,14 @@
                 currentUser = { email: savedEmail, token: savedToken };
                 document.getElementById('authModal').style.display = 'none';
                 document.getElementById('userInfo').style.display = 'flex';
+                document.getElementById('signInPrompt').style.display = 'none';
                 document.getElementById('userEmail').textContent = savedEmail;
                 return true;
             } else {
-                document.getElementById('authModal').style.display = 'block';
+                // Don't force login - show sign in button instead
+                document.getElementById('authModal').style.display = 'none';
                 document.getElementById('userInfo').style.display = 'none';
+                document.getElementById('signInPrompt').style.display = 'flex';
                 return false;
             }
         }
@@ -1329,11 +1370,16 @@
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
-            if (checkAuth()) {
+            checkAuth();
+            
+            if (currentUser) {
                 loadFavoritesFromServer();
-                loadHiddenFromStorage();
-                loadAllProperties();
+            } else {
+                loadFavoritesFromStorage();
             }
+            
+            loadHiddenFromStorage();
+            loadAllProperties();
             updateSortArrows();
             updateFavoritesCount();
             updateHiddenCount();
@@ -1355,7 +1401,7 @@
             if (!currentUser) return;
             
             try {
-                const response = await fetch(`${FAVORITES_API_URL}/favorites/${currentUser.email}`, {
+                const response = await fetch(`${FAVORITES_API_URL}/favorites/user/${currentUser.email}`, {
                     headers: { 
                         'X-User-Email': currentUser.email,
                         'Authorization': `Bearer ${currentUser.token}`
@@ -1364,7 +1410,10 @@
                 
                 if (response.ok) {
                     const data = await response.json();
-                    favorites = new Set(data.favorites.map(fav => fav.property_id));
+                    if (data.favorites && Array.isArray(data.favorites)) {
+                        favorites = new Set(data.favorites.map(fav => fav.property_id));
+                        updateFavoritesCount();
+                    }
                 }
             } catch (error) {
                 console.error('Failed to load favorites from server:', error);
@@ -1416,54 +1465,129 @@
             }
         }
         
-        async function loadAllProperties() {
-            loading = true;
-            let tempCursor = null;
-            let tempProperties = [];
+        async function fetchPropertiesPage(cursor) {
+            const url = `${API_URL}/properties?limit=${limit}` +
+                        (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '');
+            const res = await fetch(url, { 
+                headers: { 'X-User-Id': getUserId() }
+            });
+            if (!res.ok) {
+                console.error('Failed page:', await res.text());
+                throw new Error(`Backend returned ${res.status}`);
+            }
+            return res.json(); // { items: [...], nextCursor: '...' | false }
+        }
+
+        function updateTableIncrementally(newItems) {
+            // add only the new <tr>s; don't rebuild the whole table
+            const tbody = document.querySelector('#propertiesTable');
+            tbody.insertAdjacentHTML('beforeend', newItems.map(renderRow).join(''));
+            updateCountersEtc(); // keep any totals / badge counts in sync
+        }
+
+        function updateCountersEtc() {
+            // Update results count and pagination
+            updateResultsInfo();
+            renderPagination();
+        }
+
+        // Recursive function to load all remaining pages in background
+        async function loadRemainingPages(cursor) {
+            if (!cursor) {
+                console.log('No more pages to load');
+                return;
+            }
+            
+            console.log('Loading page with cursor:', cursor);
             
             try {
-                // Load all properties
-                while (tempCursor !== false) {
-                    const url = API_URL + '/properties?limit=' + limit +
-                               (tempCursor ? '&cursor=' + encodeURIComponent(JSON.stringify(tempCursor)) : '');
-                    const res = await fetch(url, {
-                        headers: {
-                            'X-User-Id': getUserId()
-                        }
-                    });
-                    if (!res.ok) break;
-                    
-                    const { items, cursor: next } = await res.json();
-                    // Filter out properties above 30 million yen (3000 in 万円 units)
-                    tempProperties = tempProperties.concat((items || []).filter(item => {
-                        return !item.price || item.price <= 3000;
-                    }));
-                    tempCursor = next ?? false;
-                }
+                const page = await fetchPropertiesPage(cursor);
+                console.log('Loaded page, next cursor:', page.nextCursor);
+                console.log('Page items count:', page.items?.length || 0);
                 
-                // Sync favorites with backend
-                await syncFavorites();
+                const filteredItems = (page.items || []).filter(item => {
+                    return !item.price || item.price <= 3000;
+                });
                 
-                // Update favorite status based on synced favorites
-                tempProperties.forEach(property => {
+                console.log('Filtered items count:', filteredItems.length);
+                
+                // Update favorite status for new items
+                filteredItems.forEach(property => {
                     property.is_favorited = favorites.has(property.property_id);
                 });
                 
-                allProperties = tempProperties;
+                allProperties.push(...filteredItems);
+                console.log('Total properties loaded so far:', allProperties.length);
+                
+                // Update filtered properties if no filters are active
+                if (!hasActiveFilters()) {
+                    filteredProperties.push(...filteredItems);
+                    // Only update incrementally if we're on properties tab and no active sort changes
+                    if (document.getElementById('properties-tab').classList.contains('active')) {
+                        // Re-sort all properties since we added new ones
+                        applySort();
+                        renderCurrentPage();
+                    }
+                } else {
+                    // Reapply filters to include new items
+                    applyAllFilters();
+                }
+                
+                // Continue loading next page
+                if (page.nextCursor) {
+                    console.log('Continuing to next page...');
+                    loadRemainingPages(page.nextCursor);
+                } else {
+                    console.log('All pages loaded successfully!');
+                }
+            } catch (error) {
+                console.error('Background load failed', error);
+                // Stop loading on error
+            }
+        }
+
+        async function loadAllProperties() {
+            loading = true;
+            let cursor = null;
+            
+            try {
+                // 1️⃣ fetch the first page
+                const firstPage = await fetchPropertiesPage(cursor);
+                
+                // Filter out properties above 30 million yen (3000 in 万円 units)
+                const filteredFirstPage = (firstPage.items || []).filter(item => {
+                    return !item.price || item.price <= 3000;
+                });
+                
+                allProperties.push(...filteredFirstPage);
+                
+                // Sync favorites with backend
+                // await syncFavorites(); // Commented out - causing 404s
+                
+                // Update favorite status
+                allProperties.forEach(property => {
+                    property.is_favorited = favorites.has(property.property_id);
+                });
+                
                 filteredProperties = [...allProperties];
                 
-                // Hide loading and show table
+                // Hide loading and show table immediately
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('tableContainer').style.display = 'block';
                 
-                // Apply initial sort and render
+                // Apply initial sort and render first page
                 applySort();
                 renderCurrentPage();
                 populateColumnFilters();
                 
+                cursor = firstPage.nextCursor; // may be null / false
+                
+                // 2️⃣ fire-and-forget the rest with recursive loading
+                loadRemainingPages(cursor);
+                
             } catch (error) {
                 console.error('Error:', error);
-                document.getElementById('resultsCount').textContent = 'Connection error';
+                showErrorBanner('Connection error. Please refresh the page.');
             } finally {
                 loading = false;
             }
@@ -1693,58 +1817,63 @@
         
         // Toggle favorite
         async function toggleFavorite(propertyId, button) {
-            event.stopPropagation(); // Prevent row click
-            
-            if (!currentUser) {
-                alert('Please sign in to save favorites');
-                return;
-            }
-            
+            event.stopPropagation();
             button.disabled = true;
             const isFavorited = button.classList.contains('favorited');
             
             try {
-                if (isFavorited) {
-                    await fetch(`${FAVORITES_API_URL}/favorites/${propertyId}`, {
-                        method: 'DELETE',
-                        headers: { 
-                            'X-User-Email': currentUser.email,
-                            'Authorization': `Bearer ${currentUser.token}`
-                        }
-                    });
-                    button.classList.remove('favorited');
-                    button.textContent = '♡';
-                    favorites.delete(propertyId);
-                    deltaFavorites(-1);
-                    
-                    // Update property in allProperties array
-                    const property = allProperties.find(p => p.property_id === propertyId);
-                    if (property) property.is_favorited = false;
-                    
-                    // If on favorites tab, reload the list
-                    if (document.getElementById('favorites-tab').classList.contains('active')) {
-                        loadFavorites();
+                if (!currentUser) {
+                    // Anonymous user - use localStorage
+                    if (isFavorited) {
+                        favorites.delete(propertyId);
+                        button.classList.remove('favorited');
+                        button.textContent = '♡';
+                    } else {
+                        favorites.add(propertyId);
+                        button.classList.add('favorited');
+                        button.textContent = '♥';
                     }
+                    saveFavoritesToStorage();
+                    deltaFavorites(isFavorited ? -1 : 1);
                 } else {
-                    await fetch(`${FAVORITES_API_URL}/favorites`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-User-Email': currentUser.email,
-                            'Authorization': `Bearer ${currentUser.token}`
-                        },
-                        body: JSON.stringify({ property_id: propertyId })
-                    });
-                    button.classList.add('favorited');
-                    button.textContent = '♥';
-                    favorites.add(propertyId);
-                    deltaFavorites(+1);
-                    
-                    // Update property in allProperties array
-                    const property = allProperties.find(p => p.property_id === propertyId);
-                    if (property) property.is_favorited = true;
+                    // Authenticated user - use API
+                    if (isFavorited) {
+                        await fetch(`${FAVORITES_API_URL}/favorites/${propertyId}`, {
+                            method: 'DELETE',
+                            headers: { 
+                                'X-User-Email': currentUser.email,
+                                'Authorization': `Bearer ${currentUser.token}`
+                            }
+                        });
+                        button.classList.remove('favorited');
+                        button.textContent = '♡';
+                        favorites.delete(propertyId);
+                        deltaFavorites(-1);
+                    } else {
+                        await fetch(`${FAVORITES_API_URL}/favorites`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-User-Email': currentUser.email,
+                                'Authorization': `Bearer ${currentUser.token}`
+                            },
+                            body: JSON.stringify({ property_id: propertyId })
+                        });
+                        button.classList.add('favorited');
+                        button.textContent = '♥';
+                        favorites.add(propertyId);
+                        deltaFavorites(+1);
+                    }
                 }
-                // Update count is handled by deltaFavorites
+                
+                // Update property status
+                const property = allProperties.find(p => p.property_id === propertyId);
+                if (property) property.is_favorited = !isFavorited;
+                
+                // Refresh favorites tab if active
+                if (document.getElementById('favorites-tab').classList.contains('active')) {
+                    loadFavorites();
+                }
             } catch (error) {
                 console.error('Failed to toggle favorite:', error);
             } finally {
@@ -2095,6 +2224,16 @@
                     <input type="checkbox" value="${verdict}"> ${verdict.toUpperCase()}
                 </label>
             `).join('');
+        }
+        
+        // Error banner functions
+        function showErrorBanner(message) {
+            document.getElementById('errorMessage').textContent = message;
+            document.getElementById('errorBanner').style.display = 'flex';
+        }
+        
+        function hideErrorBanner() {
+            document.getElementById('errorBanner').style.display = 'none';
         }
         
     </script>

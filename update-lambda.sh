@@ -100,18 +100,35 @@ aws sts get-caller-identity >/dev/null || error "AWS credentials not configured"
 LAMBDA_DIR="lambda/$LAMBDA_FOLDER"
 [ -d "$LAMBDA_DIR" ] || error "Lambda directory not found: $LAMBDA_DIR"
 
-# Determine function name pattern
-# Common patterns: stack-name-lambda-folder or stack-name-lambda-folder-function
-FUNCTION_NAME="$STACK_NAME-${LAMBDA_FOLDER//_/-}"
+# Determine function name pattern based on lambda type
+# Frontend auth functions have different naming pattern
+if [[ "$LAMBDA_FOLDER" == "register_user" || "$LAMBDA_FOLDER" == "login_user" ]]; then
+    # Frontend stack pattern: tre-frontend-register-user, tre-frontend-login-user
+    FUNCTION_NAME="tre-frontend-${LAMBDA_FOLDER//_/-}"
+    STACK_NAME="tokyo-real-estate-dashboard"  # Override stack name for frontend functions
+else
+    # Main AI stack pattern: stack-name-lambda-folder
+    FUNCTION_NAME="$STACK_NAME-${LAMBDA_FOLDER//_/-}"
+fi
 
 # Try to find the actual function name from AWS
 info "Looking for Lambda function..."
 ACTUAL_FUNCTION_NAME=$(aws lambda list-functions --region "$REGION" --query "Functions[?starts_with(FunctionName, '$FUNCTION_NAME')].FunctionName" --output text 2>/dev/null | head -n1)
 
 if [ -z "$ACTUAL_FUNCTION_NAME" ]; then
-    # Try alternative pattern
-    FUNCTION_NAME="$STACK_NAME-${LAMBDA_FOLDER//_/-}-function"
-    ACTUAL_FUNCTION_NAME=$(aws lambda list-functions --region "$REGION" --query "Functions[?starts_with(FunctionName, '$FUNCTION_NAME')].FunctionName" --output text 2>/dev/null | head -n1)
+    # Try alternative patterns
+    if [[ "$LAMBDA_FOLDER" == "register_user" || "$LAMBDA_FOLDER" == "login_user" ]]; then
+        # Try with different frontend prefixes
+        for prefix in "tre-frontend" "tokyo-real-estate-dashboard"; do
+            FUNCTION_NAME="$prefix-${LAMBDA_FOLDER//_/-}"
+            ACTUAL_FUNCTION_NAME=$(aws lambda list-functions --region "$REGION" --query "Functions[?starts_with(FunctionName, '$FUNCTION_NAME')].FunctionName" --output text 2>/dev/null | head -n1)
+            [ -n "$ACTUAL_FUNCTION_NAME" ] && break
+        done
+    else
+        # Try main stack alternative pattern
+        FUNCTION_NAME="$STACK_NAME-${LAMBDA_FOLDER//_/-}-function"
+        ACTUAL_FUNCTION_NAME=$(aws lambda list-functions --region "$REGION" --query "Functions[?starts_with(FunctionName, '$FUNCTION_NAME')].FunctionName" --output text 2>/dev/null | head -n1)
+    fi
 fi
 
 if [ -z "$ACTUAL_FUNCTION_NAME" ]; then

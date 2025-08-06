@@ -10,8 +10,10 @@ REGION="${AWS_REGION:-ap-northeast-1}"
 STACK_NAME="${STACK_NAME:-tokyo-real-estate-ai}"
 BUCKET_NAME="ai-scraper-artifacts-$REGION"
 LAYER_VERSION_FILE="$SCRIPT_DIR/.layer-version"
+BCRYPT_LAYER_VERSION_FILE="$SCRIPT_DIR/.bcrypt-layer-version"
 TEMPLATE_FILE="$SCRIPT_DIR/ai-stack.yaml"
 CURRENT_OPENAI_VERSION="1.95.0"  # Update this when you want to rebuild layer
+CURRENT_BCRYPT_VERSION="4.1.2"   # Update this when you want to rebuild bcrypt layer
 
 # Colors
 G='\033[0;32m' R='\033[0;31m' Y='\033[1;33m' B='\033[0;34m' NC='\033[0m'
@@ -118,7 +120,79 @@ EOF
     # Cleanup
     rm openai-layer.zip
 else
-    info "Skipping layer build - using cached version"
+    info "Skipping OpenAI layer build - using cached version"
+fi
+
+# Check if we need to build the Bcrypt layer
+NEED_BCRYPT_LAYER_BUILD=false
+
+if [ ! -f "$BCRYPT_LAYER_VERSION_FILE" ]; then
+    info "No bcrypt layer version file found - will build layer"
+    NEED_BCRYPT_LAYER_BUILD=true
+else
+    STORED_BCRYPT_VERSION=$(cat $BCRYPT_LAYER_VERSION_FILE)
+    if [ "$STORED_BCRYPT_VERSION" != "$CURRENT_BCRYPT_VERSION" ]; then
+        info "Bcrypt version changed ($STORED_BCRYPT_VERSION → $CURRENT_BCRYPT_VERSION) - will rebuild layer"
+        NEED_BCRYPT_LAYER_BUILD=true
+    else
+        # Check if layer exists in S3
+        if ! aws s3 ls s3://$BUCKET_NAME/layers/bcrypt-layer.zip --region $REGION >/dev/null 2>&1; then
+            info "Bcrypt layer missing from S3 - will rebuild layer"
+            NEED_BCRYPT_LAYER_BUILD=true
+        else
+            status "✅ Bcrypt layer up to date (v$CURRENT_BCRYPT_VERSION) - skipping build"
+        fi
+    fi
+fi
+
+# Build Bcrypt layer if needed (Windows-compatible approach)
+if [ "$NEED_BCRYPT_LAYER_BUILD" = true ]; then
+    status "Building Bcrypt layer (Windows-compatible method)..."
+    
+    # Create temporary Dockerfile for Windows compatibility
+    cat > Dockerfile.bcrypt << EOF
+FROM python:3.12-slim
+RUN pip install bcrypt==$CURRENT_BCRYPT_VERSION --target /layer/python/
+WORKDIR /layer
+RUN apt-get update && apt-get install -y zip && rm -rf /var/lib/apt/lists/*
+RUN zip -r bcrypt-layer.zip python/
+EOF
+    
+    # Build image and extract layer
+    docker build -t bcrypt-layer-builder -f Dockerfile.bcrypt .
+    
+    # Create container and copy file out
+    CONTAINER_ID=$(docker create bcrypt-layer-builder)
+    docker cp "$CONTAINER_ID:/layer/bcrypt-layer.zip" ./bcrypt-layer.zip
+    docker rm "$CONTAINER_ID"
+    
+    # Cleanup
+    rm Dockerfile.bcrypt
+    docker rmi bcrypt-layer-builder
+    
+    [ -f bcrypt-layer.zip ] || error "Bcrypt layer build failed"
+    
+    BCRYPT_LAYER_SIZE=$(du -sh bcrypt-layer.zip | cut -f1)
+    status "✅ Bcrypt layer built ($BCRYPT_LAYER_SIZE)"
+    
+    # Upload to S3
+    aws s3 cp bcrypt-layer.zip s3://$BUCKET_NAME/layers/bcrypt-layer.zip --region $REGION
+    status "✅ Bcrypt layer uploaded to S3"
+    
+    # Get the version ID we just wrote
+    BCRYPT_LAYER_OBJECT_VERSION=$(aws s3api head-object \
+    --bucket $BUCKET_NAME \
+    --key layers/bcrypt-layer.zip \
+    --region $REGION \
+    --query VersionId --output text)
+    
+    # Save version
+    echo "$CURRENT_BCRYPT_VERSION" > $BCRYPT_LAYER_VERSION_FILE
+    
+    # Cleanup
+    rm bcrypt-layer.zip
+else
+    info "Skipping bcrypt layer build - using cached version"
 fi
 
 # Always package Lambda functions (these change frequently) - Windows compatible ZIP
@@ -303,15 +377,25 @@ if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
     status "✅ Stack deleted successfully"
 fi
 
-# Always get the layer version ID (whether we built it or not)
+# Always get the layer version IDs (whether we built them or not)
 if [ -z "$LAYER_OBJECT_VERSION" ]; then
-    info "Retrieving existing layer version ID..."
+    info "Retrieving existing OpenAI layer version ID..."
     LAYER_OBJECT_VERSION=$(aws s3api head-object \
         --bucket $BUCKET_NAME \
         --key layers/openai-layer.zip \
         --region $REGION \
         --query VersionId --output text)
-    info "Layer version ID: $LAYER_OBJECT_VERSION"
+    info "OpenAI layer version ID: $LAYER_OBJECT_VERSION"
+fi
+
+if [ -z "$BCRYPT_LAYER_OBJECT_VERSION" ]; then
+    info "Retrieving existing Bcrypt layer version ID..."
+    BCRYPT_LAYER_OBJECT_VERSION=$(aws s3api head-object \
+        --bucket $BUCKET_NAME \
+        --key layers/bcrypt-layer.zip \
+        --region $REGION \
+        --query VersionId --output text)
+    info "Bcrypt layer version ID: $BCRYPT_LAYER_OBJECT_VERSION"
 fi
 
 # Deploy CloudFormation stack
@@ -334,7 +418,7 @@ aws cloudformation deploy \
       RegisterUserCodeVersion=$REGISTER_USER_VERSION \
       LoginUserCodeVersion=$LOGIN_USER_VERSION \
       OpenAILayerObjectVersion=$LAYER_OBJECT_VERSION \
-      BcryptLayerObjectVersion=XJj0pHRvvqRmqUCWYGdGcnoYtKHe6WO_
+      BcryptLayerObjectVersion=$BCRYPT_LAYER_OBJECT_VERSION
 
 status "✅ CloudFormation stack deployed"
 
@@ -379,6 +463,7 @@ echo "  Stack Name: $STACK_NAME"
 echo "  Region: $REGION"
 echo "  Bucket: $BUCKET_NAME"
 echo "  OpenAI Layer: v$CURRENT_OPENAI_VERSION"
+echo "  Bcrypt Layer: v$CURRENT_BCRYPT_VERSION"
 echo ""
 echo "🔧 Stack Resources:"
 echo "  URL Collector Function: $URL_COLLECTOR_FUNCTION_ARN"

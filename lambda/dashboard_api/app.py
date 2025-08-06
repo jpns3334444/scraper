@@ -6,6 +6,9 @@ from datetime import datetime
 import boto3
 from boto3.dynamodb.conditions import Key, Attr
 import re
+import sys
+sys.path.append('/opt')
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -19,12 +22,6 @@ s3_bucket = os.environ.get('OUTPUT_BUCKET', 'tokyo-real-estate-ai-data')
 s3_region = os.environ.get('AWS_REGION', 'ap-northeast-1')
 s3_client = boto3.client('s3')
 
-# CORS headers for browser access
-CORS_HEADERS = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-User-Id',
-    'Access-Control-Allow-Methods': 'GET,OPTIONS'
-}
 
 def decimal_to_float(obj):
     """Convert DynamoDB Decimal objects to Python float for JSON serialization"""
@@ -224,35 +221,51 @@ def get_user_favorite_ids(user_id):
 def lambda_handler(event, context):
     """Handle API requests for property data with cursor-based pagination"""
     
-    # Handle OPTIONS request for CORS
+    # Determine origin_header at runtime
+    origin_header = event.get("headers", {}).get("origin", "*")
+    
+    # Debug logging for OPTIONS
     if event.get('httpMethod') == 'OPTIONS':
+        logger.info(f"OPTIONS request received. Full event: {json.dumps(event)}")
         return {
-            'statusCode': 200,
-            'headers': CORS_HEADERS,
-            'body': ''
-        }
-    
-    # Handle default route (404 for unmatched paths) - ensure CORS headers
-    route_key = event.get('routeKey', '')
-    raw_path = event.get('rawPath', '')
-    
-    # If this is the $default route (catches all unmatched paths), return 404
-    if route_key == '$default':
-        return {
-            'statusCode': 404,
-            'headers': CORS_HEADERS,
-            'body': json.dumps({'message': 'Not Found'})
-        }
-    
-    # If the path is not exactly /properties, return 404
-    if raw_path and raw_path not in ['/properties', '/prod/properties']:
-        return {
-            'statusCode': 404,
-            'headers': CORS_HEADERS,
-            'body': json.dumps({'message': 'Not Found'})
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": origin_header,
+                "Access-Control-Allow-Credentials": "true"
+            },
+            "body": json.dumps({})
         }
     
     try:
+        # Handle default route (404 for unmatched paths) - ensure CORS headers
+        route_key = event.get('routeKey', '')
+        raw_path = event.get('rawPath', '')
+        
+        # If this is the $default route (catches all unmatched paths), return 404
+        if route_key == '$default':
+            return {
+                "statusCode": 404,
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": origin_header,
+                    "Access-Control-Allow-Credentials": "true"
+                },
+                "body": json.dumps({'message': 'Not Found'})
+            }
+        
+        # If the path is not exactly /properties, return 404
+        if raw_path and raw_path not in ['/properties', '/prod/properties']:
+            return {
+                "statusCode": 404,
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": origin_header,
+                    "Access-Control-Allow-Credentials": "true"
+                },
+                "body": json.dumps({'message': 'Not Found'})
+            }
+        
         # Get query parameters
         params = event.get('queryStringParameters', {}) or {}
         
@@ -260,14 +273,18 @@ def lambda_handler(event, context):
         user_id = event.get('headers', {}).get('X-User-Id', 'anonymous')
         
         # Pagination parameters
-        limit = min(int(params.get('limit', 500)), 1000)  # Default 500, max 1000
+        limit = max(1, min(int(params.get('limit', 100)), 100))  # Default 100, max 100, min 1
         cursor = json.loads(params['cursor']) if 'cursor' in params else None
         
         # Build scan kwargs with projection expression
         scan_kwargs = {
             'Limit': limit,
             'FilterExpression': Attr('sort_key').eq('META'),
-            'ProjectionExpression': 'PK, price, size_sqm, total_sqm, ward, ward_discount_pct, img_url, listing_url, url, verdict, recommendation, property_id, analysis_date, photo_filenames, price_per_sqm, total_monthly_costs, ward_median_price_per_sqm, closest_station, station_distance_minutes, floor, building_age_years, primary_light'
+            'ProjectionExpression': 'PK, price, size_sqm, total_sqm, ward, ward_discount_pct, img_url, listing_url, #url_attr, verdict, recommendation, property_id, analysis_date, photo_filenames, price_per_sqm, total_monthly_costs, ward_median_price_per_sqm, closest_station, station_distance_minutes, #floor_attr, building_age_years, primary_light',
+            'ExpressionAttributeNames': {
+                '#url_attr': 'url',
+                '#floor_attr': 'floor'
+            }
         }
         
         if cursor:
@@ -341,15 +358,24 @@ def lambda_handler(event, context):
         }
         
         return {
-            'statusCode': 200,
-            'headers': CORS_HEADERS,
-            'body': json.dumps(body)
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": origin_header,
+                "Access-Control-Allow-Credentials": "true"
+            },
+            "body": json.dumps(body)
         }
         
     except Exception as e:
+        print("ERROR:", e)
         logger.error(f"Error processing request: {str(e)}")
         return {
-            'statusCode': 500,
-            'headers': CORS_HEADERS,
-            'body': json.dumps({'error': str(e)})
+            "statusCode": 500,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": origin_header,
+                "Access-Control-Allow-Credentials": "true"
+            },
+            "body": json.dumps({'error': str(e)})
         }
