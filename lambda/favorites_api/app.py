@@ -145,11 +145,13 @@ def add_preference(event, user_id, preference_type):
                 "body": json.dumps({'error': 'property_id is required'})
             }
         
-        # Create unique preference ID
-        preference_id = f"{user_id}_{property_id}_{preference_type}"
-        
-        # Check if preference already exists
-        existing = preferences_table.get_item(Key={'preference_id': preference_id})
+        # Check if preference already exists using composite key
+        existing = preferences_table.get_item(
+            Key={
+                'user_id': user_id,
+                'property_id': property_id
+            }
+        )
         
         if 'Item' in existing:
             return {
@@ -169,7 +171,6 @@ def add_preference(event, user_id, preference_type):
         
         # Create preference record with Decimal values for DynamoDB
         preference_item = {
-            'preference_id': preference_id,
             'user_id': user_id,
             'property_id': property_id,
             'preference_type': preference_type,
@@ -203,7 +204,6 @@ def add_preference(event, user_id, preference_type):
                 sqs.send_message(
                     QueueUrl=queue_url,
                     MessageBody=json.dumps({
-                        'preference_id': preference_id,
                         'user_id': user_id,
                         'property_id': property_id
                     })
@@ -219,7 +219,7 @@ def add_preference(event, user_id, preference_type):
                 "Access-Control-Allow-Origin": origin_header,
                 "Access-Control-Allow-Credentials": "true"
             },
-            "body": json.dumps({'success': True, 'preference_id': preference_id})
+            "body": json.dumps({'success': True, 'user_id': user_id, 'property_id': property_id})
         }
         
     except Exception as e:
@@ -257,20 +257,20 @@ def remove_preference(event, user_id, preference_type):
                 "body": json.dumps({'error': 'Invalid path, property_id not found'})
             }
 
-        # Construct the unique preference_id directly
-        preference_id = f"{user_id}_{property_id}_{preference_type}"
-        
-        print(f"[DEBUG] Attempting to delete preference_id: {preference_id}")
+        print(f"[DEBUG] Attempting to delete user_id: {user_id}, property_id: {property_id}")
 
-        # Perform the deletion using the primary key
+        # Perform the deletion using the composite primary key
         delete_response = preferences_table.delete_item(
-            Key={'preference_id': preference_id},
+            Key={
+                'user_id': user_id,
+                'property_id': property_id
+            },
             ReturnValues='ALL_OLD'
         )
         
         # Check if anything was actually deleted
         if 'Attributes' not in delete_response:
-            print(f"[WARNING] Preference not found for ID: {preference_id}")
+            print(f"[WARNING] Preference not found for user_id: {user_id}, property_id: {property_id}")
             return {
                 'statusCode': 404,
                 "headers": {
@@ -293,7 +293,8 @@ def remove_preference(event, user_id, preference_type):
             "body": json.dumps({
                 'success': True,
                 'deleted': True,
-                'preference_id': preference_id
+                'user_id': user_id,
+                'property_id': property_id
             })
         }
         

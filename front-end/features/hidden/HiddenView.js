@@ -20,7 +20,7 @@ class HiddenView {
                 <a href="${property.listing_url}" target="_blank">
                     ${ward} - ${price}
                 </a>
-                <button class="remove-btn" onclick="this.parentElement.remove()">
+                <button class="remove-btn" onclick="removeHiddenProperty('${property.property_id}')">
                     Remove
                 </button>
             </li>

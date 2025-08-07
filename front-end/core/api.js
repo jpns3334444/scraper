@@ -142,4 +142,44 @@ class PropertyAPI {
             return await this.addFavorite(propertyId, userEmail);
         }
     }
+    
+    async addHidden(propertyId, userEmail) {
+        console.log(`[API] Adding to hidden: ${propertyId} for user: ${userEmail}`);
+        
+        const response = await fetch(`${this.favoritesApiUrl}/hidden`, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'X-User-Email': userEmail
+            },
+            body: JSON.stringify({ property_id: propertyId })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Failed to add to hidden: ${response.status}`);
+        }
+        
+        return true;
+    }
+    
+    async removeHidden(propertyId, userEmail) {
+        console.log(`[API] Removing from hidden: ${propertyId} for user: ${userEmail}`);
+        
+        const response = await fetch(`${this.favoritesApiUrl}/hidden/${propertyId}`, {
+            method: 'DELETE',
+            headers: { 
+                'X-User-Email': userEmail
+            }
+        });
+        
+        console.log(`[API] Delete hidden response status: ${response.status}`);
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`[API] Delete hidden failed: ${response.status} - ${errorText}`);
+            throw new Error(`Failed to remove from hidden: ${response.status}`);
+        }
+        
+        return true;
+    }
 }

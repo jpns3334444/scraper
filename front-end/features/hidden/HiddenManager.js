@@ -43,4 +43,33 @@ class HiddenManager {
             hiddenCount.textContent = this.state.hidden.size.toString();
         }
     }
+    
+    async removeHidden(propertyId) {
+        if (!confirm('Remove this property from hidden list?')) return;
+        
+        try {
+            // Call API if user is logged in
+            if (this.state.currentUser) {
+                await this.api.removeHidden(propertyId, this.state.currentUser.email);
+            }
+            
+            // Update local state
+            this.state.removeHidden(propertyId);
+            this.updateHiddenCount();
+            
+            // Refresh the hidden list display
+            this.loadHidden();
+            
+        } catch (error) {
+            console.error('Error removing hidden property:', error);
+            alert('Error removing property from hidden list');
+        }
+    }
+}
+
+// Global function for onclick handlers
+function removeHiddenProperty(propertyId) {
+    if (window.app && window.app.hidden) {
+        window.app.hidden.removeHidden(propertyId);
+    }
 }

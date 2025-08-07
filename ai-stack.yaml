@@ -316,54 +316,29 @@ Resources:
         - AttributeName: email
           KeyType: HASH
 
-  # DynamoDB Table for User Preferences (Favorites and Hidden)
   UserPreferencesTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: !Sub '${AWS::StackName}-user-preferences'
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: preference_id
-          AttributeType: S
         - AttributeName: user_id
-          AttributeType: S
-        - AttributeName: created_at
           AttributeType: S
         - AttributeName: property_id
           AttributeType: S
         - AttributeName: preference_type
           AttributeType: S
       KeySchema:
-        - AttributeName: preference_id
+        - AttributeName: user_id
           KeyType: HASH
+        - AttributeName: property_id
+          KeyType: RANGE
       GlobalSecondaryIndexes:
-        - IndexName: user-preferences-index
-          KeySchema:
-            - AttributeName: user_id
-              KeyType: HASH
-            - AttributeName: created_at
-              KeyType: RANGE
-          Projection:
-            ProjectionType: ALL
-        - IndexName: property-preferences-index
-          KeySchema:
-            - AttributeName: property_id
-              KeyType: HASH
-          Projection:
-            ProjectionType: ALL
         - IndexName: user-type-index
           KeySchema:
             - AttributeName: user_id
               KeyType: HASH
             - AttributeName: preference_type
-              KeyType: RANGE
-          Projection:
-            ProjectionType: ALL
-        - IndexName: user-property-index
-          KeySchema:
-            - AttributeName: user_id
-              KeyType: HASH
-            - AttributeName: property_id
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
@@ -506,7 +481,7 @@ Resources:
       MemorySize: 512
       Environment:
         Variables:
-          FAVORITES_TABLE: !Ref UserPreferencesTable
+          PREFERENCES_TABLE: !Ref UserPreferencesTable
 
   # Register User Lambda Function
   RegisterUserFunction:
