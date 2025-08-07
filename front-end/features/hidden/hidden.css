@@ -1,94 +1,186 @@
 /**
  * hidden.css
- * Minimal Sumi-e hidden items list
+ * Hidden items matching favorites card style
  */
 
- .fav-list {
-    list-style: none;
+/* Use same grid as favorites */
+.hidden-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: var(--space-xl);
     padding: var(--space-lg) 0;
-    margin: 0;
 }
 
-.fav-list li {
-    padding: var(--space-md);
-    margin: 0 0 var(--space-sm) 0;
+/* Hidden card - exactly like favorite card */
+.hidden-card {
     background: var(--paper-white);
     border: 1px solid var(--ink-faint);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    transition: all 0.3s ease;
+    padding: var(--space-lg);
+    cursor: pointer;
     position: relative;
+    transition: all 0.4s ease;
+    display: flex;
+    align-items: center;
+    gap: var(--space-lg);
 }
 
-/* Subtle hover effect */
-.fav-list li::before {
+.hidden-card::before {
     content: '';
     position: absolute;
-    left: 0;
     top: 0;
+    left: 0;
+    right: 0;
     bottom: 0;
-    width: 2px;
-    background: var(--ink-faint);
-    transition: all 0.3s ease;
+    background: radial-gradient(
+        ellipse at var(--mouse-x, 50%) var(--mouse-y, 50%),
+        rgba(0,0,0,0.03) 0%,
+        transparent 50%
+    );
+    opacity: 0;
+    transition: opacity 0.4s ease;
+    pointer-events: none;
 }
 
-.fav-list li:hover::before {
-    width: 4px;
-    background: var(--ink-gray);
+.hidden-card:hover::before {
+    opacity: 1;
 }
 
-.fav-list li:hover {
+.hidden-card:hover {
     border-color: var(--ink-gray);
+    transform: translateY(-2px);
 }
 
-.fav-list li a {
-    color: var(--ink-black);
-    text-decoration: none;
-    flex: 1;
-    font-size: 13px;
-    transition: color 0.3s ease;
-}
-
-.fav-list li a:hover {
-    color: var(--ink-gray);
-}
-
-/* Remove button */
-.fav-list .remove-btn {
-    background: transparent;
-    color: var(--ink-light);
+/* Image section */
+.hidden-image-section {
+    width: 140px;
+    height: 100px;
+    margin-right: var(--space-md);
+    flex-shrink: 0;
+    background: var(--paper-gray);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
     border: 1px solid var(--ink-faint);
-    padding: var(--space-xs) var(--space-sm);
-    cursor: pointer;
-    font-size: 11px;
-    transition: all 0.3s ease;
+}
+
+.hidden-image-section img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: grayscale(20%);
+    transition: filter 0.3s ease;
+}
+
+.hidden-card:hover .hidden-image-section img {
+    filter: grayscale(0%);
+}
+
+.hidden-image-section.no-image {
+    background: var(--paper-gray);
+    color: var(--ink-faint);
+    font-size: 12px;
+    text-align: center;
+}
+
+/* Details section */
+.hidden-details-section {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.hidden-ward {
+    font-size: 14px;
+    color: var(--ink-gray);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.hidden-price {
+    font-size: 20px;
+    font-weight: 300;
+    color: var(--ink-black);
+    margin: var(--space-xs) 0;
+}
+
+.hidden-size {
+    font-size: 13px;
+    color: var(--ink-light);
     letter-spacing: 0.05em;
 }
 
-.fav-list .remove-btn:hover {
+/* Restore button */
+.restore-btn {
+    position: absolute;
+    top: var(--space-md);
+    right: var(--space-md);
+    background: transparent;
+    border: 1px solid var(--ink-faint);
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0;
+    transition: all 0.3s ease;
+    color: var(--ink-light);
+    padding: 0;
+}
+
+.hidden-card:hover .restore-btn {
+    opacity: 1;
+}
+
+.restore-btn:hover {
     border-color: var(--ink-gray);
     color: var(--ink-black);
+    transform: rotate(-90deg);
+}
+
+/* Old list style - remove */
+.fav-list {
+    display: none;
 }
 
 /* Empty state */
 .hidden-empty {
-    padding: var(--space-xxl);
+    grid-column: 1 / -1;
     text-align: center;
+    padding: var(--space-xxl);
     color: var(--ink-light);
     font-size: 14px;
     letter-spacing: 0.1em;
 }
 
+.hidden-empty::before {
+    content: '';
+    display: block;
+    width: 60px;
+    height: 60px;
+    margin: 0 auto var(--space-lg);
+    background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 60"><circle cx="30" cy="30" r="28" stroke="%23d0d0d0" stroke-width="1" fill="none" stroke-dasharray="4,2"/></svg>');
+}
+
 /* Mobile responsiveness */
 @media (max-width: 768px) {
-    .fav-list li {
-        padding: var(--space-sm);
-        font-size: 12px;
+    .hidden-container {
+        grid-template-columns: 1fr;
+        gap: var(--space-lg);
     }
     
-    .fav-list .remove-btn {
-        padding: var(--space-xs);
-        font-size: 10px;
+    .hidden-card {
+        padding: var(--space-md);
+    }
+    
+    .hidden-image-section {
+        width: 120px;
+        height: 85px;
+    }
+    
+    .hidden-price {
+        font-size: 18px;
     }
 }

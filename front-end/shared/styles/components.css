@@ -60,12 +60,13 @@ td:nth-child(6), td:nth-child(9), td:nth-child(10), td:nth-child(11), td:nth-chi
     color: var(--ink-black);
 }
 
-/* Sort arrows - minimal */
+/* Sort arrows - minimal, always visible */
 .sort-arrows {
     margin-left: var(--space-xs);
     font-size: 10px;
     color: var(--ink-faint);
     transition: color 0.3s ease;
+    display: inline-block;
 }
 
 .sort-arrows.active {

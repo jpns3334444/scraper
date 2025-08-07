@@ -21,6 +21,30 @@
     <link rel="stylesheet" href="features/favorites/favorites.css">
     <link rel="stylesheet" href="features/auth/auth.css">
     <link rel="stylesheet" href="features/hidden/hidden.css">
+    
+    <style>
+        /* Fluid Ink Tab Indicator Styles */
+        .tab-navigation {
+            position: relative;
+            z-index: 15;
+        }
+        
+        #inkCanvas {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 60px;
+            pointer-events: none;
+            z-index: 14;
+        }
+        
+        /* Ensure tabs are above the canvas */
+        .tab-button {
+            position: relative;
+            z-index: 16;
+        }
+    </style>
 </head>
 <body>
     <!-- SVG Filters for Sumi-e Effects -->
@@ -89,8 +113,11 @@
             </div>
         </div>
         
-        <!-- Tab Navigation aligned left -->
-        <div class="tab-navigation" id="tabNavigation"></div>
+        <!-- Tab Navigation aligned left with fluid ink canvas -->
+        <div class="tab-navigation" id="tabNavigation">
+            <!-- Canvas for fluid ink underline effect -->
+            <canvas id="inkCanvas"></canvas>
+        </div>
         
         <!-- Properties Tab -->
         <div id="properties-tab" class="tab-pane active">
@@ -125,6 +152,371 @@
             <ul class="fav-list" id="hiddenList"></ul>
         </div>
     </div>
+    
+    <!-- WebGL Fluid Ink Shader Script -->
+    <script id="inkShaderScript">
+        /**
+         * Fluid Ink Tab Indicator
+         * WebGL-based sumi-e inspired fluid animation
+         */
+        class FluidInkIndicator {
+            constructor(canvasId) {
+                this.canvas = document.getElementById(canvasId);
+                this.gl = null;
+                this.program = null;
+                this.uniforms = {};
+                this.buffers = {};
+                
+                // Animation state
+                this.time = 0;
+                this.targetX = 0.5;
+                this.currentX = 0.5;
+                this.targetWidth = 0.2;
+                this.currentWidth = 0.2;
+                this.velocity = 0;
+                this.rippleAmplitude = 0;
+                this.rippleDecay = 0.95;
+                
+                // Tab positions cache
+                this.tabPositions = [];
+                
+                this.init();
+            }
+            
+            init() {
+                // Initialize WebGL context
+                this.gl = this.canvas.getContext('webgl') || this.canvas.getContext('experimental-webgl');
+                if (!this.gl) {
+                    console.error('WebGL not supported');
+                    return;
+                }
+                
+                // Set canvas size
+                this.resize();
+                
+                // Create shaders and program
+                this.createShaders();
+                
+                // Set up geometry
+                this.createBuffers();
+                
+                // Get uniform locations
+                this.getUniforms();
+                
+                // Start animation loop
+                this.animate();
+                
+                // Handle window resize
+                window.addEventListener('resize', () => this.resize());
+                
+                // Cache tab positions
+                this.updateTabPositions();
+            }
+            
+            createShaders() {
+                const gl = this.gl;
+                
+                // Vertex shader - simple quad
+                const vertexShaderSource = `
+                    attribute vec2 a_position;
+                    varying vec2 v_uv;
+                    
+                    void main() {
+                        v_uv = a_position * 0.5 + 0.5;
+                        gl_Position = vec4(a_position, 0.0, 1.0);
+                    }
+                `;
+                
+                // Fragment shader - fluid ink effect
+                const fragmentShaderSource = `
+                    precision highp float;
+                    
+                    varying vec2 v_uv;
+                    
+                    // Uniforms for animation
+                    uniform float u_time;
+                    uniform float u_centerX;      // Center position of ink line (0-1)
+                    uniform float u_width;         // Width of ink line
+                    uniform float u_velocity;      // Movement velocity for dynamics
+                    uniform float u_ripple;        // Ripple amplitude
+                    uniform vec2 u_resolution;
+                    
+                    // Simplex noise for organic movement
+                    vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+                    vec2 mod289(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+                    vec3 permute(vec3 x) { return mod289(((x*34.0)+1.0)*x); }
+                    
+                    float snoise(vec2 v) {
+                        const vec4 C = vec4(0.211324865405187,  // (3.0-sqrt(3.0))/6.0
+                                          0.366025403784439,  // 0.5*(sqrt(3.0)-1.0)
+                                         -0.577350269189626,  // -1.0 + 2.0 * C.x
+                                          0.024390243902439); // 1.0 / 41.0
+                        vec2 i  = floor(v + dot(v, C.yy));
+                        vec2 x0 = v - i + dot(i, C.xx);
+                        vec2 i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+                        vec4 x12 = x0.xyxy + C.xxzz;
+                        x12.xy -= i1;
+                        i = mod289(i);
+                        vec3 p = permute(permute(i.y + vec3(0.0, i1.y, 1.0)) + i.x + vec3(0.0, i1.x, 1.0));
+                        vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
+                        m = m*m;
+                        m = m*m;
+                        vec3 x = 2.0 * fract(p * C.www) - 1.0;
+                        vec3 h = abs(x) - 0.5;
+                        vec3 ox = floor(x + 0.5);
+                        vec3 a0 = x - ox;
+                        m *= 1.79284291400159 - 0.85373472095314 * (a0*a0 + h*h);
+                        vec3 g;
+                        g.x  = a0.x  * x0.x  + h.x  * x0.y;
+                        g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+                        return 130.0 * dot(m, g);
+                    }
+                    
+                    void main() {
+                        vec2 uv = v_uv;
+                        
+                        // Calculate distance from ink center line
+                        float distFromCenter = abs(uv.x - u_centerX);
+                        
+                        // Add time-based undulation (idle animation)
+                        float idleWave = sin(uv.x * 12.0 + u_time * 2.0) * 0.003;
+                        float idleNoise = snoise(vec2(uv.x * 5.0, u_time * 0.5)) * 0.005;
+                        
+                        // Add velocity-based ripple effect
+                        float rippleWave = sin((uv.x - u_centerX) * 30.0 - u_time * 8.0) * u_ripple * 0.02;
+                        rippleWave *= exp(-distFromCenter * 10.0); // Decay with distance
+                        
+                        // Combine all vertical displacements
+                        float yOffset = idleWave + idleNoise + rippleWave;
+                        
+                        // Calculate ink line with fluid edges
+                        float lineY = 0.85 + yOffset; // Base position near bottom
+                        float thickness = 0.025 + abs(u_velocity) * 0.01; // Dynamic thickness
+                        
+                        // Distance from the fluid line
+                        float distFromLine = abs(uv.y - lineY);
+                        
+                        // Create soft, organic edges using noise
+                        float edgeNoise = snoise(vec2(uv.x * 20.0 + u_time * 0.3, uv.y * 50.0)) * 0.008;
+                        distFromLine += edgeNoise;
+                        
+                        // Ink intensity calculation with smooth falloff
+                        float ink = 1.0 - smoothstep(0.0, thickness, distFromLine);
+                        
+                        // Width-based fade (horizontal constraint)
+                        float widthFade = 1.0 - smoothstep(u_width * 0.5, u_width * 0.6, distFromCenter);
+                        ink *= widthFade;
+                        
+                        // Add subtle ink bleeding at edges
+                        float bleed = 1.0 - smoothstep(thickness, thickness * 2.5, distFromLine);
+                        bleed *= widthFade * 0.3;
+                        
+                        // Combine ink and bleed
+                        float finalInk = ink + bleed;
+                        
+                        // Apply subtle pulsing
+                        finalInk *= 0.9 + sin(u_time * 3.0) * 0.1;
+                        
+                        // Output black ink with alpha
+                        gl_FragColor = vec4(0.1, 0.1, 0.1, finalInk * 0.85);
+                    }
+                `;
+                
+                // Compile shaders
+                const vertexShader = this.compileShader(gl.VERTEX_SHADER, vertexShaderSource);
+                const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, fragmentShaderSource);
+                
+                // Create program
+                this.program = gl.createProgram();
+                gl.attachShader(this.program, vertexShader);
+                gl.attachShader(this.program, fragmentShader);
+                gl.linkProgram(this.program);
+                
+                if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) {
+                    console.error('Unable to initialize shader program:', gl.getProgramInfoLog(this.program));
+                }
+                
+                gl.useProgram(this.program);
+            }
+            
+            compileShader(type, source) {
+                const gl = this.gl;
+                const shader = gl.createShader(type);
+                gl.shaderSource(shader, source);
+                gl.compileShader(shader);
+                
+                if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                    console.error('Shader compilation error:', gl.getShaderInfoLog(shader));
+                    gl.deleteShader(shader);
+                    return null;
+                }
+                
+                return shader;
+            }
+            
+            createBuffers() {
+                const gl = this.gl;
+                
+                // Create a quad that covers the entire canvas
+                const positions = new Float32Array([
+                    -1, -1,
+                     1, -1,
+                    -1,  1,
+                     1,  1,
+                ]);
+                
+                // Create and bind buffer
+                this.buffers.position = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.buffers.position);
+                gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+                
+                // Set up attribute
+                const positionLocation = gl.getAttribLocation(this.program, 'a_position');
+                gl.enableVertexAttribArray(positionLocation);
+                gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+            }
+            
+            getUniforms() {
+                const gl = this.gl;
+                this.uniforms = {
+                    time: gl.getUniformLocation(this.program, 'u_time'),
+                    centerX: gl.getUniformLocation(this.program, 'u_centerX'),
+                    width: gl.getUniformLocation(this.program, 'u_width'),
+                    velocity: gl.getUniformLocation(this.program, 'u_velocity'),
+                    ripple: gl.getUniformLocation(this.program, 'u_ripple'),
+                    resolution: gl.getUniformLocation(this.program, 'u_resolution'),
+                };
+            }
+            
+            resize() {
+                const rect = this.canvas.parentElement.getBoundingClientRect();
+                this.canvas.width = rect.width;
+                this.canvas.height = 60;
+                
+                if (this.gl) {
+                    this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+                }
+            }
+            
+            updateTabPositions() {
+                const tabs = document.querySelectorAll('.tab-button');
+                const navRect = document.getElementById('tabNavigation').getBoundingClientRect();
+                
+                this.tabPositions = Array.from(tabs).map(tab => {
+                    const rect = tab.getBoundingClientRect();
+                    return {
+                        center: (rect.left + rect.width / 2 - navRect.left) / navRect.width,
+                        width: rect.width / navRect.width
+                    };
+                });
+                
+                // Set initial position to active tab
+                const activeIndex = Array.from(tabs).findIndex(tab => tab.classList.contains('active'));
+                if (activeIndex >= 0 && this.tabPositions[activeIndex]) {
+                    this.currentX = this.targetX = this.tabPositions[activeIndex].center;
+                    this.currentWidth = this.targetWidth = this.tabPositions[activeIndex].width;
+                }
+            }
+            
+            moveToTab(tabIndex) {
+                if (this.tabPositions[tabIndex]) {
+                    const oldX = this.targetX;
+                    this.targetX = this.tabPositions[tabIndex].center;
+                    this.targetWidth = this.tabPositions[tabIndex].width;
+                    
+                    // Calculate initial velocity based on distance
+                    const distance = this.targetX - oldX;
+                    this.velocity = distance * 5;
+                    
+                    // Trigger ripple effect
+                    this.rippleAmplitude = Math.abs(distance) * 3;
+                }
+            }
+            
+            animate() {
+                const gl = this.gl;
+                
+                // Update time
+                this.time += 0.016;
+                
+                // Spring physics for smooth movement
+                const springStrength = 0.15;
+                const damping = 0.85;
+                
+                // Update position with spring physics
+                const dx = this.targetX - this.currentX;
+                this.velocity += dx * springStrength;
+                this.velocity *= damping;
+                this.currentX += this.velocity;
+                
+                // Update width with smooth transition
+                this.currentWidth += (this.targetWidth - this.currentWidth) * 0.1;
+                
+                // Decay ripple
+                this.rippleAmplitude *= this.rippleDecay;
+                
+                // Clear canvas
+                gl.clearColor(0, 0, 0, 0);
+                gl.clear(gl.COLOR_BUFFER_BIT);
+                
+                // Enable blending for transparency
+                gl.enable(gl.BLEND);
+                gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+                
+                // Update uniforms
+                gl.uniform1f(this.uniforms.time, this.time);
+                gl.uniform1f(this.uniforms.centerX, this.currentX);
+                gl.uniform1f(this.uniforms.width, this.currentWidth);
+                gl.uniform1f(this.uniforms.velocity, this.velocity);
+                gl.uniform1f(this.uniforms.ripple, this.rippleAmplitude);
+                gl.uniform2f(this.uniforms.resolution, this.canvas.width, this.canvas.height);
+                
+                // Draw quad
+                gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+                
+                // Continue animation
+                requestAnimationFrame(() => this.animate());
+            }
+        }
+        
+        // Initialize the fluid ink indicator when DOM is ready
+        let fluidInk = null;
+        
+        function initFluidInk() {
+            if (!fluidInk) {
+                fluidInk = new FluidInkIndicator('inkCanvas');
+            }
+        }
+        
+        // Override the switchTab function to trigger ink animation
+        const originalSwitchTab = window.switchTab;
+        window.switchTab = function(tabName) {
+            // Call original function if it exists
+            if (originalSwitchTab) {
+                originalSwitchTab.call(this, tabName);
+            }
+            
+            // Find the index of the clicked tab
+            const tabs = document.querySelectorAll('.tab-button');
+            const tabIndex = Array.from(tabs).findIndex(tab => {
+                const text = tab.textContent.toLowerCase();
+                return text.includes(tabName.toLowerCase());
+            });
+            
+            // Animate ink to new position
+            if (fluidInk && tabIndex >= 0) {
+                fluidInk.moveToTab(tabIndex);
+            }
+        };
+        
+        // Initialize when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initFluidInk);
+        } else {
+            // DOM already loaded
+            setTimeout(initFluidInk, 100);
+        }
+    </script>
     
     <!-- Load JavaScript modules in correct order -->
     <script src="config/constants.js"></script>

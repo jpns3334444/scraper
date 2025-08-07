@@ -1,6 +1,6 @@
 /**
  * PropertiesManager.js
- * Handles loading, sorting, filtering, and management of property listings
+ * Fixed sorting functionality
  */
 
 class PropertiesManager {
@@ -130,6 +130,7 @@ class PropertiesManager {
         this.applySort();
         this.state.setPage(1);
         this.renderCurrentPage();
+        this.updateSortArrows();
     }
     
     applySort() {
@@ -154,19 +155,17 @@ class PropertiesManager {
             
             return direction === 'asc' ? result : -result;
         });
-        
-        this.updateSortArrows();
     }
     
     updateSortArrows() {
-        // Reset all arrows
+        // Reset all arrows to default state
         document.querySelectorAll('.sort-arrows').forEach(arrow => {
             arrow.classList.remove('active');
-            arrow.textContent = '▲▼';
+            arrow.textContent = '▼';
         });
         
-        // Set active arrow
-        const activeArrow = document.querySelector(`[onclick*="${this.state.currentSort.field}"] .sort-arrows`);
+        // Set active arrow with proper direction
+        const activeArrow = document.getElementById(`sort-${this.state.currentSort.field}`);
         if (activeArrow) {
             activeArrow.classList.add('active');
             activeArrow.textContent = this.state.currentSort.direction === 'asc' ? '▲' : '▼';

@@ -1,6 +1,6 @@
 /**
  * router.js
- * Tab routing and navigation management
+ * Tab routing and navigation management with fluid ink indicator
  */
 
 class Router {
@@ -17,6 +17,9 @@ class Router {
     setupTabNavigation() {
         const tabContainer = document.getElementById('tabNavigation');
         if (tabContainer) {
+            // Preserve the canvas element if it exists
+            const existingCanvas = tabContainer.querySelector('#inkCanvas');
+            
             tabContainer.innerHTML = `
                 <button class="tab-button active" onclick="window.app.router.switchTab('properties')">
                     Properties
@@ -28,18 +31,35 @@ class Router {
                     Hidden <span class="favorites-count" id="hiddenCount" style="background: #999;">0</span>
                 </button>
             `;
+            
+            // Re-append canvas if it existed
+            if (existingCanvas) {
+                tabContainer.appendChild(existingCanvas);
+            }
         }
     }
     
     setupTabButtons() {
-        document.querySelectorAll('.tab-button').forEach(button => {
+        document.querySelectorAll('.tab-button').forEach((button, index) => {
             button.addEventListener('click', (e) => {
                 const tabName = this.getTabNameFromButton(e.target);
                 if (tabName) {
                     this.switchTab(tabName);
+                    
+                    // Trigger fluid ink animation
+                    if (window.fluidInk) {
+                        window.fluidInk.moveToTab(index);
+                    }
                 }
             });
         });
+        
+        // Update fluid ink tab positions after setup
+        setTimeout(() => {
+            if (window.fluidInk) {
+                window.fluidInk.updateTabPositions();
+            }
+        }, 100);
     }
     
     getTabNameFromButton(button) {
@@ -78,13 +98,21 @@ class Router {
             targetTab.style.display = 'block'; // Explicitly set display:block
         }
         
-        // Activate the button
-        const activeButton = Array.from(document.querySelectorAll('.tab-button')).find(btn => {
+        // Activate the button and trigger fluid ink
+        const buttons = Array.from(document.querySelectorAll('.tab-button'));
+        const activeButton = buttons.find(btn => {
             const btnTabName = this.getTabNameFromButton(btn);
             return btnTabName === tabName;
         });
+        
         if (activeButton) {
             activeButton.classList.add('active');
+            
+            // Trigger fluid ink animation
+            const buttonIndex = buttons.indexOf(activeButton);
+            if (window.fluidInk && buttonIndex >= 0) {
+                window.fluidInk.moveToTab(buttonIndex);
+            }
         }
         
         // Log state after switching

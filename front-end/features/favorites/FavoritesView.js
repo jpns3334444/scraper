@@ -11,19 +11,26 @@ class FavoritesView {
         // Sort by price descending
         favoriteProperties.sort((a, b) => (b.price || 0) - (a.price || 0));
         
-        // Generate card HTML for each property
-        const cards = favoriteProperties.map(property => this.renderFavoriteCard(property));
+        // Generate card HTML for each property (with async image loading)
+        const cardPromises = favoriteProperties.map(property => this.renderFavoriteCard(property));
+        const cards = await Promise.all(cardPromises);
         
         favoritesList.innerHTML = cards.join('');
     }
     
-    renderFavoriteCard(property) {
+    async renderFavoriteCard(property) {
         // Extract only the data we need
         const ward = property.ward || '—';
         const price = property.price ? `¥${(property.price * 10000).toLocaleString()}` : '—';
         const size = property.size_sqm || property.total_sqm ? 
             `${Math.round(property.size_sqm || property.total_sqm)}m²` : '—';
         const url = property.listing_url || '#';
+        
+        // Get property image
+        const imageUrl = await this.getPropertyImage(property);
+        const imageHtml = imageUrl ? 
+            `<img src="${imageUrl}" alt="Property image" onError="this.parentElement.classList.add('no-image'); this.parentElement.innerHTML='No Image';">` : 
+            '<div class="no-image">No Image</div>';
         
         // Determine processing status
         let statusClass = 'processing';
@@ -36,9 +43,12 @@ class FavoritesView {
             statusText = 'Failed';
         }
         
-        // Minimal card with only essential information
+        // Card with image on left, essential information
         return `
             <div class="favorite-card" data-property-id="${property.property_id}" onclick="openListing(event, '${url}')" style="cursor: pointer;">
+                <div class="favorite-image-section">
+                    ${imageHtml}
+                </div>
                 <div class="favorite-details-section">
                     <div class="favorite-ward">${ward}</div>
                     <div class="favorite-price">${price}</div>
@@ -51,5 +61,24 @@ class FavoritesView {
                     </svg>
                 </button>
             </div>`;
+    }
+    
+    async getPropertyImage(property) {
+        // Check if property has image_url or image_key field
+        if (property.image_url) {
+            return property.image_url;
+        } else if (property.image_key || property.image_s3_key) {
+            // Generate pre-signed URL via API
+            try {
+                const response = await fetch(`${API_URL}/properties/${property.property_id}/image-url`);
+                if (response.ok) {
+                    const data = await response.json();
+                    return data.presigned_url || data.image_url;
+                }
+            } catch (error) {
+                console.error('Failed to get image URL:', error);
+            }
+        }
+        return null;
     }
 }
