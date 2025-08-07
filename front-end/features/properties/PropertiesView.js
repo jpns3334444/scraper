@@ -12,6 +12,132 @@ class PropertiesView {
     init() {
         this.tableContainer = document.getElementById('propertiesTable');
         this.resultsContainer = document.getElementById('resultsCount');
+        
+        // Render the table structure with headers
+        this.renderTableStructure();
+        
+        // Render loading skeleton
+        this.renderLoadingSkeleton();
+    }
+    
+    renderTableStructure() {
+        const tableContainer = document.getElementById('tableContainer');
+        if (!tableContainer) return;
+        
+        // Create the table with headers
+        tableContainer.innerHTML = `
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 80px;">♥/✕</th>
+                        <th class="sortable" onclick="sortTable('price')">
+                            <div class="column-header">
+                                Price
+                                <span class="sort-arrows" id="sort-price">▲▼</span>
+                            </div>
+                        </th>
+                        <th class="sortable" onclick="sortTable('price_per_sqm')">
+                            <div class="column-header">
+                                Price/m²
+                                <span class="sort-arrows" id="sort-price_per_sqm">▲▼</span>
+                            </div>
+                        </th>
+                        <th class="sortable" onclick="sortTable('total_monthly_costs')">
+                            <div class="column-header">
+                                Monthly Cost
+                                <span class="sort-arrows" id="sort-total_monthly_costs">▲▼</span>
+                            </div>
+                        </th>
+                        <th class="sortable" onclick="sortTable('ward')">
+                            <div class="column-header">
+                                Ward
+                                <span class="sort-arrows" id="sort-ward">▲▼</span>
+                                <div class="filter-dropdown">
+                                    <button class="filter-btn" onclick="toggleFilterDropdown(event, 'ward')" id="filter-btn-ward">▼</button>
+                                    <div class="filter-dropdown-content" id="filter-dropdown-ward">
+                                        <div id="ward-filter-options"></div>
+                                        <div class="filter-actions">
+                                            <button onclick="applyColumnFilter('ward')">Apply</button>
+                                            <button onclick="clearColumnFilter('ward')">Clear</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </th>
+                        <th class="sortable" onclick="sortTable('ward_discount_pct')">
+                            <div class="column-header">
+                                Ward Discount %
+                                <span class="sort-arrows" id="sort-ward_discount_pct">▲▼</span>
+                            </div>
+                        </th>
+                        <th class="sortable" onclick="sortTable('ward_median_price_per_sqm')">
+                            <div class="column-header">
+                                Ward Median ¥/m²
+                                <span class="sort-arrows" id="sort-ward_median_price_per_sqm">▲▼</span>
+                            </div>
+                        </th>
+                        <th>Closest Station</th>
+                        <th class="sortable" onclick="sortTable('station_distance_minutes')">
+                            <div class="column-header">
+                                Walk Time (min)
+                                <span class="sort-arrows" id="sort-station_distance_minutes">▲▼</span>
+                            </div>
+                        </th>
+                        <th class="sortable" onclick="sortTable('floor')">
+                            <div class="column-header">
+                                Floor
+                                <span class="sort-arrows" id="sort-floor">▲▼</span>
+                            </div>
+                        </th>
+                        <th class="sortable" onclick="sortTable('building_age_years')">
+                            <div class="column-header">
+                                Building Age
+                                <span class="sort-arrows" id="sort-building_age_years">▲▼</span>
+                            </div>
+                        </th>
+                        <th class="sortable" onclick="sortTable('size_sqm')">
+                            <div class="column-header">
+                                Size (m²)
+                                <span class="sort-arrows" id="sort-size_sqm">▲▼</span>
+                            </div>
+                        </th>
+                        <th>
+                            <div class="column-header">
+                                Primary Light
+                                <div class="filter-dropdown">
+                                    <button class="filter-btn" onclick="toggleFilterDropdown(event, 'primary_light')" id="filter-btn-primary_light">▼</button>
+                                    <div class="filter-dropdown-content" id="filter-dropdown-primary_light">
+                                        <div id="primary_light-filter-options"></div>
+                                        <div class="filter-actions">
+                                            <button onclick="applyColumnFilter('primary_light')">Apply</button>
+                                            <button onclick="clearColumnFilter('primary_light')">Clear</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </th>
+                        <th>
+                            <div class="column-header">
+                                Verdict
+                                <div class="filter-dropdown">
+                                    <button class="filter-btn" onclick="toggleFilterDropdown(event, 'verdict')" id="filter-btn-verdict">▼</button>
+                                    <div class="filter-dropdown-content" id="filter-dropdown-verdict">
+                                        <div id="verdict-filter-options"></div>
+                                        <div class="filter-actions">
+                                            <button onclick="applyColumnFilter('verdict')">Apply</button>
+                                            <button onclick="clearColumnFilter('verdict')">Clear</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </th>
+                    </tr>
+                </thead>
+                <tbody id="propertiesTable">
+                    <!-- Table rows will be populated here -->
+                </tbody>
+            </table>
+        `;
     }
     
     renderTable(properties, currentPage, itemsPerPage) {
@@ -85,121 +211,36 @@ class PropertiesView {
     updateResultsInfo(start, end, total) {
         const resultsCount = document.getElementById('resultsCount');
         if (resultsCount) {
+            const filterText = appState.hasActiveFilters() ? ' (filtered)' : '';
             resultsCount.innerHTML = `
-                Showing ${start.toLocaleString()} - ${end.toLocaleString()} of ${total.toLocaleString()} properties
+                Showing ${start.toLocaleString()}-${end.toLocaleString()} of ${total.toLocaleString()} properties${filterText}
                 ${appState.isBackgroundLoading ? '<span style="color: #999;"> (loading more...)</span>' : ''}
             `;
         }
     }
     
-    renderTableHeader() {
-        return `
-            <thead>
-                <tr>
-                    <th class="sortable">
-                        <div class="column-header" onclick="sortTable('is_favorited')">
-                            <span>⭐</span>
-                            <span class="sort-arrows">▲▼</span>
-                        </div>
-                    </th>
-                    <th class="sortable">
-                        <div class="column-header" onclick="sortTable('price')">
-                            <span>Price</span>
-                            <span class="sort-arrows active">▼</span>
-                        </div>
-                    </th>
-                    <th class="sortable">
-                        <div class="column-header" onclick="sortTable('price_per_sqm')">
-                            <span>¥/m²</span>
-                            <span class="sort-arrows">▲▼</span>
-                        </div>
-                    </th>
-                    <th class="sortable">
-                        <div class="column-header" onclick="sortTable('total_monthly_costs')">
-                            <span>Monthly</span>
-                            <span class="sort-arrows">▲▼</span>
-                        </div>
-                    </th>
-                    <th class="sortable">
-                        <div class="column-header" onclick="sortTable('ward')">
-                            <span>Ward</span>
-                            <span class="sort-arrows">▲▼</span>
-                            <div class="filter-dropdown-container">
-                                <button class="filter-btn" onclick="toggleFilterDropdown(event, 'ward')">▼</button>
-                                <div class="filter-dropdown" id="wardFilter"></div>
-                            </div>
-                        </div>
-                    </th>
-                    <th class="sortable">
-                        <div class="column-header" onclick="sortTable('ward_discount_pct')">
-                            <span>Ward %</span>
-                            <span class="sort-arrows">▲▼</span>
-                        </div>
-                    </th>
-                    <th class="sortable">
-                        <div class="column-header" onclick="sortTable('ward_median_price_per_sqm')">
-                            <span>Ward Med.</span>
-                            <span class="sort-arrows">▲▼</span>
-                        </div>
-                    </th>
-                    <th class="sortable">
-                        <div class="column-header" onclick="sortTable('closest_station')">
-                            <span>Station</span>
-                            <span class="sort-arrows">▲▼</span>
-                        </div>
-                    </th>
-                    <th class="sortable">
-                        <div class="column-header" onclick="sortTable('station_distance_minutes')">
-                            <span>Walk</span>
-                            <span class="sort-arrows">▲▼</span>
-                        </div>
-                    </th>
-                    <th class="sortable">
-                        <div class="column-header" onclick="sortTable('floor')">
-                            <span>Floor</span>
-                            <span class="sort-arrows">▲▼</span>
-                        </div>
-                    </th>
-                    <th class="sortable">
-                        <div class="column-header" onclick="sortTable('building_age_years')">
-                            <span>Age</span>
-                            <span class="sort-arrows">▲▼</span>
-                        </div>
-                    </th>
-                    <th class="sortable">
-                        <div class="column-header" onclick="sortTable('size_sqm')">
-                            <span>Size</span>
-                            <span class="sort-arrows">▲▼</span>
-                        </div>
-                    </th>
-                    <th class="sortable">
-                        <div class="column-header" onclick="sortTable('primary_light')">
-                            <span>Light</span>
-                            <span class="sort-arrows">▲▼</span>
-                            <div class="filter-dropdown-container">
-                                <button class="filter-btn" onclick="toggleFilterDropdown(event, 'primary_light')">▼</button>
-                                <div class="filter-dropdown" id="primary_lightFilter"></div>
-                            </div>
-                        </div>
-                    </th>
-                    <th class="sortable">
-                        <div class="column-header" onclick="sortTable('verdict')">
-                            <span>Verdict</span>
-                            <span class="sort-arrows">▲▼</span>
-                            <div class="filter-dropdown-container">
-                                <button class="filter-btn" onclick="toggleFilterDropdown(event, 'verdict')">▼</button>
-                                <div class="filter-dropdown" id="verdictFilter"></div>
-                            </div>
-                        </div>
-                    </th>
-                </tr>
-            </thead>
-        `;
-    }
-    
     renderLoadingSkeleton() {
-        return `
-            <div class="loading" id="loading">
+        const loadingDiv = document.getElementById('loading');
+        if (!loadingDiv) return;
+        
+        loadingDiv.innerHTML = `
+            <div class="skeleton-row">
+                <div class="skeleton-cell numeric skeleton" style="width: 40px;"></div>
+                <div class="skeleton-cell price skeleton"></div>
+                <div class="skeleton-cell price skeleton"></div>
+                <div class="skeleton-cell price skeleton"></div>
+                <div class="skeleton-cell ward skeleton"></div>
+                <div class="skeleton-cell percent skeleton"></div>
+                <div class="skeleton-cell price skeleton"></div>
+                <div class="skeleton-cell station skeleton"></div>
+                <div class="skeleton-cell numeric skeleton"></div>
+                <div class="skeleton-cell numeric skeleton"></div>
+                <div class="skeleton-cell age skeleton"></div>
+                <div class="skeleton-cell numeric skeleton"></div>
+                <div class="skeleton-cell light skeleton"></div>
+                <div class="skeleton-cell verdict skeleton"></div>
+            </div>
+            ${Array(5).fill().map(() => `
                 <div class="skeleton-row">
                     <div class="skeleton-cell numeric skeleton" style="width: 40px;"></div>
                     <div class="skeleton-cell price skeleton"></div>
@@ -216,25 +257,7 @@ class PropertiesView {
                     <div class="skeleton-cell light skeleton"></div>
                     <div class="skeleton-cell verdict skeleton"></div>
                 </div>
-                ${Array(5).fill().map(() => `
-                    <div class="skeleton-row">
-                        <div class="skeleton-cell numeric skeleton" style="width: 40px;"></div>
-                        <div class="skeleton-cell price skeleton"></div>
-                        <div class="skeleton-cell price skeleton"></div>
-                        <div class="skeleton-cell price skeleton"></div>
-                        <div class="skeleton-cell ward skeleton"></div>
-                        <div class="skeleton-cell percent skeleton"></div>
-                        <div class="skeleton-cell price skeleton"></div>
-                        <div class="skeleton-cell station skeleton"></div>
-                        <div class="skeleton-cell numeric skeleton"></div>
-                        <div class="skeleton-cell numeric skeleton"></div>
-                        <div class="skeleton-cell age skeleton"></div>
-                        <div class="skeleton-cell numeric skeleton"></div>
-                        <div class="skeleton-cell light skeleton"></div>
-                        <div class="skeleton-cell verdict skeleton"></div>
-                    </div>
-                `).join('')}
-            </div>
+            `).join('')}
         `;
     }
 }
