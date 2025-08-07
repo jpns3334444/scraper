@@ -49,8 +49,11 @@ class Router {
         if (text.includes('hidden')) return TABS.HIDDEN;
         return null;
     }
-    
+
     async switchTab(tabName) {
+        const overlay = document.createElement('div');
+        overlay.className = 'tab-transition';
+        document.body.appendChild(overlay);
         console.log(`[DEBUG] ========== SWITCHING TO TAB: ${tabName} ==========`);
         
         // Log state before switching
@@ -95,9 +98,11 @@ class Router {
         
         // Handle tab-specific logic
         await this.handleTabSwitch(tabName);
-        
+
         this.currentTab = tabName;
         console.log(`[DEBUG] ========== TAB SWITCH COMPLETE ==========`);
+
+        setTimeout(() => overlay.remove(), 300);
     }
     
     async handleTabSwitch(tabName) {

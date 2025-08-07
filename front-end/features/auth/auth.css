@@ -56,13 +56,13 @@
 
 .modal input:focus {
     outline: none;
-    border-color: #695b8d;
+    border-color: var(--ink-black);
 }
 
 .modal button {
     width: 100%;
     padding: 12px;
-    background: #695b8d;
+    background: var(--ink-black);
     color: white;
     border: none;
     border-radius: 4px;
@@ -75,7 +75,7 @@
 }
 
 .modal button:hover {
-    background: #574a75;
+    background: var(--ink-wash-5);
 }
 
 .auth-switch {
@@ -86,7 +86,7 @@
 }
 
 .auth-switch a {
-    color: #695b8d;
+    color: var(--ink-black);
     text-decoration: none;
     font-weight: 500;
 }
@@ -124,7 +124,7 @@
 
 .user-info button {
     padding: 6px 12px;
-    background: #695b8d;
+    background: var(--ink-black);
     color: white;
     border: none;
     border-radius: 4px;
@@ -134,5 +134,5 @@
 }
 
 .user-info button:hover {
-    background: #574a75;
+    background: var(--ink-wash-5);
 }

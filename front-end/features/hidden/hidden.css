@@ -34,7 +34,7 @@
 }
 
 .fav-list li a:hover {
-    color: #695b8d;
+    color: var(--ink-black);
 }
 
 .fav-list .remove-btn {

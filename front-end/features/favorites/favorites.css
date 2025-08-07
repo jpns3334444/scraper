@@ -13,16 +13,16 @@
 .favorite-card {
     display: flex;
     align-items: center;
-    background: white;
+    background: linear-gradient(135deg, var(--rice-paper) 0%, rgba(253,252,248,0.7) 100%);
     border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    border: 1px solid rgba(26,26,26,0.08);
+    box-shadow: none;
     padding: 16px;
     transition: all 0.3s ease;
     position: relative;
 }
 
 .favorite-card:hover {
-    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
     transform: translateY(-2px);
 }
 
@@ -73,23 +73,24 @@
 
 .favorite-ward {
     font-weight: 600;
-    color: #333;
+    color: var(--ink-black);
     font-size: 16px;
 }
 
 .favorite-price {
     font-size: 18px;
     font-weight: bold;
-    color: #695b8d;
+    color: var(--ink-black);
+    animation: subtle-pulse 4s ease-in-out infinite;
 }
 
 .favorite-size {
-    color: #666;
+    color: var(--ink-wash-5);
     font-size: 14px;
 }
 
 .favorite-location {
-    color: #666666;
+    color: var(--ink-wash-5);
     margin-bottom: 4px;
 }
 
@@ -99,27 +100,24 @@
 }
 
 .processing-status {
-    padding: 6px 12px;
-    border-radius: 20px;
+    padding: 0;
     font-size: 12px;
     font-weight: 500;
+    background: none;
+    color: var(--ink-black);
+    opacity: 0.7;
 }
 
-.processing-status.processing {
-    background: #fff4e5;
-    color: #b26a00;
+.processing-status::before {
+    content: '○';
 }
 
-.processing-status.processed {
-    background: #e6f4ea;
-    color: #2e7d32;
-    cursor: pointer;
-    text-decoration: underline;
+.processing-status.processed::before {
+    content: '●';
 }
 
-.processing-status.failed {
-    background: #fdecea;
-    color: #c62828;
+.processing-status.failed::before {
+    content: '×';
 }
 
 .remove-favorite-btn {
@@ -194,4 +192,17 @@
 
 .favorite-details {
     padding: 15px;
+}
+
+@keyframes subtle-pulse {
+    0%, 100% { opacity: 0.9; }
+    50% { opacity: 1; }
+}
+
+@media (max-width: 768px) {
+    .favorite-card {
+        border-left: none;
+        border-right: none;
+        border-radius: 0;
+    }
 }

@@ -101,8 +101,8 @@ class FavoritesManager {
                     card.remove();
                     // Check if no favorites left
                     if (document.querySelectorAll('.favorite-card').length === 0) {
-                        document.querySelector('.favorites-container').innerHTML = 
-                            '<div style="padding:40px; text-align:center; color:#999;">No favorites yet</div>';
+                        document.querySelector('.favorites-container').innerHTML =
+                            '<div style="padding:40px; text-align:center; color:#999;">静寂 • Emptiness awaits your choices</div>';
                     }
                 }, 300);
             }
@@ -152,7 +152,7 @@ class FavoritesManager {
                 const userFavorites = await this.api.loadUserFavorites(this.state.currentUser.email);
                 
                 if (userFavorites.length === 0) {
-                    favoritesList.innerHTML = '<div class="favorites-empty">No favorites yet. Click the ♡ on properties to add them here.</div>';
+                    favoritesList.innerHTML = '<div class="favorites-empty">静寂 • Emptiness awaits your choices</div>';
                     return;
                 }
                 
@@ -194,7 +194,7 @@ class FavoritesManager {
             const favoriteProperties = this.state.getFavoriteProperties();
             
             if (favoriteProperties.length === 0) {
-                favoritesList.innerHTML = '<div class="favorites-empty">No favorites yet. Click the ♡ on properties to add them here.</div>';
+                favoritesList.innerHTML = '<div class="favorites-empty">静寂 • Emptiness awaits your choices</div>';
                 return;
             }
             

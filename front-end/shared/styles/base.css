@@ -5,16 +5,27 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+Antique:wght@400;700&family=Noto+Sans+JP:wght@400;700&display=swap');
 
+:root {
+    --ink-black: #1a1a1a;
+    --rice-paper: #fdfcf8;
+    --ink-wash-1: rgba(26,26,26,0.05);
+    --ink-wash-2: rgba(26,26,26,0.15);
+    --ink-wash-3: rgba(26,26,26,0.35);
+    --ink-wash-5: rgba(26,26,26,0.65);
+    --red-seal: #b8312f;
+}
+
 * {
     box-sizing: border-box;
     margin: 0;
     padding: 0;
+    transition: opacity 0.3s ease, transform 0.3s ease, background-color 0.3s ease;
 }
 
 body {
     font-family: 'Noto Sans JP', 'Hiragino Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-    background: #F7F5F2;
-    color: #222222;
+    background: var(--rice-paper);
+    color: var(--ink-black);
     line-height: 1.7;
     font-size: 15px;
     overflow-x: hidden;
@@ -30,12 +41,13 @@ body::before {
     right: 0;
     width: 600px;
     height: 400px;
-    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400"><path d="M300 100 L200 300 L400 300 Z" fill="%23e8e4e0" opacity="0.06"/><path d="M300 100 L250 200 L350 200 Z" fill="%23ffffff" opacity="0.08"/></svg>');
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400"><path d="M300 120 Q280 250 200 350 L400 350 Q320 250 300 120" fill="none" stroke="%23000000" stroke-width="0.5" opacity="0.03" stroke-linecap="round"/><path d="M300 120 Q290 180 280 200 L320 200 Q310 180 300 120" fill="%23ffffff" opacity="0.06"/></svg>');
     background-repeat: no-repeat;
     background-position: top right;
     background-size: contain;
     pointer-events: none;
     z-index: 0;
+    transform: translateY(var(--fuji-offset, 0px));
 }
 
 @keyframes fadeInUp {
@@ -68,4 +80,48 @@ body::before {
     100% {
         opacity: 1;
     }
+}
+
+@keyframes ink-spread {
+    0% {
+        opacity: 0;
+        transform: scale(0.8);
+        filter: blur(3px);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1);
+        filter: blur(0);
+    }
+}
+
+@keyframes ink-drop {
+    0% {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@keyframes fade-through {
+    0% { opacity: 0; }
+    50% { opacity: 1; }
+    100% { opacity: 0; }
+}
+
+.tab-transition {
+    position: fixed;
+    inset: 0;
+    background: var(--rice-paper);
+    animation: fade-through 0.3s ease forwards;
+    pointer-events: none;
+    z-index: 9999;
+}
+
+*:focus {
+    outline: 1px solid rgba(26,26,26,0.2);
+    outline-offset: 4px;
 }

@@ -6,6 +6,11 @@
 // Initialize app
 document.addEventListener('DOMContentLoaded', async function() {
     console.log('[DEBUG] Initializing Tokyo Real Estate App...');
+
+    window.addEventListener('scroll', () => {
+        const scrolled = window.pageYOffset;
+        document.body.style.setProperty('--fuji-offset', `${scrolled * 0.3}px`);
+    });
     
     // Create instances
     const api = new PropertyAPI(API_URL, FAVORITES_API_URL);

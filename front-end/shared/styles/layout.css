@@ -3,6 +3,7 @@
  * Container, grid, spacing, and layout-related styles
  */
 
+
 .container {
     max-width: none;
     width: 100%;
@@ -17,15 +18,17 @@
 }
 
 h1 {
-    color: #222222;
+    color: var(--ink-black);
     margin-bottom: 40px;
     font-size: 48px;
-    font-weight: 700;
+    font-weight: 300;
     text-align: center;
     font-family: 'Zen Kaku Gothic Antique', serif;
-    letter-spacing: 0.15em;
+    letter-spacing: 0.3em;
     position: relative;
     padding-bottom: 20px;
+    opacity: 0.85;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.05);
 }
 
 /* Brushstroke underline */
@@ -37,8 +40,9 @@ h1::after {
     transform: translateX(-50%);
     width: 120px;
     height: 3px;
-    background: linear-gradient(90deg, transparent 0%, #695b8d 20%, #695b8d 80%, transparent 100%);
+    background: linear-gradient(90deg, transparent 0%, var(--ink-black) 50%, transparent 100%);
     border-radius: 2px;
+    opacity: 0.4;
 }
 
 .results-info {
@@ -89,9 +93,10 @@ h1::after {
 /* Mobile responsiveness */
 @media (max-width: 768px) {
     .container {
-        padding: 20px 9px;
+        padding: 20px 0;
+        border-radius: 0;
     }
-    
+
     h1 {
         font-size: 32px;
         margin-bottom: 30px;
