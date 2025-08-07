@@ -4,9 +4,9 @@
  */
 
  .container {
-    max-width: 1400px;
+    max-width: 1000px;
     margin: 0 auto;
-    padding: var(--space-xl) var(--space-lg);
+    padding: var(--space-xl) var(--space-md);
     position: relative;
     z-index: 10;
 }
@@ -117,7 +117,7 @@ h1::after {
     background: var(--paper-white);
     margin-bottom: var(--space-xl);
     position: relative;
-    overflow-x: auto;
+    overflow: visible;
 }
 
 /* Subtle shadow for depth */

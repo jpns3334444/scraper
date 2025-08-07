@@ -45,7 +45,6 @@ class HiddenManager {
     }
     
     async removeHidden(propertyId) {
-        if (!confirm('Remove this property from hidden list?')) return;
         
         try {
             // Call API if user is logged in

@@ -74,7 +74,6 @@ class FavoritesManager {
     }
     
     async removeFavorite(propertyId) {
-        if (!confirm('Remove this property from favorites?')) return;
         
         try {
             // Call the same toggle function

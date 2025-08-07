@@ -29,7 +29,11 @@ class PropertiesView {
             <table>
                 <thead>
                     <tr>
-                        <th style="text-align: center;">♥/✕</th>
+                        <th>
+                            <div class="column-header">
+                                ♥/✕
+                            </div>
+                        </th>
                         <th class="sortable" onclick="sortTable('price')">
                             <div class="column-header">
                                 Price
@@ -76,7 +80,6 @@ class PropertiesView {
                                 <span class="sort-arrows" id="sort-ward_median_price_per_sqm">▼</span>
                             </div>
                         </th>
-                        <th>Station</th>
                         <th class="sortable" onclick="sortTable('station_distance_minutes')">
                             <div class="column-header">
                                 Walk
@@ -89,10 +92,10 @@ class PropertiesView {
                                 <span class="sort-arrows" id="sort-floor">▼</span>
                             </div>
                         </th>
-                        <th class="sortable" onclick="sortTable('building_age_years')">
+                        <th class="sortable" onclick="sortTable('year_built')">
                             <div class="column-header">
-                                Age
-                                <span class="sort-arrows" id="sort-building_age_years">▼</span>
+                                Year Built
+                                <span class="sort-arrows" id="sort-year_built">▼</span>
                             </div>
                         </th>
                         <th class="sortable" onclick="sortTable('size_sqm')">
@@ -163,8 +166,8 @@ class PropertiesView {
             ? `${property.station_distance_minutes}`
             : '<span class="no-data">—</span>';
         const floor = property.floor || '<span class="no-data">—</span>';
-        const buildingAge = property.building_age_years !== undefined 
-            ? `${property.building_age_years}`
+        const yearBuilt = property.building_age_years !== undefined 
+            ? `${new Date().getFullYear() - property.building_age_years}`
             : '<span class="no-data">—</span>';
         const size = property.size_sqm || property.total_sqm 
             ? `${Math.round(property.size_sqm || property.total_sqm)}`
@@ -194,10 +197,9 @@ class PropertiesView {
                 <td>${ward}</td>
                 <td class="percent">${wardDiscount}</td>
                 <td class="price">${wardMedian}</td>
-                <td>${closestStation}</td>
                 <td class="numeric">${walkTime}</td>
                 <td class="numeric">${floor}</td>
-                <td class="age">${buildingAge}</td>
+                <td class="numeric">${yearBuilt}</td>
                 <td class="numeric">${size}</td>
                 <td>${primaryLight}</td>
                 <td>
@@ -225,20 +227,19 @@ class PropertiesView {
         loadingDiv.innerHTML = `
             ${Array(8).fill().map(() => `
                 <div class="skeleton-row">
-                    <div class="skeleton-cell" style="width: 80px;"></div>
-                    <div class="skeleton-cell" style="width: 100px;"></div>
-                    <div class="skeleton-cell" style="width: 90px;"></div>
-                    <div class="skeleton-cell" style="width: 90px;"></div>
-                    <div class="skeleton-cell" style="width: 100px;"></div>
-                    <div class="skeleton-cell" style="width: 80px;"></div>
-                    <div class="skeleton-cell" style="width: 90px;"></div>
-                    <div class="skeleton-cell" style="width: 120px;"></div>
                     <div class="skeleton-cell" style="width: 60px;"></div>
+                    <div class="skeleton-cell" style="width: 85px;"></div>
+                    <div class="skeleton-cell" style="width: 75px;"></div>
+                    <div class="skeleton-cell" style="width: 75px;"></div>
+                    <div class="skeleton-cell" style="width: 90px;"></div>
+                    <div class="skeleton-cell" style="width: 60px;"></div>
+                    <div class="skeleton-cell" style="width: 75px;"></div>
                     <div class="skeleton-cell" style="width: 50px;"></div>
-                    <div class="skeleton-cell" style="width: 80px;"></div>
+                    <div class="skeleton-cell" style="width: 45px;"></div>
+                    <div class="skeleton-cell" style="width: 70px;"></div>
+                    <div class="skeleton-cell" style="width: 45px;"></div>
                     <div class="skeleton-cell" style="width: 60px;"></div>
-                    <div class="skeleton-cell" style="width: 80px;"></div>
-                    <div class="skeleton-cell" style="width: 100px;"></div>
+                    <div class="skeleton-cell" style="width: 85px;"></div>
                 </div>
             `).join('')}
         `;

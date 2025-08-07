@@ -137,8 +137,16 @@ class PropertiesManager {
         const { field, direction } = this.state.currentSort;
         
         this.state.filteredProperties.sort((a, b) => {
-            let valA = a[field];
-            let valB = b[field];
+            let valA, valB;
+            
+            // Special handling for year_built field
+            if (field === 'year_built') {
+                valA = a.building_age_years !== undefined ? new Date().getFullYear() - a.building_age_years : null;
+                valB = b.building_age_years !== undefined ? new Date().getFullYear() - b.building_age_years : null;
+            } else {
+                valA = a[field];
+                valB = b[field];
+            }
             
             // Handle null/undefined values
             if (valA == null && valB == null) return 0;

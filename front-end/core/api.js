@@ -103,7 +103,7 @@ class PropertyAPI {
     async removeFavorite(propertyId, userEmail) {
         console.log(`[API] Removing favorite: ${propertyId} for user: ${userEmail}`);
         
-        const response = await fetch(`${this.favoritesApiUrl}/favorites/${propertyId}`, {
+        const response = await fetch(`${this.favoritesApiUrl}/favorites/${encodeURIComponent(propertyId)}`, {
             method: 'DELETE',
             headers: { 
                 'X-User-Email': userEmail
@@ -165,7 +165,7 @@ class PropertyAPI {
     async removeHidden(propertyId, userEmail) {
         console.log(`[API] Removing from hidden: ${propertyId} for user: ${userEmail}`);
         
-        const response = await fetch(`${this.favoritesApiUrl}/hidden/${propertyId}`, {
+        const response = await fetch(`${this.favoritesApiUrl}/hidden/${encodeURIComponent(propertyId)}`, {
             method: 'DELETE',
             headers: { 
                 'X-User-Email': userEmail
