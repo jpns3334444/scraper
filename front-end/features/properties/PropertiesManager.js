@@ -198,11 +198,48 @@ class PropertiesManager {
     
     renderPagination() {
         const totalPages = Math.ceil(this.state.filteredProperties.length / this.state.itemsPerPage);
-        const currentPage = this.state.currentPage;
+        const paginationDiv = document.getElementById('pagination');
+        const paginationContainer = document.getElementById('paginationContainer');
         
-        // Implementation would go here - could be extracted to a Pagination component
-        // For now, just log the values
-        console.log(`Pagination: ${currentPage}/${totalPages}`);
+        if (!paginationDiv || totalPages <= 1) {
+            if (paginationContainer) paginationContainer.style.display = 'none';
+            return;
+        }
+        
+        paginationContainer.style.display = 'block';
+        
+        let html = '';
+        
+        // Previous button
+        html += `<button onclick="goToPage(${this.state.currentPage - 1})" ${this.state.currentPage === 1 ? 'disabled' : ''}>Previous</button>`;
+        
+        // Page numbers
+        const maxVisiblePages = 7;
+        let startPage = Math.max(1, this.state.currentPage - Math.floor(maxVisiblePages / 2));
+        let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+        
+        if (endPage - startPage < maxVisiblePages - 1) {
+            startPage = Math.max(1, endPage - maxVisiblePages + 1);
+        }
+        
+        if (startPage > 1) {
+            html += `<button onclick="goToPage(1)">1</button>`;
+            if (startPage > 2) html += '<span class="page-info">...</span>';
+        }
+        
+        for (let i = startPage; i <= endPage; i++) {
+            html += `<button onclick="goToPage(${i})" class="${i === this.state.currentPage ? 'active' : ''}">${i}</button>`;
+        }
+        
+        if (endPage < totalPages) {
+            if (endPage < totalPages - 1) html += '<span class="page-info">...</span>';
+            html += `<button onclick="goToPage(${totalPages})">${totalPages}</button>`;
+        }
+        
+        // Next button
+        html += `<button onclick="goToPage(${this.state.currentPage + 1})" ${this.state.currentPage === totalPages ? 'disabled' : ''}>Next</button>`;
+        
+        paginationDiv.innerHTML = html;
     }
     
     populateColumnFilters() {

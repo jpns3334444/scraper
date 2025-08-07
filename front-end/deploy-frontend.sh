@@ -353,7 +353,52 @@ aws s3 cp index.html s3://$S3_BUCKET/index.html \
     --content-type text/html \
     --cache-control "no-cache" || { echo "Failed to upload HTML to S3"; cleanup_and_exit 1; }
 
-status "✅ Dashboard uploaded successfully"
+# Upload all modular frontend files to S3
+status "Uploading all frontend files to S3..."
+
+# Upload CSS files
+aws s3 cp --recursive shared/styles/ s3://$S3_BUCKET/shared/styles/ \
+    --region $REGION \
+    --content-type text/css \
+    --cache-control "max-age=3600" || warn "Failed to upload shared styles"
+
+aws s3 cp --recursive features/ s3://$S3_BUCKET/features/ \
+    --region $REGION \
+    --include "*.css" \
+    --content-type text/css \
+    --cache-control "max-age=3600" || warn "Failed to upload feature styles"
+
+# Upload JavaScript files
+aws s3 cp --recursive config/ s3://$S3_BUCKET/config/ \
+    --region $REGION \
+    --content-type application/javascript \
+    --cache-control "max-age=3600" || warn "Failed to upload config files"
+
+aws s3 cp --recursive core/ s3://$S3_BUCKET/core/ \
+    --region $REGION \
+    --content-type application/javascript \
+    --cache-control "max-age=3600" || warn "Failed to upload core files"
+
+aws s3 cp --recursive shared/ s3://$S3_BUCKET/shared/ \
+    --region $REGION \
+    --exclude "*.css" \
+    --include "*.js" \
+    --content-type application/javascript \
+    --cache-control "max-age=3600" || warn "Failed to upload shared JavaScript files"
+
+aws s3 cp --recursive features/ s3://$S3_BUCKET/features/ \
+    --region $REGION \
+    --exclude "*.css" \
+    --include "*.js" \
+    --content-type application/javascript \
+    --cache-control "max-age=3600" || warn "Failed to upload feature JavaScript files"
+
+aws s3 cp main.js s3://$S3_BUCKET/main.js \
+    --region $REGION \
+    --content-type application/javascript \
+    --cache-control "max-age=3600" || warn "Failed to upload main.js"
+
+status "✅ All frontend files uploaded successfully"
 
 # Success summary
 echo ""

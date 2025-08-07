@@ -49,6 +49,32 @@ document.addEventListener('DOMContentLoaded', async function() {
     
     console.log('[DEBUG] Global app object created:', window.app);
     
+    // Add global functions for onclick handlers
+    window.showAuthModal = () => authModal.show();
+    window.logout = () => authManager.logout();
+    window.hideErrorBanner = () => {
+        const banner = document.getElementById('errorBanner');
+        if (banner) banner.style.display = 'none';
+    };
+    window.goToPage = (page) => {
+        const totalPages = Math.ceil(appState.filteredProperties.length / appState.itemsPerPage);
+        if (page < 1 || page > totalPages) return;
+        appState.setPage(page);
+        propertiesManager.renderCurrentPage();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    window.applyColumnFilter = (column) => {
+        const checkboxes = document.querySelectorAll(`#${column}-filter-options input[type="checkbox"]:checked`);
+        appState.currentFilters[column] = Array.from(checkboxes).map(cb => cb.value);
+        propertiesManager.applyFilters();
+    };
+    window.clearColumnFilter = (column) => {
+        appState.currentFilters[column] = [];
+        const checkboxes = document.querySelectorAll(`#${column}-filter-options input[type="checkbox"]`);
+        checkboxes.forEach(cb => cb.checked = false);
+        propertiesManager.applyFilters();
+    };
+    
     // Initialize components
     try {
         // Check authentication
