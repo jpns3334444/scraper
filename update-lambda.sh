@@ -101,10 +101,10 @@ LAMBDA_DIR="lambda/$LAMBDA_FOLDER"
 [ -d "$LAMBDA_DIR" ] || error "Lambda directory not found: $LAMBDA_DIR"
 
 # Determine function name pattern based on lambda type
-# Frontend auth functions have different naming pattern
-if [[ "$LAMBDA_FOLDER" == "register_user" || "$LAMBDA_FOLDER" == "login_user" ]]; then
-    # Frontend stack pattern: tre-frontend-register-user, tre-frontend-login-user
-    FUNCTION_NAME="tre-frontend-${LAMBDA_FOLDER//_/-}"
+# Frontend functions have different naming pattern
+if [[ "$LAMBDA_FOLDER" == "register_user" || "$LAMBDA_FOLDER" == "login_user" || "$LAMBDA_FOLDER" == "dashboard_api" || "$LAMBDA_FOLDER" == "favorites_api" ]]; then
+    # Frontend stack pattern: tokyo-real-estate-frontend-function-name
+    FUNCTION_NAME="tokyo-real-estate-frontend-${LAMBDA_FOLDER//_/-}"
     STACK_NAME="tokyo-real-estate-dashboard"  # Override stack name for frontend functions
 else
     # Main AI stack pattern: stack-name-lambda-folder

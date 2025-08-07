@@ -276,24 +276,50 @@ def lambda_handler(event, context):
         limit = max(1, min(int(params.get('limit', 100)), 100))  # Default 100, max 100, min 1
         cursor = json.loads(params['cursor']) if 'cursor' in params else None
         
-        # Build scan kwargs with projection expression
-        scan_kwargs = {
-            'Limit': limit,
-            'FilterExpression': Attr('sort_key').eq('META'),
-            'ProjectionExpression': 'PK, price, size_sqm, total_sqm, ward, ward_discount_pct, img_url, listing_url, #url_attr, verdict, recommendation, property_id, analysis_date, photo_filenames, price_per_sqm, total_monthly_costs, ward_median_price_per_sqm, closest_station, station_distance_minutes, #floor_attr, building_age_years, primary_light',
-            'ExpressionAttributeNames': {
-                '#url_attr': 'url',
-                '#floor_attr': 'floor'
+        # Accumulate items until we reach the desired limit
+        # DynamoDB scan with filters can return fewer items than the limit due to filtering
+        items = []
+        last_evaluated_key = cursor
+        scan_count = 0
+        max_scans = 10  # Prevent infinite loops
+        
+        while len(items) < limit and scan_count < max_scans:
+            # Add price filtering to DynamoDB scan - filter out properties over 3000 万円 (30M yen)
+            filter_expr = Attr('sort_key').eq('META') & (Attr('price').lt(3000) | Attr('price').not_exists())
+            
+            scan_kwargs = {
+                'FilterExpression': filter_expr,
+                'ProjectionExpression': 'PK, price, size_sqm, total_sqm, ward, ward_discount_pct, img_url, listing_url, #url_attr, verdict, recommendation, property_id, analysis_date, photo_filenames, price_per_sqm, total_monthly_costs, ward_median_price_per_sqm, closest_station, station_distance_minutes, #floor_attr, building_age_years, primary_light',
+                'ExpressionAttributeNames': {
+                    '#url_attr': 'url',
+                    '#floor_attr': 'floor'
+                }
             }
-        }
+            
+            if last_evaluated_key:
+                scan_kwargs['ExclusiveStartKey'] = last_evaluated_key
+            
+            # Scan for more items than needed to account for filtering
+            # Request 3x the remaining needed items, capped at 300
+            remaining_needed = limit - len(items)
+            scan_kwargs['Limit'] = min(remaining_needed * 3, 300)
+            
+            response = table.scan(**scan_kwargs)
+            batch_items = response.get('Items', [])
+            items.extend(batch_items)
+            
+            last_evaluated_key = response.get('LastEvaluatedKey')
+            scan_count += 1
+            
+            # Stop if no more items or we got no items in this batch
+            if not last_evaluated_key or not batch_items:
+                break
         
-        if cursor:
-            scan_kwargs['ExclusiveStartKey'] = cursor
-        
-        # Perform scan
-        response = table.scan(**scan_kwargs)
-        items = response.get('Items', [])
-        last_evaluated_key = response.get('LastEvaluatedKey')
+        # Trim to requested limit if we got more than needed
+        if len(items) > limit:
+            items = items[:limit]
+            # If we trimmed, we might have more items available, so preserve the cursor
+            # by using the last evaluated key from before the trim
         
         # Get user's favorites if user is authenticated
         user_favorites = get_user_favorite_ids(user_id) if user_id != 'anonymous' else set()

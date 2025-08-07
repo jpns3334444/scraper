@@ -1076,12 +1076,22 @@
 
         <!-- Favorites Tab -->
         <div id="favorites-tab" class="tab-pane" style="display: none;">
-            <ul class="fav-list" id="favoritesList"></ul>
+            <!-- Debug banner -->
+            <div style="background: #ffe0e0; border: 2px solid #ff0000; padding: 10px; margin-bottom: 10px; color: #000; font-weight: bold;">
+                DEBUG: Favorites Tab Container (This message should be visible when Favorites tab is active)
+                <span id="favDebugCount" style="margin-left: 20px;"></span>
+            </div>
+            <ul class="fav-list" id="favoritesList" style="border: 2px dashed #00ff00; min-height: 50px; background: #f0fff0;"></ul>
         </div>
         
         <!-- Hidden Tab -->
         <div id="hidden-tab" class="tab-pane" style="display: none;">
-            <ul class="fav-list" id="hiddenList"></ul>
+            <!-- Debug banner -->
+            <div style="background: #e0e0ff; border: 2px solid #0000ff; padding: 10px; margin-bottom: 10px; color: #000; font-weight: bold;">
+                DEBUG: Hidden Tab Container (This message should be visible when Hidden tab is active)
+                <span id="hiddenDebugCount" style="margin-left: 20px;"></span>
+            </div>
+            <ul class="fav-list" id="hiddenList" style="border: 2px dashed #ff00ff; min-height: 50px; background: #fff0ff;"></ul>
         </div>
         
         <div class="loading" id="loading">
@@ -1259,7 +1269,7 @@
         // Single unified API endpoint for all frontend operations
         const API_URL = 'https://whxu6x5b08.execute-api.ap-northeast-1.amazonaws.com/prod';
         const FAVORITES_API_URL = API_URL; // Same API endpoint now
-        const limit = 100;
+        const limit = 300;
         
         // State
         let cursor = null;          // null = first page; false = no more pages
@@ -1369,20 +1379,27 @@
         }
         
         // Initialize
-        document.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener('DOMContentLoaded', async function() {
             checkAuth();
+            loadHiddenFromStorage();
+            updateSortArrows();
+            
+            // Load properties first, then favorites to avoid race condition
+            await loadAllProperties();
             
             if (currentUser) {
-                loadFavoritesFromServer();
+                await loadFavoritesFromServer();
             } else {
                 loadFavoritesFromStorage();
             }
             
-            loadHiddenFromStorage();
-            loadAllProperties();
-            updateSortArrows();
             updateFavoritesCount();
             updateHiddenCount();
+            
+            // Re-render favorites view if that tab is currently active
+            if (document.getElementById('favorites-tab').classList.contains('active')) {
+                await loadFavorites();
+            }
         });
         
         // Load favorites from localStorage
@@ -1403,8 +1420,7 @@
             try {
                 const response = await fetch(`${FAVORITES_API_URL}/favorites/user/${currentUser.email}`, {
                     headers: { 
-                        'X-User-Email': currentUser.email,
-                        'Authorization': `Bearer ${currentUser.token}`
+                        'X-User-Email': currentUser.email
                     }
                 });
                 
@@ -1413,6 +1429,11 @@
                     if (data.favorites && Array.isArray(data.favorites)) {
                         favorites = new Set(data.favorites.map(fav => fav.property_id));
                         updateFavoritesCount();
+                        
+                        // Re-render favorites view if that tab is currently active
+                        if (document.getElementById('favorites-tab').classList.contains('active')) {
+                            await loadFavorites();
+                        }
                     }
                 }
             } catch (error) {
@@ -1496,13 +1517,19 @@
             renderPagination();
         }
 
+        // Add global flag to track background loading state
+        let isBackgroundLoading = false;
+        let needsResort = false;
+
         // Recursive function to load all remaining pages in background
         async function loadRemainingPages(cursor) {
             if (!cursor) {
                 console.log('No more pages to load');
+                isBackgroundLoading = false;
                 return;
             }
             
+            isBackgroundLoading = true;
             console.log('Loading page with cursor:', cursor);
             
             try {
@@ -1510,9 +1537,7 @@
                 console.log('Loaded page, next cursor:', page.nextCursor);
                 console.log('Page items count:', page.items?.length || 0);
                 
-                const filteredItems = (page.items || []).filter(item => {
-                    return !item.price || item.price <= 3000;
-                });
+                const filteredItems = page.items || [];
                 
                 console.log('Filtered items count:', filteredItems.length);
                 
@@ -1527,11 +1552,19 @@
                 // Update filtered properties if no filters are active
                 if (!hasActiveFilters()) {
                     filteredProperties.push(...filteredItems);
-                    // Only update incrementally if we're on properties tab and no active sort changes
+                    // Mark that a resort is needed but don't do it immediately during background loading
+                    needsResort = true;
+                    
+                    // Only update UI subtly during background loading
                     if (document.getElementById('properties-tab').classList.contains('active')) {
-                        // Re-sort all properties since we added new ones
-                        applySort();
-                        renderCurrentPage();
+                        // Just update the count without re-rendering
+                        updateResultsInfo();
+                        
+                        // If user is on page 1, don't re-render at all to avoid flicker
+                        // If on later pages, only update pagination
+                        if (currentPage > 1) {
+                            renderPagination();
+                        }
                     }
                 } else {
                     // Reapply filters to include new items
@@ -1544,9 +1577,16 @@
                     loadRemainingPages(page.nextCursor);
                 } else {
                     console.log('All pages loaded successfully!');
+                    isBackgroundLoading = false;
+                    // Now that all pages are loaded, apply sort if needed without flicker
+                    if (needsResort && document.getElementById('properties-tab').classList.contains('active')) {
+                        applySort();
+                        needsResort = false;
+                    }
                 }
             } catch (error) {
                 console.error('Background load failed', error);
+                isBackgroundLoading = false;
                 // Stop loading on error
             }
         }
@@ -1559,10 +1599,8 @@
                 // 1️⃣ fetch the first page
                 const firstPage = await fetchPropertiesPage(cursor);
                 
-                // Filter out properties above 30 million yen (3000 in 万円 units)
-                const filteredFirstPage = (firstPage.items || []).filter(item => {
-                    return !item.price || item.price <= 3000;
-                });
+                // Items are now filtered server-side for price < 3000万円
+                const filteredFirstPage = firstPage.items || [];
                 
                 allProperties.push(...filteredFirstPage);
                 
@@ -1600,6 +1638,11 @@
         
         // Render current page
         function renderCurrentPage() {
+            // Don't re-render during background loading if user is on first page to avoid flicker
+            if (isBackgroundLoading && currentPage === 1) {
+                return;
+            }
+            
             const tbody = document.getElementById('propertiesTable');
             const start = (currentPage - 1) * itemsPerPage;
             const end = start + itemsPerPage;
@@ -1703,6 +1746,11 @@
                 currentSort.direction = 'desc';
             }
             
+            // Apply deferred sort if needed
+            if (needsResort) {
+                needsResort = false;
+            }
+            
             applySort();
             currentPage = 1;
             renderCurrentPage();
@@ -1778,31 +1826,72 @@
         }
 
         // Tab functionality
-        function switchTab(tabName) {
+        async function switchTab(tabName) {
+            console.log(`[DEBUG] ========== SWITCHING TO TAB: ${tabName} ==========`);
+            
+            // Log state before switching
+            console.log('[DEBUG] Tab states BEFORE switch:');
+            document.querySelectorAll('.tab-pane').forEach(pane => {
+                console.log(`  - ${pane.id}: display=${pane.style.display}, active=${pane.classList.contains('active')}`);
+            });
+            
+            // Remove active class from all panes
             document.querySelectorAll('.tab-pane').forEach(pane => {
                 pane.classList.remove('active');
+                pane.style.display = 'none'; // Explicitly set display:none
             });
+            
+            // Remove active from all buttons
             document.querySelectorAll('.tab-button').forEach(btn => {
                 btn.classList.remove('active');
             });
             
-            document.getElementById(`${tabName}-tab`).classList.add('active');
+            // Activate the selected tab
+            const targetTab = document.getElementById(`${tabName}-tab`);
+            console.log(`[DEBUG] Activating tab: ${tabName}-tab`);
+            targetTab.classList.add('active');
+            targetTab.style.display = 'block'; // Explicitly set display:block
+            
+            // Activate the button
             event.target.classList.add('active');
             
+            // Log state after switching
+            console.log('[DEBUG] Tab states AFTER switch:');
+            document.querySelectorAll('.tab-pane').forEach(pane => {
+                console.log(`  - ${pane.id}: display=${pane.style.display}, active=${pane.classList.contains('active')}`);
+            });
+            
             if (tabName === 'favorites') {
+                console.log('[DEBUG] Loading favorites tab content...');
                 document.getElementById('tableContainer').style.display = 'none';
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('paginationContainer').style.display = 'none';
-                loadFavorites();
+                await loadFavorites();
+                console.log('[DEBUG] Favorites tab loaded');
+                
+                // Check if content is visible
+                const favList = document.getElementById('favoritesList');
+                console.log(`[DEBUG] favoritesList element: exists=${!!favList}, innerHTML length=${favList?.innerHTML?.length}`);
+                console.log(`[DEBUG] favoritesList computed style:`, window.getComputedStyle(favList));
             } else if (tabName === 'hidden') {
+                console.log('[DEBUG] Loading hidden tab content...');
                 document.getElementById('tableContainer').style.display = 'none';
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('paginationContainer').style.display = 'none';
                 loadHidden();
+                console.log('[DEBUG] Hidden tab loaded');
+                
+                // Check if content is visible
+                const hiddenList = document.getElementById('hiddenList');
+                console.log(`[DEBUG] hiddenList element: exists=${!!hiddenList}, innerHTML length=${hiddenList?.innerHTML?.length}`);
+                console.log(`[DEBUG] hiddenList computed style:`, window.getComputedStyle(hiddenList));
             } else {
+                console.log('[DEBUG] Showing main properties table');
                 document.getElementById('tableContainer').style.display = 'block';
                 document.getElementById('paginationContainer').style.display = 'block';
             }
+            
+            console.log(`[DEBUG] ========== TAB SWITCH COMPLETE ==========`);
         }
         
         // Helper for instant favorites counter update
@@ -1846,8 +1935,7 @@
                         await fetch(`${FAVORITES_API_URL}/favorites/${propertyId}`, {
                             method: 'DELETE',
                             headers: { 
-                                'X-User-Email': currentUser.email,
-                                'Authorization': `Bearer ${currentUser.token}`
+                                'X-User-Email': currentUser.email
                             }
                         });
                         button.classList.remove('favorited');
@@ -1859,8 +1947,7 @@
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
-                                'X-User-Email': currentUser.email,
-                                'Authorization': `Bearer ${currentUser.token}`
+                                'X-User-Email': currentUser.email
                             },
                             body: JSON.stringify({ property_id: propertyId })
                         });
@@ -1877,7 +1964,7 @@
                 
                 // Refresh favorites tab if active
                 if (document.getElementById('favorites-tab').classList.contains('active')) {
-                    loadFavorites();
+                    await loadFavorites();
                 }
             } catch (error) {
                 console.error('Failed to toggle favorite:', error);
@@ -1887,59 +1974,209 @@
         }
 
         // Load favorites view
-        function loadFavorites() {
+        async function loadFavorites() {
+            console.log('[DEBUG] ========== LOAD FAVORITES START ==========');
             const list = document.getElementById('favoritesList');
+            console.log(`[DEBUG] favoritesList element found: ${!!list}`);
+            console.log(`[DEBUG] Current user: ${currentUser ? currentUser.email : 'Anonymous'}`);
+            console.log(`[DEBUG] Favorites Set contents:`, [...favorites]);
+            console.log(`[DEBUG] Favorites Set size: ${favorites.size}`);
+            console.log(`[DEBUG] All properties count: ${allProperties.length}`);
             
-            // Check if properties are loaded
-            if (allProperties.length === 0) {
-                list.innerHTML = '<li style="padding:20px; color:#999;">Loading properties...</li>';
-                // Try again after a short delay
-                setTimeout(() => {
-                    if (allProperties.length > 0) {
-                        loadFavorites();
-                    }
-                }, 500);
-                return;
-            }
-            
-            // Get favorited properties from the full list
-            const favoritedProperties = allProperties.filter(p => favorites.has(p.property_id));
-            
-            if (favoritedProperties.length === 0) {
-                list.innerHTML = '<li style="padding:20px; color:#999;">No favorites yet.</li>';
-                return;
-            }
-            
-            // Sort favorited properties by price descending
-            favoritedProperties.sort((a, b) => (b.price || 0) - (a.price || 0));
-            
-            list.innerHTML = favoritedProperties.map(property => {
-                const price = property.price ? `¥${(property.price * 10000).toLocaleString()}` : '—';
-                const size = property.size_sqm || property.total_sqm ? 
-                    `${Math.round(property.size_sqm || property.total_sqm)}m²` : '—';
-                const ward = property.ward || '—';
-                const wardDiscount = property.ward_discount_pct;
-                const wardDiscountText = wardDiscount !== undefined && wardDiscount !== null ? 
-                    (wardDiscount > 0 ? `+${wardDiscount.toFixed(1)}%` : `${wardDiscount.toFixed(1)}%`) : '';
-                const station = property.closest_station || 'No station';
-                const verdict = property.verdict || property.recommendation || 'pass';
-                const url = property.listing_url || '#';
+            if (!currentUser) {
+                console.log('[DEBUG] Anonymous user path');
+                // Anonymous user - use localStorage favorites
+                if (allProperties.length === 0) {
+                    console.log('[DEBUG] No properties loaded yet, showing loading message');
+                    list.innerHTML = '<li style="padding:20px; color:#999;">Loading properties...</li>';
+                    return;
+                }
                 
-                return `
-                    <li class="fav-item">
-                        <span>
-                            <a href="${url}" target="_blank" style="color: #333; text-decoration: none;">
-                                ${price}
-                            </a>
-                            — ${size}
-                            — ${ward}${wardDiscountText ? ` (${wardDiscountText})` : ''}
-                            — ${station}
-                        </span>
-                        <span class="verdict verdict-${verdict}" style="font-size: 11px;">
-                            ${verdict.toUpperCase()}
-                        </span>
-                    </li>`;
-            }).join('');
+                const favoritedProperties = allProperties.filter(p => favorites.has(p.property_id));
+                console.log(`[DEBUG] Filtered properties: ${favoritedProperties.length} favorites found`);
+                console.log('[DEBUG] Favorited property IDs:', favoritedProperties.map(p => p.property_id));
+                
+                if (favoritedProperties.length === 0) {
+                    console.log('[DEBUG] No favorites, showing empty message');
+                    list.innerHTML = '<li style="padding:20px; color:#999;">No favorites yet.</li>';
+                    console.log(`[DEBUG] After setting innerHTML, list content length: ${list.innerHTML.length}`);
+                    return;
+                }
+                
+                // Sort favorited properties by price descending
+                favoritedProperties.sort((a, b) => (b.price || 0) - (a.price || 0));
+                console.log('[DEBUG] Properties sorted by price');
+                
+                const htmlContent = favoritedProperties.map(property => {
+                    const price = property.price ? `¥${(property.price * 10000).toLocaleString()}` : '—';
+                    const size = property.size_sqm || property.total_sqm ? 
+                        `${Math.round(property.size_sqm || property.total_sqm)}m²` : '—';
+                    const ward = property.ward || '—';
+                    const wardDiscount = property.ward_discount_pct;
+                    const wardDiscountText = wardDiscount !== undefined && wardDiscount !== null ? 
+                        (wardDiscount > 0 ? `+${wardDiscount.toFixed(1)}%` : `${wardDiscount.toFixed(1)}%`) : '';
+                    const station = property.closest_station || 'No station';
+                    const verdict = property.verdict || property.recommendation || 'pass';
+                    const url = property.listing_url || '#';
+                    
+                    return `
+                        <li class="fav-item">
+                            <span>
+                                <a href="${url}" target="_blank" style="color: #333; text-decoration: none;">
+                                    ${price}
+                                </a>
+                                — ${size}
+                                — ${ward}${wardDiscountText ? ` (${wardDiscountText})` : ''}
+                                — ${station}
+                            </span>
+                            <span class="verdict verdict-${verdict}" style="font-size: 11px;">
+                                ${verdict.toUpperCase()}
+                            </span>
+                        </li>`;
+                }).join('');
+                
+                console.log(`[DEBUG] Generated HTML content length: ${htmlContent.length} chars`);
+                console.log('[DEBUG] First 200 chars of HTML:', htmlContent.substring(0, 200));
+                
+                list.innerHTML = htmlContent;
+                console.log(`[DEBUG] After setting innerHTML, list content length: ${list.innerHTML.length}`);
+                console.log('[DEBUG] List element visibility:', {
+                    display: list.style.display,
+                    computedDisplay: window.getComputedStyle(list).display,
+                    visibility: window.getComputedStyle(list).visibility,
+                    opacity: window.getComputedStyle(list).opacity
+                });
+            } else {
+                console.log('[DEBUG] Authenticated user path');
+                // Authenticated user - fetch favorites from API
+                try {
+                    console.log('[DEBUG] Setting loading message');
+                    list.innerHTML = '<li style="padding:20px; color:#999;">Loading favorites...</li>';
+                    
+                    console.log(`[DEBUG] Fetching favorites from API for user: ${currentUser.email}`);
+                    const response = await fetch(`${FAVORITES_API_URL}/favorites/user/${currentUser.email}`, {
+                        headers: { 
+                            'X-User-Email': currentUser.email
+                        }
+                    });
+                    
+                    console.log(`[DEBUG] API Response status: ${response.status}`);
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    
+                    const data = await response.json();
+                    const userFavorites = data.favorites || [];
+                    
+                    console.log('[DEBUG] Loaded favorites from API:', userFavorites);
+                    console.log(`[DEBUG] Number of favorites from API: ${userFavorites.length}`);
+                    console.log('[DEBUG] Current allProperties count:', allProperties.length);
+                    
+                    if (userFavorites.length === 0) {
+                        console.log('[DEBUG] No favorites from API, showing empty message');
+                        list.innerHTML = '<li style="padding:20px; color:#999;">No favorites yet.</li>';
+                        console.log(`[DEBUG] After setting empty message, list content length: ${list.innerHTML.length}`);
+                        return;
+                    }
+                    
+                    // For authenticated users, we need to match favorites with properties from allProperties
+                    // to get full property data since favorites API only stores summaries
+                    const favoritedProperties = [];
+                    
+                    console.log('[DEBUG] Matching favorites with allProperties...');
+                    for (const favorite of userFavorites) {
+                        const propertyId = favorite.property_id;
+                        let property = allProperties.find(p => p.property_id === propertyId);
+                        
+                        if (property) {
+                            console.log(`[DEBUG] Found property in allProperties: ${propertyId}`);
+                            favoritedProperties.push(property);
+                        } else {
+                            // If property not found in allProperties, use the summary from favorites
+                            console.log(`[DEBUG] Property not found in allProperties, using summary: ${propertyId}`);
+                            const summary = favorite.property_summary || {};
+                            favoritedProperties.push({
+                                property_id: propertyId,
+                                price: summary.price || 1, // Use 1 instead of 0 to show something
+                                size_sqm: summary.size_sqm || 0,
+                                ward: summary.ward || 'Unknown Ward',
+                                closest_station: summary.station || 'Unknown Station',
+                                verdict: 'favorited',
+                                listing_url: '#',
+                                isFallback: true
+                            });
+                        }
+                    }
+                    
+                    // Sort by price descending
+                    favoritedProperties.sort((a, b) => (b.price || 0) - (a.price || 0));
+                    
+                    console.log('[DEBUG] Final favoritedProperties to display:', favoritedProperties);
+                    console.log(`[DEBUG] Total matched properties: ${favoritedProperties.length}`);
+                    
+                    if (favoritedProperties.length === 0) {
+                        console.log('[DEBUG] No properties matched, showing no matching message');
+                        list.innerHTML = '<li style="padding:20px; color:#999;">Favorites found but no matching properties.</li>';
+                        return;
+                    }
+                    
+                    console.log('[DEBUG] Generating HTML for favorited properties...');
+                    const htmlContent = favoritedProperties.map(property => {
+                        const price = property.price ? `¥${(property.price * 10000).toLocaleString()}` : '—';
+                        const size = property.size_sqm || property.total_sqm ? 
+                            `${Math.round(property.size_sqm || property.total_sqm)}m²` : '—';
+                        const ward = property.ward || '—';
+                        const wardDiscount = property.ward_discount_pct;
+                        const wardDiscountText = wardDiscount !== undefined && wardDiscount !== null ? 
+                            (wardDiscount > 0 ? `+${wardDiscount.toFixed(1)}%` : `${wardDiscount.toFixed(1)}%`) : '';
+                        const station = property.closest_station || 'No station';
+                        const verdict = property.verdict || property.recommendation || 'unknown';
+                        const url = property.listing_url || '#';
+                        
+                        // Special display for fallback properties
+                        const displayText = property.isFallback ? 
+                            `Property ID: ${property.property_id} (data not available)` :
+                            `${price} — ${size} — ${ward}${wardDiscountText ? ` (${wardDiscountText})` : ''} — ${station}`;
+                        
+                        return `
+                            <li class="fav-item">
+                                <span>
+                                    <a href="${url}" target="_blank" style="color: #333; text-decoration: none;">
+                                        ${displayText}
+                                    </a>
+                                </span>
+                                <span class="verdict verdict-${verdict}" style="font-size: 11px;">
+                                    ${verdict.toUpperCase()}
+                                </span>
+                            </li>`;
+                    }).join('');
+                    
+                    console.log(`[DEBUG] Generated HTML content length: ${htmlContent.length} chars`);
+                    console.log('[DEBUG] First 200 chars of HTML:', htmlContent.substring(0, 200));
+                    
+                    list.innerHTML = htmlContent;
+                    console.log(`[DEBUG] After setting innerHTML, list content length: ${list.innerHTML.length}`);
+                    console.log('[DEBUG] List element visibility:', {
+                        display: list.style.display,
+                        computedDisplay: window.getComputedStyle(list).display,
+                        visibility: window.getComputedStyle(list).visibility,
+                        opacity: window.getComputedStyle(list).opacity,
+                        parentDisplay: window.getComputedStyle(list.parentElement).display
+                    });
+                    
+                } catch (error) {
+                    console.error('[DEBUG] Failed to load favorites:', error);
+                    list.innerHTML = `<li style="padding:20px; color:#999;">Failed to load favorites: ${error.message}</li>`;
+                }
+            }
+            
+            // Update debug counter
+            const debugCount = document.getElementById('favDebugCount');
+            if (debugCount) {
+                debugCount.textContent = `Items in list: ${list.children.length}`;
+            }
+            
+            console.log('[DEBUG] ========== LOAD FAVORITES END ==========');
         }
 
         // Update favorites count from localStorage
@@ -1976,13 +2213,20 @@
         
         // Load hidden view
         function loadHidden() {
+            console.log('[DEBUG] ========== LOAD HIDDEN START ==========');
             const list = document.getElementById('hiddenList');
+            console.log(`[DEBUG] hiddenList element found: ${!!list}`);
+            console.log(`[DEBUG] Hidden Set contents:`, [...hidden]);
+            console.log(`[DEBUG] Hidden Set size: ${hidden.size}`);
+            console.log(`[DEBUG] All properties count: ${allProperties.length}`);
             
             // Check if properties are loaded
             if (allProperties.length === 0) {
+                console.log('[DEBUG] No properties loaded yet, showing loading message');
                 list.innerHTML = '<li style="padding:20px; color:#999;">Loading properties...</li>';
                 // Try again after a short delay
                 setTimeout(() => {
+                    console.log('[DEBUG] Retrying loadHidden after delay...');
                     if (allProperties.length > 0) {
                         loadHidden();
                     }
@@ -1992,16 +2236,22 @@
             
             // Get hidden properties from the full list
             const hiddenProperties = allProperties.filter(p => hidden.has(p.property_id));
+            console.log(`[DEBUG] Filtered properties: ${hiddenProperties.length} hidden found`);
+            console.log('[DEBUG] Hidden property IDs:', hiddenProperties.map(p => p.property_id));
             
             if (hiddenProperties.length === 0) {
+                console.log('[DEBUG] No hidden properties, showing empty message');
                 list.innerHTML = '<li style="padding:20px; color:#999;">No hidden properties.</li>';
+                console.log(`[DEBUG] After setting empty message, list content length: ${list.innerHTML.length}`);
                 return;
             }
             
             // Sort hidden properties by price descending
             hiddenProperties.sort((a, b) => (b.price || 0) - (a.price || 0));
+            console.log('[DEBUG] Properties sorted by price');
             
-            list.innerHTML = hiddenProperties.map(property => {
+            console.log('[DEBUG] Generating HTML for hidden properties...');
+            const htmlContent = hiddenProperties.map(property => {
                 const price = property.price ? `¥${(property.price * 10000).toLocaleString()}` : '—';
                 const size = property.size_sqm || property.total_sqm ? 
                     `${Math.round(property.size_sqm || property.total_sqm)}m²` : '—';
@@ -2034,6 +2284,27 @@
                         </span>
                     </li>`;
             }).join('');
+            
+            console.log(`[DEBUG] Generated HTML content length: ${htmlContent.length} chars`);
+            console.log('[DEBUG] First 200 chars of HTML:', htmlContent.substring(0, 200));
+            
+            list.innerHTML = htmlContent;
+            console.log(`[DEBUG] After setting innerHTML, list content length: ${list.innerHTML.length}`);
+            console.log('[DEBUG] List element visibility:', {
+                display: list.style.display,
+                computedDisplay: window.getComputedStyle(list).display,
+                visibility: window.getComputedStyle(list).visibility,
+                opacity: window.getComputedStyle(list).opacity,
+                parentDisplay: window.getComputedStyle(list.parentElement).display
+            });
+            
+            // Update debug counter
+            const debugCount = document.getElementById('hiddenDebugCount');
+            if (debugCount) {
+                debugCount.textContent = `Items in list: ${list.children.length}`;
+            }
+            
+            console.log('[DEBUG] ========== LOAD HIDDEN END ==========');
         }
 
         // View property details (placeholder)
@@ -2240,6 +2511,156 @@
         function hideErrorBanner() {
             document.getElementById('errorBanner').style.display = 'none';
         }
+        
+        // ========== DEBUG HELPER FUNCTIONS ==========
+        // These can be called from the browser console for debugging
+        
+        window.debugFavoritesDisplay = function() {
+            console.log('=== FAVORITES DISPLAY DEBUG ===');
+            
+            // Check tab visibility
+            const favTab = document.getElementById('favorites-tab');
+            console.log('Favorites Tab:', {
+                exists: !!favTab,
+                hasActiveClass: favTab?.classList.contains('active'),
+                display: favTab?.style.display,
+                computedDisplay: favTab ? window.getComputedStyle(favTab).display : null,
+                innerHTML: favTab?.innerHTML?.substring(0, 100) + '...'
+            });
+            
+            // Check list element
+            const favList = document.getElementById('favoritesList');
+            console.log('Favorites List:', {
+                exists: !!favList,
+                display: favList?.style.display,
+                computedDisplay: favList ? window.getComputedStyle(favList).display : null,
+                visibility: favList ? window.getComputedStyle(favList).visibility : null,
+                opacity: favList ? window.getComputedStyle(favList).opacity : null,
+                innerHTML: favList?.innerHTML?.substring(0, 200) + '...',
+                childCount: favList?.children?.length,
+                textContent: favList?.textContent?.substring(0, 100) + '...'
+            });
+            
+            // Check parent hierarchy
+            if (favList) {
+                let parent = favList.parentElement;
+                let level = 1;
+                while (parent && level <= 5) {
+                    console.log(`Parent Level ${level}:`, {
+                        tagName: parent.tagName,
+                        id: parent.id,
+                        className: parent.className,
+                        display: window.getComputedStyle(parent).display,
+                        visibility: window.getComputedStyle(parent).visibility
+                    });
+                    parent = parent.parentElement;
+                    level++;
+                }
+            }
+            
+            // Check favorites data
+            console.log('Favorites Data:', {
+                favoritesSet: [...favorites],
+                favoritesCount: favorites.size,
+                currentUser: currentUser,
+                allPropertiesCount: allProperties.length
+            });
+            
+            // Force display attempt
+            console.log('Attempting to force display...');
+            if (favTab) {
+                favTab.style.display = 'block';
+                favTab.style.visibility = 'visible';
+                favTab.style.opacity = '1';
+            }
+            if (favList) {
+                favList.style.display = 'block';
+                favList.style.visibility = 'visible';
+                favList.style.opacity = '1';
+            }
+            
+            console.log('=== END FAVORITES DEBUG ===');
+        };
+        
+        window.debugHiddenDisplay = function() {
+            console.log('=== HIDDEN DISPLAY DEBUG ===');
+            
+            // Check tab visibility
+            const hiddenTab = document.getElementById('hidden-tab');
+            console.log('Hidden Tab:', {
+                exists: !!hiddenTab,
+                hasActiveClass: hiddenTab?.classList.contains('active'),
+                display: hiddenTab?.style.display,
+                computedDisplay: hiddenTab ? window.getComputedStyle(hiddenTab).display : null,
+                innerHTML: hiddenTab?.innerHTML?.substring(0, 100) + '...'
+            });
+            
+            // Check list element
+            const hiddenList = document.getElementById('hiddenList');
+            console.log('Hidden List:', {
+                exists: !!hiddenList,
+                display: hiddenList?.style.display,
+                computedDisplay: hiddenList ? window.getComputedStyle(hiddenList).display : null,
+                visibility: hiddenList ? window.getComputedStyle(hiddenList).visibility : null,
+                opacity: hiddenList ? window.getComputedStyle(hiddenList).opacity : null,
+                innerHTML: hiddenList?.innerHTML?.substring(0, 200) + '...',
+                childCount: hiddenList?.children?.length,
+                textContent: hiddenList?.textContent?.substring(0, 100) + '...'
+            });
+            
+            // Check parent hierarchy
+            if (hiddenList) {
+                let parent = hiddenList.parentElement;
+                let level = 1;
+                while (parent && level <= 5) {
+                    console.log(`Parent Level ${level}:`, {
+                        tagName: parent.tagName,
+                        id: parent.id,
+                        className: parent.className,
+                        display: window.getComputedStyle(parent).display,
+                        visibility: window.getComputedStyle(parent).visibility
+                    });
+                    parent = parent.parentElement;
+                    level++;
+                }
+            }
+            
+            // Check hidden data
+            console.log('Hidden Data:', {
+                hiddenSet: [...hidden],
+                hiddenCount: hidden.size,
+                allPropertiesCount: allProperties.length
+            });
+            
+            // Force display attempt
+            console.log('Attempting to force display...');
+            if (hiddenTab) {
+                hiddenTab.style.display = 'block';
+                hiddenTab.style.visibility = 'visible';
+                hiddenTab.style.opacity = '1';
+            }
+            if (hiddenList) {
+                hiddenList.style.display = 'block';
+                hiddenList.style.visibility = 'visible';
+                hiddenList.style.opacity = '1';
+            }
+            
+            console.log('=== END HIDDEN DEBUG ===');
+        };
+        
+        // Quick function to manually reload favorites
+        window.reloadFavorites = async function() {
+            console.log('Manually reloading favorites...');
+            await loadFavorites();
+            console.log('Favorites reload complete');
+        };
+        
+        // Quick function to manually reload hidden
+        window.reloadHidden = function() {
+            console.log('Manually reloading hidden...');
+            loadHidden();
+            console.log('Hidden reload complete');
+        };
         
     </script>
 </body>
