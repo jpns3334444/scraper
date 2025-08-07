@@ -359,6 +359,14 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
+        - IndexName: user-property-index
+          KeySchema:
+            - AttributeName: user_id
+              KeyType: HASH
+            - AttributeName: property_id
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
 
   # Lambda Functions (using AWS prebuilt layers + our OpenAI layer)
 
@@ -498,7 +506,7 @@ Resources:
       MemorySize: 512
       Environment:
         Variables:
-          FAVORITES_TABLE: !Ref UserFavoritesTable
+          FAVORITES_TABLE: !Ref UserPreferencesTable
 
   # Register User Lambda Function
   RegisterUserFunction:

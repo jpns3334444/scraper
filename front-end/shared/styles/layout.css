@@ -4,10 +4,9 @@
  */
 
  .container {
-    max-width: none;
-    width: 100%;
-    margin: 0;
-    padding: var(--ma-lg) var(--ma-sm);
+    max-width: 100%;
+    margin: 0 auto;
+    padding: var(--ma-lg) var(--ma-xl);
     position: relative;
     z-index: 10;
     background: linear-gradient(

@@ -49,14 +49,19 @@ th {
 }
 
 .column-header {
-    display: flex;
-    justify-content: center;
     align-items: center;
     padding: var(--ma-sm) var(--ma-xs);
     cursor: pointer;
     min-height: 45px;
     transition: all 0.3s cubic-bezier(0.23, 1, 0.32, 1);
     position: relative;
+}
+
+.column-header-content {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
 }
 
 .column-header::after {

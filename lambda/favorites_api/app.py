@@ -242,77 +242,46 @@ def remove_preference(event, user_id, preference_type):
     origin_header = event.get("headers", {}).get("origin", "*")
     
     try:
-        print(f"[DEBUG] Remove preference called - user_id: {user_id}, preference_type: {preference_type}")
-        print(f"[DEBUG] Event path: {event.get('path', '')}")
-        print(f"[DEBUG] Path parameters: {event.get('pathParameters', {})}")
-        
-        # Get ID from path parameters (REST API format)
+        # Get property_id from path
         path_params = event.get('pathParameters', {})
-        if path_params and 'id' in path_params:
-            property_id = path_params['id']
-            # Construct the full preference_id
-            preference_id = f"{user_id}_{property_id}_{preference_type}"
-            print(f"[DEBUG] Using path params - property_id: {property_id}, preference_id: {preference_id}")
-        else:
-            # Fallback - try to extract from path
-            path_parts = event.get('path', '').split('/')
-            print(f"[DEBUG] Path parts: {path_parts}")
-            if len(path_parts) > 2:
-                property_id = path_parts[-1]
-                preference_id = f"{user_id}_{property_id}_{preference_type}"
-                print(f"[DEBUG] Using path fallback - property_id: {property_id}, preference_id: {preference_id}")
-            else:
-                print(f"[ERROR] Invalid path - cannot extract property_id")
-                return {
-                    "statusCode": 400,
-                    "headers": {
-                        "Content-Type": "application/json",
-                        "Access-Control-Allow-Origin": origin_header,
-                        "Access-Control-Allow-Credentials": "true"
-                    },
-                    "body": json.dumps({'error': 'Invalid path'})
-                }
-        
-        # Verify ownership
-        if not preference_id.startswith(user_id + '_'):
-            print(f"[ERROR] Unauthorized - preference_id does not start with user_id")
+        property_id = path_params.get('id') or event.get('path', '').split('/')[-1]
+
+        if not property_id:
             return {
-                "statusCode": 403,
+                "statusCode": 400,
                 "headers": {
                     "Content-Type": "application/json",
                     "Access-Control-Allow-Origin": origin_header,
                     "Access-Control-Allow-Credentials": "true"
                 },
-                "body": json.dumps({'error': 'Unauthorized'})
+                "body": json.dumps({'error': 'Invalid path, property_id not found'})
             }
+
+        # Construct the unique preference_id directly
+        preference_id = f"{user_id}_{property_id}_{preference_type}"
         
-        print(f"[DEBUG] About to delete from DynamoDB - preference_id: {preference_id}")
-        print(f"[DEBUG] Table name: {preferences_table.name}")
-        
-        # Check if the item exists before deleting
-        try:
-            existing_item = preferences_table.get_item(Key={'preference_id': preference_id})
-            if 'Item' in existing_item:
-                print(f"[DEBUG] Found existing item: {existing_item['Item']}")
-            else:
-                print(f"[DEBUG] No existing item found for preference_id: {preference_id}")
-        except Exception as get_error:
-            print(f"[ERROR] Failed to check existing item: {str(get_error)}")
-        
-        # Perform the deletion
+        print(f"[DEBUG] Attempting to delete preference_id: {preference_id}")
+
+        # Perform the deletion using the primary key
         delete_response = preferences_table.delete_item(
             Key={'preference_id': preference_id},
             ReturnValues='ALL_OLD'
         )
         
-        print(f"[DEBUG] Delete response: {delete_response}")
-        
         # Check if anything was actually deleted
-        deleted_item = delete_response.get('Attributes')
-        if deleted_item:
-            print(f"[SUCCESS] Successfully deleted item: {deleted_item}")
-        else:
-            print(f"[WARNING] No item was deleted - item may not have existed")
+        if 'Attributes' not in delete_response:
+            print(f"[WARNING] Preference not found for ID: {preference_id}")
+            return {
+                'statusCode': 404,
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": origin_header,
+                    "Access-Control-Allow-Credentials": "true"
+                },
+                'body': json.dumps({'error': f'{preference_type.capitalize()} not found'})
+            }
+
+        print(f"[SUCCESS] Deleted item: {delete_response['Attributes']}")
         
         return {
             "statusCode": 200,
@@ -322,14 +291,14 @@ def remove_preference(event, user_id, preference_type):
                 "Access-Control-Allow-Credentials": "true"
             },
             "body": json.dumps({
-                'success': True, 
-                'deleted': deleted_item is not None,
+                'success': True,
+                'deleted': True,
                 'preference_id': preference_id
             })
         }
         
     except Exception as e:
-        print("ERROR in remove_preference:", e)
+        print(f"ERROR in remove_preference: {e}")
         import traceback
         print(traceback.format_exc())
         return {
@@ -339,7 +308,7 @@ def remove_preference(event, user_id, preference_type):
                 "Access-Control-Allow-Origin": origin_header,
                 "Access-Control-Allow-Credentials": "true"
             },
-            "body": json.dumps({'error': str(e)})
+            "body": json.dumps({'error': 'Internal server error'})
         }
 
 

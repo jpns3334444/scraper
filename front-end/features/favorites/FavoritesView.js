@@ -53,9 +53,9 @@ class FavoritesView {
                     ${imageHtml}
                 </div>
                 <div class="favorite-details-section">
-                    <div class="favorite-ward">${ward}${wardDiscountText ? ` (${wardDiscountText})` : ''}</div>
+                    <div class="favorite-ward">${ward}</div>
                     <div class="favorite-price">${price}</div>
-                    <div class="favorite-size">${size} • ${station}</div>
+                    <div class="favorite-size">${size}</div>
                 </div>
                 <div class="favorite-status-section">
                     <span class="processing-status ${statusClass}">${statusText}</span>

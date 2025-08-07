@@ -23,9 +23,18 @@ class PropertiesView {
     renderTableStructure() {
         const tableContainer = document.getElementById('tableContainer');
         if (!tableContainer) return;
-        
+
         // Create the table with headers
         tableContainer.innerHTML = `
+            <div class="header-container">
+                <div class="results-info">
+                    <span id="resultsCount"></span>
+                </div>
+                <div class="controls">
+                    <button id="filter-btn" class="control-btn">Filter</button>
+                    <button id="sort-btn" class="control-btn">Sort</button>
+                </div>
+            </div>
             <table>
                 <thead>
                     <tr>
@@ -33,25 +42,24 @@ class PropertiesView {
                         <th class="sortable" onclick="sortTable('price')">
                             <div class="column-header">
                                 Price
-                                <span class="sort-arrows" id="sort-price">▲▼</span>
+                                <span class="sort-arrows" id="sort-price">↕</span>
                             </div>
                         </th>
                         <th class="sortable" onclick="sortTable('price_per_sqm')">
                             <div class="column-header">
                                 Price/m²
-                                <span class="sort-arrows" id="sort-price_per_sqm">▲▼</span>
+                                <span class="sort-arrows" id="sort-price_per_sqm">↕</span>
                             </div>
                         </th>
                         <th class="sortable" onclick="sortTable('total_monthly_costs')">
                             <div class="column-header">
                                 Monthly Cost
-                                <span class="sort-arrows" id="sort-total_monthly_costs">▲▼</span>
+                                <span class="sort-arrows" id="sort-total_monthly_costs">↕</span>
                             </div>
                         </th>
-                        <th class="sortable" onclick="sortTable('ward')">
+                        <th>
                             <div class="column-header">
                                 Ward
-                                <span class="sort-arrows" id="sort-ward">▲▼</span>
                                 <div class="filter-dropdown">
                                     <button class="filter-btn" onclick="toggleFilterDropdown(event, 'ward')" id="filter-btn-ward">▼</button>
                                     <div class="filter-dropdown-content" id="filter-dropdown-ward">
@@ -67,38 +75,38 @@ class PropertiesView {
                         <th class="sortable" onclick="sortTable('ward_discount_pct')">
                             <div class="column-header">
                                 Ward Discount %
-                                <span class="sort-arrows" id="sort-ward_discount_pct">▲▼</span>
+                                <span class="sort-arrows" id="sort-ward_discount_pct">↕</span>
                             </div>
                         </th>
                         <th class="sortable" onclick="sortTable('ward_median_price_per_sqm')">
                             <div class="column-header">
                                 Ward Median ¥/m²
-                                <span class="sort-arrows" id="sort-ward_median_price_per_sqm">▲▼</span>
+                                <span class="sort-arrows" id="sort-ward_median_price_per_sqm">↕</span>
                             </div>
                         </th>
                         <th>Closest Station</th>
                         <th class="sortable" onclick="sortTable('station_distance_minutes')">
                             <div class="column-header">
                                 Walk Time (min)
-                                <span class="sort-arrows" id="sort-station_distance_minutes">▲▼</span>
+                                <span class="sort-arrows" id="sort-station_distance_minutes">↕</span>
                             </div>
                         </th>
                         <th class="sortable" onclick="sortTable('floor')">
                             <div class="column-header">
                                 Floor
-                                <span class="sort-arrows" id="sort-floor">▲▼</span>
+                                <span class="sort-arrows" id="sort-floor">↕</span>
                             </div>
                         </th>
                         <th class="sortable" onclick="sortTable('building_age_years')">
                             <div class="column-header">
                                 Building Age
-                                <span class="sort-arrows" id="sort-building_age_years">▲▼</span>
+                                <span class="sort-arrows" id="sort-building_age_years">↕</span>
                             </div>
                         </th>
                         <th class="sortable" onclick="sortTable('size_sqm')">
                             <div class="column-header">
                                 Size (m²)
-                                <span class="sort-arrows" id="sort-size_sqm">▲▼</span>
+                                <span class="sort-arrows" id="sort-size_sqm">↕</span>
                             </div>
                         </th>
                         <th>

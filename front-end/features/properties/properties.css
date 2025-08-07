@@ -3,19 +3,52 @@
  * Properties table styles, column specific styles, sort arrows, and skeleton loading
  */
 
+/* Header container for results info and controls */
+.header-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--ma-sm) 0;
+    flex-wrap: wrap;
+    gap: var(--ma-sm);
+}
+
+.results-info {
+    font-family: 'Noto Serif JP', serif;
+    color: var(--ink-light);
+    font-size: 14px;
+    letter-spacing: 0.05em;
+    flex-shrink: 0;
+}
+
+.controls {
+    display: flex;
+    gap: var(--ma-sm);
+}
+
+.control-btn {
+    background: var(--washi-white);
+    border: 1px solid var(--ink-wash);
+    color: var(--ink-medium);
+    padding: var(--ma-xs) var(--ma-sm);
+    font-family: 'Noto Serif JP', serif;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    letter-spacing: 0.05em;
+}
+
+.control-btn:hover {
+    background: var(--washi-cream);
+    border-color: var(--ink-medium);
+    color: var(--ink-dark);
+}
+
 /* Column-specific widths and styles */
-th:nth-child(1), td:nth-child(1) { width: 50px; }  /* Image */
-th:nth-child(2), td:nth-child(2) { width: 100px; } /* Link */
-th:nth-child(3), td:nth-child(3) { width: 120px; } /* Price */
-th:nth-child(4), td:nth-child(4) { width: 80px; }  /* Percent */
-th:nth-child(5), td:nth-child(5) { width: 120px; } /* Ward */
-th:nth-child(6), td:nth-child(6) { width: 80px; }  /* Station */
-th:nth-child(7), td:nth-child(7) { width: 80px; }  /* Size */
-th:nth-child(8), td:nth-child(8) { width: 80px; }  /* Age */
-th:nth-child(9), td:nth-child(9) { width: 100px; } /* Light */
-th:nth-child(10), td:nth-child(10) { width: 80px; } /* Score */
-th:nth-child(11), td:nth-child(11) { width: 100px; } /* Verdict */
-th:nth-child(12), td:nth-child(12) { width: 100px; } /* Actions */
+table {
+    table-layout: fixed;
+    width: 100%;
+}
 
 /* Scroll sentinel for infinite loading */
 #scrollSentinel {
@@ -42,7 +75,7 @@ th:nth-child(12), td:nth-child(12) { width: 100px; } /* Actions */
     th:nth-child(6), td:nth-child(6) { width: 70px; }
     th:nth-child(7), td:nth-child(7) { width: 70px; }
     th:nth-child(8), td:nth-child(8) { width: 70px; }
-    th:nth-child(9), td:nth-child(9) { width: 80px; }
+    th:n-child(9), td:nth-child(9) { width: 80px; }
     th:nth-child(10), td:nth-child(10) { width: 70px; }
     th:nth-child(11), td:nth-child(11) { width: 80px; }
     th:nth-child(12), td:nth-child(12) { width: 80px; }

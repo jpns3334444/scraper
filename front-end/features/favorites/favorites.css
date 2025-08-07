@@ -166,15 +166,16 @@
 
 /* Status section with seal aesthetic */
 .favorite-status-section {
-    margin-left: auto;
-    padding-left: var(--ma-md);
+    position: absolute;
+    bottom: var(--ma-sm);
+    right: var(--ma-sm);
 }
 
 .processing-status {
-    padding: var(--ma-xs) var(--ma-sm);
-    font-size: 11px;
+    padding: 4px 8px;
+    font-size: 10px;
     font-weight: 400;
-    letter-spacing: 0.15em;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
     font-family: 'Noto Serif JP', serif;
     border: 1px solid;
