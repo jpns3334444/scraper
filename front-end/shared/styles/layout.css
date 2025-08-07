@@ -1,109 +1,262 @@
 /**
  * layout.css
- * Container, grid, spacing, and layout-related styles
+ * Container, grid, spacing with Sumi-e aesthetic principles
  */
 
-.container {
+ .container {
     max-width: none;
     width: 100%;
     margin: 0;
-    padding: 40px 9px;
+    padding: var(--ma-lg) var(--ma-sm);
     position: relative;
     z-index: 10;
-    background: rgba(255, 255, 255, 0.8);
+    background: linear-gradient(
+        180deg,
+        rgba(250, 248, 245, 0.95) 0%,
+        rgba(250, 248, 245, 0.85) 100%
+    );
     backdrop-filter: blur(10px);
-    border-radius: 8px;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+    min-height: 100vh;
 }
 
+/* Main title with calligraphic treatment */
 h1 {
-    color: #222222;
-    margin-bottom: 40px;
-    font-size: 48px;
-    font-weight: 700;
+    color: var(--ink-black);
+    margin-bottom: var(--ma-xl);
+    font-size: clamp(3rem, 8vw, 5rem);
+    font-weight: 900;
     text-align: center;
-    font-family: 'Zen Kaku Gothic Antique', serif;
-    letter-spacing: 0.15em;
+    font-family: 'Noto Serif JP', serif;
+    letter-spacing: 0.2em;
     position: relative;
-    padding-bottom: 20px;
+    padding-bottom: var(--ma-md);
+    background: linear-gradient(
+        180deg,
+        var(--ink-black) 0%,
+        var(--ink-dark) 50%,
+        var(--ink-medium) 100%
+    );
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
 }
 
-/* Brushstroke underline */
+/* Brushstroke underline using SVG data URI */
 h1::after {
     content: '';
     position: absolute;
     bottom: 0;
     left: 50%;
     transform: translateX(-50%);
-    width: 120px;
-    height: 3px;
-    background: linear-gradient(90deg, transparent 0%, #695b8d 20%, #695b8d 80%, transparent 100%);
-    border-radius: 2px;
+    width: 200px;
+    height: 4px;
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 4"><path d="M0,2 Q50,4 100,2 T200,2" stroke="%23c73929" stroke-width="2" fill="none" opacity="0.8"/></svg>');
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+    opacity: 0;
+    animation: fadeIn 1s ease-out 0.5s forwards;
 }
 
+/* Results info bar with paper texture */
 .results-info {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 30px;
-    padding: 16px 24px;
-    background: #ffffff;
-    border-radius: 8px;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+    margin-bottom: var(--ma-md);
+    padding: var(--ma-sm) var(--ma-md);
+    background: linear-gradient(
+        90deg,
+        var(--washi-white) 0%,
+        var(--washi-cream) 50%,
+        var(--washi-white) 100%
+    );
+    border-left: 3px solid var(--ink-wash);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
     position: relative;
+}
+
+.results-info::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: 
+        repeating-linear-gradient(
+            90deg,
+            transparent,
+            transparent 50px,
+            rgba(0,0,0,0.01) 50px,
+            rgba(0,0,0,0.01) 51px
+        );
+    pointer-events: none;
 }
 
 .results-count {
     font-size: 14px;
-    color: #666666;
-    font-weight: 400;
-    font-family: 'Noto Sans JP', sans-serif;
+    color: var(--ink-medium);
+    font-weight: 200;
+    font-family: 'Noto Serif JP', serif;
+    letter-spacing: 0.05em;
 }
 
-/* Table Container */
+/* Table Container with organic edges */
 .table-container {
-    background: #ffffff;
-    border-radius: 8px;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+    background: var(--washi-white);
+    box-shadow: 
+        0 2px 4px rgba(0, 0, 0, 0.02),
+        0 4px 8px rgba(0, 0, 0, 0.02),
+        0 8px 16px rgba(0, 0, 0, 0.02);
     overflow: visible;
+    position: relative;
+    margin-bottom: var(--ma-lg);
+    border: 1px solid var(--ink-wash);
+}
+
+/* Add subtle irregularity to container edges */
+.table-container::before {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: -1px;
+    right: -1px;
+    bottom: -1px;
+    background: 
+        radial-gradient(circle at 0% 0%, transparent 70%, var(--ink-wash) 100%),
+        radial-gradient(circle at 100% 0%, transparent 70%, var(--ink-wash) 100%),
+        radial-gradient(circle at 100% 100%, transparent 70%, var(--ink-wash) 100%),
+        radial-gradient(circle at 0% 100%, transparent 70%, var(--ink-wash) 100%);
+    opacity: 0.1;
+    pointer-events: none;
+}
+
+/* Tab Navigation with generous spacing */
+.tab-navigation {
+    display: flex;
+    gap: var(--ma-md);
+    margin-bottom: var(--ma-lg);
+    justify-content: center;
+    flex-wrap: wrap;
     position: relative;
 }
 
-/* Tab Navigation */
-.tab-navigation {
-    display: flex;
-    gap: 12px;
-    margin-bottom: 30px;
-    justify-content: center;
-    flex-wrap: wrap;
+/* Add decorative line under tab navigation */
+.tab-navigation::after {
+    content: '';
+    position: absolute;
+    bottom: -20px;
+    left: 10%;
+    right: 10%;
+    height: 1px;
+    background: linear-gradient(
+        to right,
+        transparent,
+        var(--ink-wash) 20%,
+        var(--ink-wash) 80%,
+        transparent
+    );
 }
 
 .tab-pane {
     display: block;
+    opacity: 0;
+    animation: fadeInUp 0.6s ease-out forwards;
 }
 
 .tab-pane:not(.active) {
     display: none;
 }
 
-/* Mobile responsiveness */
+/* Section dividers with Ma (negative space) */
+.section-divider {
+    height: var(--ma-xl);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    margin: var(--ma-lg) 0;
+}
+
+.section-divider::before {
+    content: '';
+    position: absolute;
+    left: 20%;
+    right: 20%;
+    height: 1px;
+    background: linear-gradient(
+        to right,
+        transparent,
+        var(--ink-wash) 30%,
+        var(--ink-wash) 70%,
+        transparent
+    );
+}
+
+/* Optional decorative element in divider */
+.section-divider::after {
+    content: '◯';
+    position: absolute;
+    background: var(--washi-white);
+    padding: 0 var(--ma-sm);
+    color: var(--ink-wash);
+    font-size: 20px;
+    font-weight: 200;
+}
+
+/* Pagination container */
+.pagination-container {
+    margin-top: var(--ma-lg);
+    padding-top: var(--ma-md);
+    border-top: 1px solid var(--ink-wash);
+    background: linear-gradient(
+        to bottom,
+        var(--washi-cream) 0%,
+        transparent 100px
+    );
+}
+
+/* Mobile responsiveness with maintained aesthetics */
 @media (max-width: 768px) {
     .container {
-        padding: 20px 9px;
+        padding: var(--ma-md) var(--ma-xs);
     }
     
     h1 {
-        font-size: 32px;
-        margin-bottom: 30px;
+        font-size: 2.5rem;
+        margin-bottom: var(--ma-lg);
+        letter-spacing: 0.1em;
+    }
+    
+    h1::after {
+        width: 120px;
     }
     
     .results-info {
         flex-direction: column;
         align-items: flex-start;
-        gap: 12px;
+        gap: var(--ma-xs);
+        padding: var(--ma-sm);
     }
     
     .tab-navigation {
-        justify-content: center;
+        gap: var(--ma-sm);
+    }
+    
+    .section-divider {
+        height: var(--ma-lg);
+        margin: var(--ma-md) 0;
+    }
+}
+
+/* Large screens - maximize Ma (spacing) */
+@media (min-width: 1400px) {
+    .container {
+        padding: var(--ma-xl) var(--ma-lg);
+    }
+    
+    .table-container {
+        margin: 0 var(--ma-md);
     }
 }

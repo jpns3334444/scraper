@@ -33,7 +33,8 @@
       "Bash(ls:*)",
       "Bash(zip:*)",
       "Bash(aws s3 cp:*)",
-      "Bash(aws s3api head-object:*)"
+      "Bash(aws s3api head-object:*)",
+      "Bash(./update-lambda.sh:*)"
     ],
     "deny": []
   }

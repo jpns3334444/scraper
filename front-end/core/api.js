@@ -101,6 +101,8 @@ class PropertyAPI {
     }
     
     async removeFavorite(propertyId, userEmail) {
+        console.log(`[API] Removing favorite: ${propertyId} for user: ${userEmail}`);
+        
         const response = await fetch(`${this.favoritesApiUrl}/favorites/${propertyId}`, {
             method: 'DELETE',
             headers: { 
@@ -108,11 +110,29 @@ class PropertyAPI {
             }
         });
         
+        console.log(`[API] Delete response status: ${response.status}`);
+        
         if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`[API] Delete failed: ${response.status} - ${errorText}`);
             throw new Error(`Failed to remove favorite: ${response.status}`);
         }
         
-        return true;
+        // Log the successful response
+        try {
+            const responseData = await response.json();
+            console.log(`[API] Delete response data:`, responseData);
+            
+            // Check if the backend indicates the item was actually deleted
+            if (responseData.deleted === false) {
+                console.warn(`[API] Backend reported no item was deleted for property ${propertyId}`);
+            }
+            
+            return responseData;
+        } catch (parseError) {
+            console.warn(`[API] Could not parse delete response as JSON:`, parseError);
+            return true; // Assume success if we can't parse the response
+        }
     }
     
     async toggleFavorite(propertyId, userEmail, isFavorited) {

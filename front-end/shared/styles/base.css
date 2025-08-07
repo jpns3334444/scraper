@@ -1,71 +1,258 @@
 /**
  * base.css
- * Base styles including fonts, reset, body styles, and Mt. Fuji background
+ * Base styles with Sumi-e aesthetic - Japanese ink wash painting inspired design
  */
 
-@import url('https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+Antique:wght@400;700&family=Noto+Sans+JP:wght@400;700&display=swap');
+ @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@200;400;900&display=swap');
 
-* {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-}
-
-body {
-    font-family: 'Noto Sans JP', 'Hiragino Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-    background: #F7F5F2;
-    color: #222222;
-    line-height: 1.7;
-    font-size: 15px;
-    overflow-x: hidden;
-    position: relative;
-    font-weight: 400;
-}
-
-/* Subtle Mt. Fuji background */
-body::before {
-    content: '';
-    position: fixed;
-    top: 0;
-    right: 0;
-    width: 600px;
-    height: 400px;
-    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400"><path d="M300 100 L200 300 L400 300 Z" fill="%23e8e4e0" opacity="0.06"/><path d="M300 100 L250 200 L350 200 Z" fill="%23ffffff" opacity="0.08"/></svg>');
-    background-repeat: no-repeat;
-    background-position: top right;
-    background-size: contain;
-    pointer-events: none;
-    z-index: 0;
-}
-
-@keyframes fadeInUp {
-    0% {
-        opacity: 0;
-        transform: translateY(10px);
-    }
-    100% {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-@keyframes fadeIn {
-    0% {
-        opacity: 0;
-    }
-    100% {
-        opacity: 1;
-    }
-}
-
-@keyframes pulse {
-    0% {
-        opacity: 1;
-    }
-    50% {
-        opacity: 0.5;
-    }
-    100% {
-        opacity: 1;
-    }
-}
+ /* =============== CSS Custom Properties =============== */
+ :root {
+     /* Ink gradations from darkest to lightest */
+     --ink-black: #1a1a1a;
+     --ink-dark: #3d3d3d;
+     --ink-medium: #666666;
+     --ink-light: #999999;
+     --ink-wash: #e5e5e5;
+     
+     /* Traditional paper tones */
+     --washi-white: #faf8f5;
+     --washi-cream: #f5f0e8;
+     --washi-gray: #ebe7e0;
+     
+     /* Vermillion seal accent */
+     --seal-red: #c73929;
+     
+     /* Spacing system based on Tatami mat proportions (2:1) */
+     --ma-xs: 0.5rem;
+     --ma-sm: 1rem;
+     --ma-md: 2rem;
+     --ma-lg: 4rem;
+     --ma-xl: 8rem;
+ }
+ 
+ * {
+     box-sizing: border-box;
+     margin: 0;
+     padding: 0;
+ }
+ 
+ body {
+     font-family: 'Noto Serif JP', serif;
+     background: var(--washi-white);
+     color: var(--ink-dark);
+     line-height: 1.8;
+     font-size: 15px;
+     overflow-x: hidden;
+     position: relative;
+     font-weight: 200;
+     min-height: 100vh;
+ }
+ 
+ /* Layered Ink Wash Background Effects */
+ body::before {
+     content: '';
+     position: fixed;
+     top: 0;
+     left: 0;
+     right: 0;
+     bottom: 0;
+     background: 
+         /* Paper texture */
+         repeating-linear-gradient(
+             45deg,
+             transparent,
+             transparent 10px,
+             rgba(0,0,0,0.003) 10px,
+             rgba(0,0,0,0.003) 20px
+         ),
+         repeating-linear-gradient(
+             -45deg,
+             transparent,
+             transparent 10px,
+             rgba(0,0,0,0.003) 10px,
+             rgba(0,0,0,0.003) 20px
+         ),
+         /* Ink wash gradients */
+         radial-gradient(
+             circle at 20% 80%,
+             rgba(105, 91, 141, 0.02) 0%,
+             transparent 50%
+         ),
+         radial-gradient(
+             circle at 80% 20%,
+             rgba(26, 26, 26, 0.03) 0%,
+             transparent 40%
+         ),
+         radial-gradient(
+             circle at 50% 50%,
+             rgba(105, 91, 141, 0.01) 0%,
+             transparent 60%
+         );
+     pointer-events: none;
+     z-index: 1;
+ }
+ 
+ /* Subtle Mt. Fuji silhouette - refined version */
+ body::after {
+     content: '';
+     position: fixed;
+     bottom: 0;
+     right: -10%;
+     width: 800px;
+     height: 400px;
+     background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400"><defs><filter id="blur"><feGaussianBlur stdDeviation="2"/></filter></defs><path d="M400 100 L200 400 L600 400 Z" fill="%23e8e4e0" opacity="0.04" filter="url(%23blur)"/><path d="M400 100 L320 250 L480 250 Z" fill="%23ffffff" opacity="0.06"/></svg>');
+     background-repeat: no-repeat;
+     background-position: bottom right;
+     background-size: contain;
+     pointer-events: none;
+     z-index: 0;
+     opacity: 0.5;
+ }
+ 
+ /* Floating ink particles */
+ @keyframes floatUp {
+     from {
+         transform: translateY(100vh) translateX(0) scale(0);
+         opacity: 0;
+     }
+     10% {
+         transform: scale(1);
+         opacity: 0.1;
+     }
+     90% {
+         opacity: 0.05;
+     }
+     to {
+         transform: translateY(-100px) translateX(20px) scale(0.5);
+         opacity: 0;
+     }
+ }
+ 
+ .ink-particle {
+     position: fixed;
+     width: 4px;
+     height: 4px;
+     background: var(--ink-medium);
+     border-radius: 50%;
+     pointer-events: none;
+     opacity: 0.1;
+     animation: floatUp 15s linear infinite;
+     z-index: 2;
+ }
+ 
+ /* Animation keyframes */
+ @keyframes fadeInUp {
+     0% {
+         opacity: 0;
+         transform: translateY(20px);
+     }
+     100% {
+         opacity: 1;
+         transform: translateY(0);
+     }
+ }
+ 
+ @keyframes fadeIn {
+     0% {
+         opacity: 0;
+     }
+     100% {
+         opacity: 1;
+     }
+ }
+ 
+ @keyframes drawStroke {
+     from {
+         stroke-dashoffset: 100%;
+     }
+     to {
+         stroke-dashoffset: 0;
+     }
+ }
+ 
+ @keyframes pulse {
+     0%, 100% {
+         opacity: 0.3;
+     }
+     50% {
+         opacity: 1;
+     }
+ }
+ 
+ /* Enso circle decoration */
+ .enso-decoration {
+     position: fixed;
+     top: 50%;
+     left: 50%;
+     transform: translate(-50%, -50%);
+     width: 600px;
+     height: 600px;
+     opacity: 0.02;
+     z-index: 0;
+     pointer-events: none;
+ }
+ 
+ .enso-decoration svg {
+     width: 100%;
+     height: 100%;
+ }
+ 
+ .enso-decoration circle {
+     fill: none;
+     stroke: var(--ink-black);
+     stroke-width: 3;
+     stroke-linecap: round;
+     stroke-dasharray: 1885;
+     stroke-dashoffset: 1885;
+     animation: drawStroke 3s ease-out forwards;
+ }
+ 
+ /* Typography improvements */
+ h1, h2, h3, h4, h5, h6 {
+     font-weight: 400;
+     letter-spacing: 0.05em;
+ }
+ 
+ a {
+     color: var(--ink-dark);
+     text-decoration: none;
+     transition: color 0.3s ease;
+ }
+ 
+ a:hover {
+     color: var(--seal-red);
+ }
+ 
+ /* Selection color */
+ ::selection {
+     background: rgba(199, 57, 41, 0.1);
+     color: var(--ink-black);
+ }
+ 
+ /* Scrollbar styling */
+ ::-webkit-scrollbar {
+     width: 10px;
+     height: 10px;
+ }
+ 
+ ::-webkit-scrollbar-track {
+     background: var(--washi-cream);
+ }
+ 
+ ::-webkit-scrollbar-thumb {
+     background: var(--ink-wash);
+     border-radius: 0;
+ }
+ 
+ ::-webkit-scrollbar-thumb:hover {
+     background: var(--ink-light);
+ }
+ 
+ /* Reduced motion support */
+ @media (prefers-reduced-motion: reduce) {
+     * {
+         animation-duration: 0.01ms !important;
+         animation-iteration-count: 1 !important;
+         transition-duration: 0.01ms !important;
+     }
+ }
