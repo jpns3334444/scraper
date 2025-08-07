@@ -1,9 +1,9 @@
 /**
  * auth.css
- * Authentication modal and user info display styles
+ * Minimal Sumi-e authentication modal and user interface
  */
 
-/* Modal Styles */
+/* Modal backdrop with subtle blur */
 .modal {
     position: fixed;
     z-index: 1000;
@@ -11,128 +11,225 @@
     top: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(0,0,0,0.5);
+    background: rgba(255,255,255,0.9);
+    backdrop-filter: blur(5px);
     display: none;
-    animation: fadeIn 0.3s ease;
+    animation: fadeIn 0.4s ease;
 }
 
+/* Modal content - paper-like */
 .modal-content {
-    background-color: #fefefe;
+    background: var(--paper-white);
     margin: 15% auto;
-    padding: 40px;
-    border: 1px solid #ddd;
-    width: 400px;
+    padding: var(--space-xxl);
+    width: 380px;
     max-width: 90%;
-    border-radius: 8px;
-    font-family: 'Noto Sans JP', sans-serif;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-    animation: slideDown 0.3s ease;
+    position: relative;
+    border: 1px solid var(--ink-faint);
+    animation: slideUp 0.4s ease;
 }
 
-@keyframes slideDown {
-    from { transform: translateY(-20px); opacity: 0; }
-    to { transform: translateY(0); opacity: 1; }
+/* Add subtle paper corner effect */
+.modal-content::before {
+    content: '';
+    position: absolute;
+    top: -1px;
+    right: -1px;
+    width: 30px;
+    height: 30px;
+    background: linear-gradient(
+        135deg,
+        transparent 50%,
+        var(--ink-faint) 50%,
+        var(--ink-faint) 52%,
+        var(--paper-gray) 52%
+    );
+}
+
+@keyframes slideUp {
+    from { 
+        transform: translateY(20px);
+        opacity: 0;
+    }
+    to { 
+        transform: translateY(0);
+        opacity: 1;
+    }
 }
 
 .modal h2 {
-    margin-bottom: 24px;
-    color: #333;
-    font-size: 24px;
-    font-weight: 700;
+    margin-bottom: var(--space-xl);
+    color: var(--ink-black);
+    font-size: 1.618rem;
+    font-weight: 200;
     text-align: center;
+    letter-spacing: 0.2em;
+    position: relative;
+}
+
+/* Subtle underline */
+.modal h2::after {
+    content: '';
+    position: absolute;
+    bottom: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40px;
+    height: 1px;
+    background: var(--ink-faint);
 }
 
 .modal input {
     width: 100%;
-    padding: 12px;
-    margin: 8px 0;
-    border: 1px solid #ddd;
-    border-radius: 4px;
+    padding: var(--space-md);
+    margin: var(--space-md) 0;
+    border: none;
+    border-bottom: 1px solid var(--ink-faint);
+    background: transparent;
+    font-family: 'Noto Serif JP', serif;
     font-size: 14px;
-    font-family: 'Noto Sans JP', sans-serif;
-    transition: border-color 0.2s;
+    font-weight: 300;
+    transition: border-color 0.3s ease;
     box-sizing: border-box;
 }
 
 .modal input:focus {
     outline: none;
-    border-color: #695b8d;
+    border-bottom-color: var(--ink-gray);
+}
+
+.modal input::placeholder {
+    color: var(--ink-faint);
+    letter-spacing: 0.05em;
 }
 
 .modal button {
     width: 100%;
-    padding: 12px;
-    background: #695b8d;
-    color: white;
+    padding: var(--space-md);
+    background: var(--ink-black);
+    color: var(--paper-white);
     border: none;
-    border-radius: 4px;
-    font-size: 16px;
     cursor: pointer;
-    margin-top: 16px;
-    font-family: 'Noto Sans JP', sans-serif;
-    font-weight: 500;
-    transition: background 0.2s;
+    margin-top: var(--space-xl);
+    font-family: 'Noto Serif JP', serif;
+    font-weight: 300;
+    letter-spacing: 0.05em;
+}
+
+.user-info button:hover,
+.user-info .ink-btn:hover {
+    border-color: var(--ink-gray);
+    background: var(--ink-faint);
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+    .modal-content {
+        margin: 20% auto;
+        padding: var(--space-xl);
+        width: 90%;
+    }
+    
+    .user-info {
+        top: var(--space-sm);
+        right: var(--space-sm);
+        padding: var(--space-xs) var(--space-sm);
+    }
+    
+    .user-info span {
+        display: none;
+    }
+}: 300;
+    letter-spacing: 0.1em;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+/* Ink spread effect on hover */
+.modal button::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    background: var(--ink-gray);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    transition: width 0.6s ease, height 0.6s ease;
+}
+
+.modal button:hover::before {
+    width: 300%;
+    height: 300%;
 }
 
 .modal button:hover {
-    background: #574a75;
+    color: var(--paper-white);
+}
+
+.modal button span {
+    position: relative;
+    z-index: 1;
 }
 
 .auth-switch {
     text-align: center;
-    margin-top: 20px;
-    font-size: 14px;
-    color: #666;
+    margin-top: var(--space-lg);
+    font-size: 13px;
+    color: var(--ink-light);
+    letter-spacing: 0.05em;
 }
 
 .auth-switch a {
-    color: #695b8d;
+    color: var(--ink-gray);
     text-decoration: none;
-    font-weight: 500;
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.3s ease;
 }
 
 .auth-switch a:hover {
-    text-decoration: underline;
+    border-bottom-color: var(--ink-gray);
 }
 
 .error-message {
-    color: #d32f2f;
-    margin-top: 10px;
-    font-size: 14px;
+    color: var(--seal-red);
+    margin-top: var(--space-md);
+    font-size: 12px;
     text-align: center;
+    letter-spacing: 0.05em;
 }
 
-/* User Info Display */
+/* User info - minimal floating style */
 .user-info {
     position: fixed;
-    top: 20px;
-    right: 20px;
+    top: var(--space-lg);
+    right: var(--space-lg);
     z-index: 100;
-    background: white;
-    padding: 8px 16px;
-    border-radius: 20px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    background: var(--paper-white);
+    padding: var(--space-sm) var(--space-md);
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--space-md);
+    border: 1px solid var(--ink-faint);
+    animation: fadeIn 0.4s ease;
 }
 
 .user-info span {
-    color: #666;
-    font-size: 14px;
+    color: var(--ink-gray);
+    font-size: 13px;
+    letter-spacing: 0.05em;
 }
 
-.user-info button {
-    padding: 6px 12px;
-    background: #695b8d;
-    color: white;
-    border: none;
-    border-radius: 4px;
+.user-info button,
+.user-info .ink-btn {
+    padding: var(--space-xs) var(--space-md);
+    background: transparent;
+    color: var(--ink-gray);
+    border: 1px solid var(--ink-faint);
     cursor: pointer;
-    font-size: 14px;
-    transition: background 0.2s;
-}
-
-.user-info button:hover {
-    background: #574a75;
-}
+    font-size: 12px;
+    transition: all 0.3s ease;
+    font-family: 'Noto Serif JP', serif;
+    font-weight

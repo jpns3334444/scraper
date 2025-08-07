@@ -1,0 +1,2 @@
+# Standard library and boto3 are provided by AWS Lambda runtime
+# No additional dependencies required

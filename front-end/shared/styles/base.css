@@ -1,33 +1,32 @@
 /**
  * base.css
- * Base styles with Sumi-e aesthetic - Japanese ink wash painting inspired design
+ * Minimal Sumi-e aesthetic - Traditional Japanese ink painting inspired design
  */
 
- @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@200;400;900&display=swap');
+ @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@200;300;400&display=swap');
 
  /* =============== CSS Custom Properties =============== */
  :root {
-     /* Ink gradations from darkest to lightest */
+     /* Ink tones - minimal gradation */
      --ink-black: #1a1a1a;
-     --ink-dark: #3d3d3d;
-     --ink-medium: #666666;
-     --ink-light: #999999;
-     --ink-wash: #e5e5e5;
+     --ink-gray: #4a4a4a;
+     --ink-light: #888888;
+     --ink-faint: #d0d0d0;
      
-     /* Traditional paper tones */
-     --washi-white: #faf8f5;
-     --washi-cream: #f5f0e8;
-     --washi-gray: #ebe7e0;
+     /* Paper */
+     --paper-white: #fefefe;
+     --paper-gray: #f8f8f8;
      
-     /* Vermillion seal accent */
-     --seal-red: #c73929;
+     /* Traditional red seal */
+     --seal-red: #b8312f;
      
-     /* Spacing system based on Tatami mat proportions (2:1) */
-     --ma-xs: 0.5rem;
-     --ma-sm: 1rem;
-     --ma-md: 2rem;
-     --ma-lg: 4rem;
-     --ma-xl: 8rem;
+     /* Spacing - golden ratio inspired */
+     --space-xs: 0.382rem;
+     --space-sm: 0.618rem;
+     --space-md: 1rem;
+     --space-lg: 1.618rem;
+     --space-xl: 2.618rem;
+     --space-xxl: 4.236rem;
  }
  
  * {
@@ -38,17 +37,17 @@
  
  body {
      font-family: 'Noto Serif JP', serif;
-     background: var(--washi-white);
-     color: var(--ink-dark);
-     line-height: 1.8;
-     font-size: 15px;
-     overflow-x: hidden;
-     position: relative;
      font-weight: 200;
+     background: var(--paper-white);
+     color: var(--ink-black);
+     line-height: 1.618;
+     font-size: 14px;
+     position: relative;
      min-height: 100vh;
+     overflow-x: hidden;
  }
  
- /* Layered Ink Wash Background Effects */
+ /* Subtle paper texture background */
  body::before {
      content: '';
      position: fixed;
@@ -57,111 +56,176 @@
      right: 0;
      bottom: 0;
      background: 
-         /* Paper texture */
          repeating-linear-gradient(
-             45deg,
+             0deg,
              transparent,
-             transparent 10px,
-             rgba(0,0,0,0.003) 10px,
-             rgba(0,0,0,0.003) 20px
+             transparent 100px,
+             rgba(0,0,0,0.01) 100px,
+             rgba(0,0,0,0.01) 101px
          ),
          repeating-linear-gradient(
-             -45deg,
+             90deg,
              transparent,
-             transparent 10px,
-             rgba(0,0,0,0.003) 10px,
-             rgba(0,0,0,0.003) 20px
-         ),
-         /* Ink wash gradients */
-         radial-gradient(
-             circle at 20% 80%,
-             rgba(105, 91, 141, 0.02) 0%,
-             transparent 50%
-         ),
-         radial-gradient(
-             circle at 80% 20%,
-             rgba(26, 26, 26, 0.03) 0%,
-             transparent 40%
-         ),
-         radial-gradient(
-             circle at 50% 50%,
-             rgba(105, 91, 141, 0.01) 0%,
-             transparent 60%
+             transparent 100px,
+             rgba(0,0,0,0.01) 100px,
+             rgba(0,0,0,0.01) 101px
          );
      pointer-events: none;
-     z-index: 1;
- }
- 
- /* Subtle Mt. Fuji silhouette - refined version */
- body::after {
-     content: '';
-     position: fixed;
-     bottom: 0;
-     right: -10%;
-     width: 800px;
-     height: 400px;
-     background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400"><defs><filter id="blur"><feGaussianBlur stdDeviation="2"/></filter></defs><path d="M400 100 L200 400 L600 400 Z" fill="%23e8e4e0" opacity="0.04" filter="url(%23blur)"/><path d="M400 100 L320 250 L480 250 Z" fill="%23ffffff" opacity="0.06"/></svg>');
-     background-repeat: no-repeat;
-     background-position: bottom right;
-     background-size: contain;
-     pointer-events: none;
      z-index: 0;
-     opacity: 0.5;
  }
  
- /* Floating ink particles */
- @keyframes floatUp {
-     from {
-         transform: translateY(100vh) translateX(0) scale(0);
+ /* Bamboo/Reed decorations */
+ .bamboo-decoration {
+     position: fixed;
+     width: 60px;
+     height: 100vh;
+     opacity: 0.03;
+     pointer-events: none;
+     z-index: 1;
+     background-repeat: repeat-y;
+     background-size: contain;
+ }
+ 
+ .bamboo-left {
+     left: 20px;
+     background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 400"><path d="M30 0 Q25 100 30 200 T30 400" stroke="%23000" stroke-width="2" fill="none"/><path d="M30 50 L35 45 L30 55 L25 50" stroke="%23000" stroke-width="1" fill="none"/><path d="M30 150 L35 145 L30 155 L25 150" stroke="%23000" stroke-width="1" fill="none"/><path d="M30 250 L35 245 L30 255 L25 250" stroke="%23000" stroke-width="1" fill="none"/></svg>');
+ }
+ 
+ .bamboo-right {
+     right: 20px;
+     background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 400"><path d="M30 0 Q35 100 30 200 T30 400" stroke="%23000" stroke-width="2" fill="none"/><path d="M30 80 L25 75 L30 85 L35 80" stroke="%23000" stroke-width="1" fill="none"/><path d="M30 180 L25 175 L30 185 L35 180" stroke="%23000" stroke-width="1" fill="none"/><path d="M30 280 L25 275 L30 285 L35 280" stroke="%23000" stroke-width="1" fill="none"/></svg>');
+ }
+ 
+ /* Floating ink drops */
+ @keyframes inkDrop {
+     0% {
+         transform: translateY(-10px) scale(0);
          opacity: 0;
      }
-     10% {
-         transform: scale(1);
+     20% {
+         transform: translateY(0) scale(1);
          opacity: 0.1;
      }
-     90% {
+     80% {
+         transform: translateY(30vh) scale(0.8);
          opacity: 0.05;
      }
-     to {
-         transform: translateY(-100px) translateX(20px) scale(0.5);
+     100% {
+         transform: translateY(50vh) scale(0.5);
          opacity: 0;
      }
  }
  
- .ink-particle {
+ .ink-drop {
      position: fixed;
-     width: 4px;
-     height: 4px;
-     background: var(--ink-medium);
+     width: 6px;
+     height: 6px;
+     background: radial-gradient(circle, var(--ink-black) 0%, transparent 70%);
      border-radius: 50%;
      pointer-events: none;
-     opacity: 0.1;
-     animation: floatUp 15s linear infinite;
+     animation: inkDrop 12s ease-in-out infinite;
      z-index: 2;
  }
  
- /* Animation keyframes */
- @keyframes fadeInUp {
+ /* Ink ripple effect */
+ @keyframes inkRipple {
      0% {
-         opacity: 0;
-         transform: translateY(20px);
+         width: 0;
+         height: 0;
+         opacity: 0.3;
      }
      100% {
+         width: 100px;
+         height: 100px;
+         opacity: 0;
+     }
+ }
+ 
+ .ink-ripple {
+     position: fixed;
+     border-radius: 50%;
+     background: radial-gradient(circle, transparent 30%, var(--ink-faint) 70%, transparent 100%);
+     pointer-events: none;
+     transform: translate(-50%, -50%);
+     animation: inkRipple 1s ease-out;
+     z-index: 100;
+ }
+ 
+ /* Typography */
+ h1, h2, h3, h4, h5, h6 {
+     font-weight: 300;
+     letter-spacing: 0.1em;
+ }
+ 
+ /* Links */
+ a {
+     color: var(--ink-gray);
+     text-decoration: none;
+     position: relative;
+     transition: color 0.4s ease;
+ }
+ 
+ a::after {
+     content: '';
+     position: absolute;
+     bottom: -2px;
+     left: 0;
+     width: 0;
+     height: 1px;
+     background: var(--ink-gray);
+     transition: width 0.4s ease;
+ }
+ 
+ a:hover {
+     color: var(--ink-black);
+ }
+ 
+ a:hover::after {
+     width: 100%;
+ }
+ 
+ /* Selection */
+ ::selection {
+     background: rgba(26, 26, 26, 0.08);
+ }
+ 
+ /* Scrollbar */
+ ::-webkit-scrollbar {
+     width: 8px;
+     height: 8px;
+ }
+ 
+ ::-webkit-scrollbar-track {
+     background: transparent;
+ }
+ 
+ ::-webkit-scrollbar-thumb {
+     background: var(--ink-faint);
+     border-radius: 0;
+ }
+ 
+ ::-webkit-scrollbar-thumb:hover {
+     background: var(--ink-light);
+ }
+ 
+ /* Animation keyframes */
+ @keyframes fadeIn {
+     from { opacity: 0; }
+     to { opacity: 1; }
+ }
+ 
+ @keyframes fadeInUp {
+     from {
+         opacity: 0;
+         transform: translateY(10px);
+     }
+     to {
          opacity: 1;
          transform: translateY(0);
      }
  }
  
- @keyframes fadeIn {
-     0% {
-         opacity: 0;
-     }
-     100% {
-         opacity: 1;
-     }
- }
- 
- @keyframes drawStroke {
+ @keyframes brushStroke {
      from {
          stroke-dashoffset: 100%;
      }
@@ -170,89 +234,10 @@
      }
  }
  
- @keyframes pulse {
-     0%, 100% {
-         opacity: 0.3;
-     }
-     50% {
-         opacity: 1;
-     }
- }
- 
- /* Enso circle decoration */
- .enso-decoration {
-     position: fixed;
-     top: 50%;
-     left: 50%;
-     transform: translate(-50%, -50%);
-     width: 600px;
-     height: 600px;
-     opacity: 0.02;
-     z-index: 0;
-     pointer-events: none;
- }
- 
- .enso-decoration svg {
-     width: 100%;
-     height: 100%;
- }
- 
- .enso-decoration circle {
-     fill: none;
-     stroke: var(--ink-black);
-     stroke-width: 3;
-     stroke-linecap: round;
-     stroke-dasharray: 1885;
-     stroke-dashoffset: 1885;
-     animation: drawStroke 3s ease-out forwards;
- }
- 
- /* Typography improvements */
- h1, h2, h3, h4, h5, h6 {
-     font-weight: 400;
-     letter-spacing: 0.05em;
- }
- 
- a {
-     color: var(--ink-dark);
-     text-decoration: none;
-     transition: color 0.3s ease;
- }
- 
- a:hover {
-     color: var(--seal-red);
- }
- 
- /* Selection color */
- ::selection {
-     background: rgba(199, 57, 41, 0.1);
-     color: var(--ink-black);
- }
- 
- /* Scrollbar styling */
- ::-webkit-scrollbar {
-     width: 10px;
-     height: 10px;
- }
- 
- ::-webkit-scrollbar-track {
-     background: var(--washi-cream);
- }
- 
- ::-webkit-scrollbar-thumb {
-     background: var(--ink-wash);
-     border-radius: 0;
- }
- 
- ::-webkit-scrollbar-thumb:hover {
-     background: var(--ink-light);
- }
- 
- /* Reduced motion support */
+ /* Reduced motion */
  @media (prefers-reduced-motion: reduce) {
      * {
          animation-duration: 0.01ms !important;
-         animation-iteration-count: 1 !important;
          transition-duration: 0.01ms !important;
      }
  }

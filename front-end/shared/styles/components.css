@@ -1,118 +1,89 @@
 /**
  * components.css
- * Component styles with Sumi-e aesthetic for tables, buttons, cards, and UI elements
+ * Minimal Sumi-e components with ink effects
  */
 
-/* =============== Table Styles with Ink Wash Aesthetic =============== */
+/* =============== Table with proper alignment =============== */
 table {
     width: 100%;
-    border-collapse: separate;
-    border-spacing: 0;
-    font-family: 'Noto Serif JP', serif;
-    table-layout: fixed;
-    background: var(--washi-white);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-    position: relative;
+    border-collapse: collapse;
+    font-size: 13px;
 }
 
-/* Table ink wash overlay */
-table::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: 
-        linear-gradient(180deg, 
-            rgba(105, 91, 141, 0.02) 0%, 
-            transparent 100px
-        );
-    pointer-events: none;
-    z-index: 1;
-}
-
-th {
-    background: linear-gradient(180deg, var(--washi-cream) 0%, var(--washi-white) 100%);
-    padding: 0;
+thead {
     position: sticky;
     top: 0;
     z-index: 20;
-    font-weight: 400;
-    font-size: 13px;
+    background: var(--paper-white);
+}
+
+th {
+    padding: var(--space-md) var(--space-sm);
+    text-align: left;
+    font-weight: 300;
+    letter-spacing: 0.1em;
+    color: var(--ink-gray);
+    border-bottom: 1px solid var(--ink-faint);
+    white-space: nowrap;
+}
+
+/* Ensure proper column alignment */
+th:first-child,
+td:first-child {
+    padding-left: var(--space-md);
     text-align: center;
-    text-transform: uppercase;
-    letter-spacing: 0.15em;
-    color: var(--ink-dark);
-    border-bottom: 1px solid var(--ink-wash);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+    width: 80px;
+}
+
+/* Price columns - right aligned */
+th:nth-child(2), th:nth-child(3), th:nth-child(4), th:nth-child(7),
+td:nth-child(2), td:nth-child(3), td:nth-child(4), td:nth-child(7) {
+    text-align: right;
+}
+
+/* Numeric columns - center aligned */
+th:nth-child(6), th:nth-child(9), th:nth-child(10), th:nth-child(11), th:nth-child(12),
+td:nth-child(6), td:nth-child(9), td:nth-child(10), td:nth-child(11), td:nth-child(12) {
+    text-align: center;
 }
 
 .column-header {
-    align-items: center;
-    padding: var(--ma-sm) var(--ma-xs);
-    cursor: pointer;
-    min-height: 45px;
-    transition: all 0.3s cubic-bezier(0.23, 1, 0.32, 1);
-    position: relative;
-}
-
-.column-header-content {
     display: flex;
-    justify-content: center;
     align-items: center;
-    width: 100%;
+    cursor: pointer;
+    transition: color 0.3s ease;
+    padding: var(--space-md) var(--space-sm);
+    justify-content: flex-start;
 }
 
-.column-header::after {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 0;
-    height: 2px;
-    background: var(--seal-red);
-    transition: width 0.3s cubic-bezier(0.23, 1, 0.32, 1);
+.column-header:hover {
+    color: var(--ink-black);
 }
 
-.column-header:hover::after {
-    width: 80%;
-}
-
+/* Sort arrows - minimal */
 .sort-arrows {
-    font-size: 11px;
-    color: var(--ink-light);
-    margin-left: 6px;
-    transition: all 0.3s ease;
-    opacity: 0.5;
+    margin-left: var(--space-xs);
+    font-size: 10px;
+    color: var(--ink-faint);
+    transition: color 0.3s ease;
 }
 
 .sort-arrows.active {
-    color: var(--seal-red);
-    font-weight: 400;
-    opacity: 1;
+    color: var(--ink-black);
 }
 
 td {
-    border-bottom: 1px solid rgba(229, 229, 229, 0.5);
-    padding: var(--ma-sm) var(--ma-xs);
-    font-size: 14px;
-    vertical-align: middle;
-    color: var(--ink-dark);
-    font-family: 'Noto Serif JP', serif;
-    font-weight: 200;
-    position: relative;
-    word-break: break-word;
+    padding: var(--space-md) var(--space-sm);
+    border-bottom: 1px solid rgba(0,0,0,0.05);
+    color: var(--ink-black);
     transition: all 0.2s ease;
 }
 
-/* Subtle ink wash on row hover */
+/* Row hover with subtle ink wash */
 tbody tr {
-    position: relative;
-    transition: all 0.3s cubic-bezier(0.23, 1, 0.32, 1);
     cursor: pointer;
-    animation: fadeInUp 0.4s ease-out;
+    position: relative;
+    transition: all 0.3s ease;
 }
 
 tbody tr::before {
@@ -123,9 +94,9 @@ tbody tr::before {
     top: 0;
     bottom: 0;
     background: radial-gradient(
-        ellipse at center,
-        rgba(105, 91, 141, 0.03) 0%,
-        transparent 70%
+        ellipse at var(--mouse-x, 50%) var(--mouse-y, 50%),
+        rgba(0,0,0,0.02) 0%,
+        transparent 60%
     );
     opacity: 0;
     transition: opacity 0.3s ease;
@@ -137,252 +108,301 @@ tbody tr:hover::before {
 }
 
 tbody tr:hover td {
-    transform: translateX(2px);
+    background: rgba(0,0,0,0.01);
 }
 
-/* Alternating rows with paper texture */
-tbody tr:nth-child(odd) td {
-    background: var(--washi-white);
-}
-
-tbody tr:nth-child(even) td {
-    background: linear-gradient(90deg, 
-        var(--washi-cream) 0%, 
-        var(--washi-white) 50%, 
-        var(--washi-cream) 100%
-    );
-}
-
-/* =============== Verdict Badges with Seal Style =============== */
-.verdict {
-    padding: var(--ma-xs) var(--ma-sm);
-    border-radius: 0;
-    font-size: 11px;
-    font-weight: 400;
-    text-transform: uppercase;
-    text-align: center;
-    letter-spacing: 0.15em;
-    transition: all 0.3s cubic-bezier(0.23, 1, 0.32, 1);
+/* =============== Buttons with ink aesthetic =============== */
+button {
     font-family: 'Noto Serif JP', serif;
-    position: relative;
-    border: 1px solid;
-    background: var(--washi-white);
-}
-
-.verdict-buy, .verdict-strong_buy, .verdict-buy_candidate {
-    color: var(--seal-red);
-    border-color: var(--seal-red);
-    box-shadow: inset 0 0 0 0 var(--seal-red);
-}
-
-.verdict-buy:hover, .verdict-strong_buy:hover, .verdict-buy_candidate:hover {
-    box-shadow: inset 0 0 0 2px var(--seal-red);
-    transform: scale(1.05);
-}
-
-.verdict-hold, .verdict-watch {
-    color: var(--ink-medium);
-    border-color: var(--ink-light);
-}
-
-.verdict-pass, .verdict-reject {
-    color: var(--ink-light);
-    border-color: var(--ink-wash);
-}
-
-/* =============== Heart & Hide Buttons with Ink Effect =============== */
-.heart-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-size: 20px;
-    padding: 4px 8px;
-    transition: all 0.3s cubic-bezier(0.23, 1, 0.32, 1);
-    color: var(--ink-wash);
-    position: relative;
-}
-
-.heart-btn::after {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%) scale(0);
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    background: radial-gradient(circle, var(--seal-red) 0%, transparent 70%);
-    opacity: 0;
+    font-weight: 300;
+    letter-spacing: 0.05em;
     transition: all 0.3s ease;
 }
 
-.heart-btn:hover::after {
-    transform: translate(-50%, -50%) scale(1);
-    opacity: 0.2;
-}
-
-.heart-btn.favorited {
-    color: var(--seal-red);
-    animation: stampEffect 0.3s ease;
-}
-
-@keyframes stampEffect {
-    0% { transform: scale(1) rotate(0deg); }
-    50% { transform: scale(0.9) rotate(-5deg); }
-    100% { transform: scale(1) rotate(0deg); }
-}
-
-.heart-btn:hover {
-    transform: scale(1.1);
-    color: var(--seal-red);
-}
-
-.hide-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-size: 16px;
-    padding: 4px 6px;
-    transition: all 0.3s ease;
-    color: var(--ink-wash);
-    margin-left: 4px;
-}
-
-.hide-btn:hover {
-    color: var(--ink-medium);
-    transform: scale(1.1) rotate(90deg);
-}
-
-/* =============== Tab Navigation with Brush Stroke =============== */
-.tab-button {
-    padding: var(--ma-sm) var(--ma-md);
-    border: none;
-    background: none;
+.ink-btn {
+    background: transparent;
+    border: 1px solid var(--ink-faint);
+    color: var(--ink-gray);
+    padding: var(--space-sm) var(--space-md);
     cursor: pointer;
     position: relative;
-    color: var(--ink-medium);
-    font-family: 'Noto Serif JP', serif;
-    font-size: 14px;
-    font-weight: 200;
-    letter-spacing: 0.1em;
-    transition: all 0.3s cubic-bezier(0.23, 1, 0.32, 1);
+    overflow: hidden;
 }
 
-.tab-button::after {
+.ink-btn::before {
     content: '';
     position: absolute;
     bottom: 0;
     left: 0;
     width: 0;
-    height: 2px;
-    background: linear-gradient(90deg, 
-        transparent 0%, 
-        var(--ink-dark) 20%, 
-        var(--ink-dark) 80%, 
-        transparent 100%
-    );
-    transition: width 0.6s cubic-bezier(0.23, 1, 0.32, 1);
+    height: 100%;
+    background: var(--ink-faint);
+    transition: width 0.4s ease;
+    z-index: -1;
+}
+
+.ink-btn:hover {
+    color: var(--ink-black);
+    border-color: var(--ink-gray);
+}
+
+.ink-btn:hover::before {
+    width: 100%;
+}
+
+/* Heart button - minimal */
+.heart-btn {
+    background: none;
+    border: none;
+    font-size: 16px;
+    padding: var(--space-xs);
+    color: var(--ink-faint);
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.heart-btn:hover {
+    color: var(--seal-red);
+    transform: scale(1.1);
+}
+
+.heart-btn.favorited {
+    color: var(--seal-red);
+}
+
+/* Hide button */
+.hide-btn {
+    background: none;
+    border: none;
+    font-size: 14px;
+    padding: var(--space-xs);
+    color: var(--ink-faint);
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.hide-btn:hover {
+    color: var(--ink-gray);
+    transform: rotate(90deg);
+}
+
+/* =============== Verdict badges - minimal seal style =============== */
+.verdict {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    border: 1px solid;
+    background: transparent;
+    transition: all 0.3s ease;
+}
+
+.verdict-buy_candidate,
+.verdict-buy,
+.verdict-strong_buy {
+    color: var(--seal-red);
+    border-color: var(--seal-red);
+}
+
+.verdict-watch,
+.verdict-hold {
+    color: var(--ink-gray);
+    border-color: var(--ink-gray);
+}
+
+.verdict-reject,
+.verdict-pass {
+    color: var(--ink-faint);
+    border-color: var(--ink-faint);
+}
+
+/* =============== Tab buttons =============== */
+.tab-button {
+    background: none;
+    border: none;
+    padding: var(--space-md) 0;
+    margin-right: var(--space-xl);
+    color: var(--ink-light);
+    font-size: 14px;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+    position: relative;
+    transition: color 0.3s ease;
+}
+
+.tab-button::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    width: 0;
+    height: 1px;
+    background: var(--ink-black);
+    transition: width 0.4s ease;
 }
 
 .tab-button:hover {
-    color: var(--ink-black);
-}
-
-.tab-button:hover::after {
-    width: 100%;
+    color: var(--ink-gray);
 }
 
 .tab-button.active {
     color: var(--ink-black);
-    font-weight: 400;
 }
 
 .tab-button.active::after {
     width: 100%;
-    background: linear-gradient(90deg, 
-        transparent 0%, 
-        var(--seal-red) 20%, 
-        var(--seal-red) 80%, 
-        transparent 100%
-    );
+}
+
+.favorites-count,
+.tab-button span[style*="background: #999"] {
+    display: inline-block;
+    min-width: 18px;
+    padding: 1px 5px;
+    margin-left: var(--space-sm);
+    background: var(--ink-faint);
+    color: var(--paper-white);
+    border-radius: 10px;
+    font-size: 11px;
+    text-align: center;
 }
 
 .favorites-count {
     background: var(--seal-red);
-    color: var(--washi-white);
-    border-radius: 50%;
-    padding: 2px 6px;
-    font-size: 11px;
-    margin-left: 5px;
-    font-weight: 400;
 }
 
-/* =============== Loading Skeleton with Ink Wash =============== */
-.loading {
-    background: var(--washi-white);
-    border-radius: 0;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
-    overflow: hidden;
-    position: relative;
-    padding: var(--ma-md);
+/* =============== Pagination =============== */
+.pagination {
+    display: flex;
+    gap: var(--space-sm);
+    align-items: center;
 }
 
-.loading::before {
-    content: '読み込み中... Loading properties...';
-    position: absolute;
-    top: var(--ma-md);
-    left: var(--ma-md);
+.pagination button {
+    background: transparent;
+    border: 1px solid var(--ink-faint);
+    color: var(--ink-gray);
+    padding: var(--space-xs) var(--space-md);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 12px;
+}
+
+.pagination button:hover:not(:disabled) {
+    border-color: var(--ink-gray);
+    background: var(--paper-gray);
+}
+
+.pagination button.active {
+    background: var(--ink-black);
+    color: var(--paper-white);
+    border-color: var(--ink-black);
+}
+
+.pagination button:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.pagination .page-info {
     color: var(--ink-light);
-    font-size: 13px;
-    font-family: 'Noto Serif JP', serif;
-    letter-spacing: 0.1em;
-    animation: pulse 2s ease-in-out infinite;
+    font-size: 12px;
 }
 
-.skeleton {
-    background: linear-gradient(90deg, 
-        var(--washi-cream) 0%, 
-        var(--washi-white) 25%, 
-        var(--washi-cream) 50%, 
-        var(--washi-white) 75%,
-        var(--washi-cream) 100%
-    );
-    background-size: 200% 100%;
-    animation: skeleton-loading 2s infinite ease-in-out;
-}
-
-@keyframes skeleton-loading {
-    0% { 
-        background-position: -200% 0;
-    }
-    100% { 
-        background-position: 200% 0;
-    }
-}
-
-/* =============== Error Banner with Red Seal =============== */
-.error-banner {
+/* =============== Modal =============== */
+.modal {
     position: fixed;
-    top: var(--ma-md);
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--washi-white);
-    color: var(--seal-red);
-    padding: var(--ma-sm) var(--ma-md);
-    border: 2px solid var(--seal-red);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.4);
+    display: none;
+    animation: fadeIn 0.3s ease;
+}
+
+.modal-content {
+    background: var(--paper-white);
+    margin: 10% auto;
+    padding: var(--space-xl);
+    width: 400px;
+    max-width: 90%;
+    position: relative;
+}
+
+.modal h2 {
+    font-size: 1.618rem;
+    font-weight: 300;
+    text-align: center;
+    margin-bottom: var(--space-xl);
+    letter-spacing: 0.1em;
+}
+
+.modal input {
+    width: 100%;
+    padding: var(--space-md);
+    margin: var(--space-sm) 0;
+    border: 1px solid var(--ink-faint);
+    background: transparent;
+    font-family: 'Noto Serif JP', serif;
+    font-size: 14px;
+    transition: border-color 0.3s ease;
+}
+
+.modal input:focus {
+    outline: none;
+    border-color: var(--ink-gray);
+}
+
+.modal button {
+    width: 100%;
+    padding: var(--space-md);
+    background: var(--ink-black);
+    color: var(--paper-white);
+    border: none;
+    cursor: pointer;
+    margin-top: var(--space-lg);
+    transition: background 0.3s ease;
+}
+
+.modal button:hover {
+    background: var(--ink-gray);
+}
+
+/* =============== User info =============== */
+.user-info {
+    position: fixed;
+    top: var(--space-lg);
+    right: var(--space-lg);
+    z-index: 100;
+    background: var(--paper-white);
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--ink-faint);
     display: flex;
     align-items: center;
-    gap: var(--ma-sm);
-    font-family: 'Noto Serif JP', serif;
-    letter-spacing: 0.05em;
+    gap: var(--space-md);
 }
 
-.error-banner::before {
-    content: '警告';
-    font-weight: 400;
-    margin-right: var(--ma-xs);
+.user-info span {
+    color: var(--ink-gray);
+    font-size: 13px;
+}
+
+/* =============== Error banner =============== */
+.error-banner {
+    position: fixed;
+    top: var(--space-lg);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--paper-white);
+    border: 1px solid var(--seal-red);
+    color: var(--seal-red);
+    padding: var(--space-md) var(--space-lg);
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    z-index: 1001;
+    font-size: 13px;
 }
 
 .error-banner button {
@@ -391,190 +411,84 @@ tbody tr:nth-child(even) td {
     color: var(--seal-red);
     cursor: pointer;
     font-size: 16px;
-    padding: 2px;
-    transition: transform 0.3s ease;
+    padding: 0;
+    margin-left: var(--space-md);
 }
 
-.error-banner button:hover {
-    transform: rotate(90deg);
-}
-
-/* =============== Modal with Paper Effect =============== */
-.modal {
-    position: fixed;
-    z-index: 1000;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(26, 26, 26, 0.7);
-    display: none;
-    animation: fadeIn 0.3s ease;
-    backdrop-filter: blur(5px);
-}
-
-.modal-content {
-    background: var(--washi-white);
-    margin: 10% auto;
-    padding: var(--ma-lg);
-    border: 1px solid var(--ink-wash);
-    width: 400px;
-    max-width: 90%;
-    font-family: 'Noto Serif JP', serif;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-    animation: slideDown 0.3s cubic-bezier(0.23, 1, 0.32, 1);
+/* =============== Filter dropdown =============== */
+.filter-dropdown {
     position: relative;
+    display: inline-block;
+    margin-left: var(--space-sm);
 }
 
-.modal-content::before {
-    content: '';
+.filter-btn {
+    background: none;
+    border: none;
+    color: var(--ink-faint);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 2px;
+    transition: color 0.3s ease;
+}
+
+.filter-btn:hover,
+.filter-btn.active {
+    color: var(--ink-gray);
+}
+
+.filter-dropdown-content {
+    display: none;
     position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: 
-        repeating-linear-gradient(
-            45deg,
-            transparent,
-            transparent 10px,
-            rgba(0,0,0,0.005) 10px,
-            rgba(0,0,0,0.005) 20px
-        );
-    pointer-events: none;
+    background: var(--paper-white);
+    min-width: 150px;
+    border: 1px solid var(--ink-faint);
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-top: var(--space-xs);
+    z-index: 30;
+    max-height: 250px;
+    overflow-y: auto;
 }
 
-@keyframes slideDown {
-    from { 
-        transform: translateY(-20px);
-        opacity: 0;
-    }
-    to { 
-        transform: translateY(0);
-        opacity: 1;
-    }
+.filter-dropdown-content.show {
+    display: block;
 }
 
-.modal h2 {
-    margin-bottom: var(--ma-md);
-    color: var(--ink-black);
-    font-size: 24px;
-    font-weight: 400;
-    text-align: center;
-    letter-spacing: 0.15em;
-}
-
-.modal input {
-    width: 100%;
-    padding: var(--ma-sm);
-    margin: var(--ma-xs) 0;
-    border: 1px solid var(--ink-wash);
-    background: var(--washi-white);
-    font-size: 14px;
-    font-family: 'Noto Serif JP', serif;
-    transition: border-color 0.3s ease;
-    box-sizing: border-box;
-}
-
-.modal input:focus {
-    outline: none;
-    border-color: var(--ink-medium);
-    box-shadow: 0 0 0 3px rgba(105, 91, 141, 0.05);
-}
-
-.modal button {
-    width: 100%;
-    padding: var(--ma-sm);
-    background: var(--ink-black);
-    color: var(--washi-white);
-    border: none;
-    font-size: 16px;
+.filter-dropdown-content label {
+    display: block;
+    padding: var(--space-sm);
     cursor: pointer;
-    margin-top: var(--ma-sm);
-    font-family: 'Noto Serif JP', serif;
-    font-weight: 400;
-    letter-spacing: 0.1em;
-    transition: all 0.3s cubic-bezier(0.23, 1, 0.32, 1);
+    font-size: 12px;
+    transition: background 0.2s ease;
 }
 
-.modal button:hover {
-    background: var(--seal-red);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(199, 57, 41, 0.3);
+.filter-dropdown-content label:hover {
+    background: var(--paper-gray);
 }
 
-/* =============== User Info Display =============== */
-.user-info {
-    position: fixed;
-    top: var(--ma-md);
-    right: var(--ma-md);
-    z-index: 100;
-    background: var(--washi-white);
-    padding: var(--ma-xs) var(--ma-sm);
-    border: 1px solid var(--ink-wash);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+.filter-dropdown-content input[type="checkbox"] {
+    margin-right: var(--space-sm);
+}
+
+.filter-actions {
+    padding: var(--space-sm);
+    border-top: 1px solid var(--ink-faint);
     display: flex;
-    align-items: center;
-    gap: var(--ma-sm);
-    font-family: 'Noto Serif JP', serif;
+    gap: var(--space-sm);
 }
 
-.user-info span {
-    color: var(--ink-medium);
-    font-size: 14px;
-    letter-spacing: 0.05em;
-}
-
-.user-info button {
-    padding: var(--ma-xs) var(--ma-sm);
-    background: var(--ink-black);
-    color: var(--washi-white);
-    border: none;
-    cursor: pointer;
-    font-size: 14px;
-    transition: all 0.3s ease;
-    font-family: 'Noto Serif JP', serif;
-    letter-spacing: 0.05em;
-}
-
-.user-info button:hover {
-    background: var(--seal-red);
-    transform: translateY(-1px);
-}
-
-/* =============== Pagination with Ink Aesthetic =============== */
-.pagination {
-    display: flex;
-    justify-content: center;
-    gap: var(--ma-xs);
-    margin-top: var(--ma-lg);
-}
-
-.pagination button {
-    padding: var(--ma-xs) var(--ma-sm);
+.filter-actions button {
+    flex: 1;
+    padding: var(--space-xs) var(--space-sm);
+    font-size: 11px;
+    border: 1px solid var(--ink-faint);
     background: transparent;
-    border: 1px solid var(--ink-wash);
-    color: var(--ink-medium);
     cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.23, 1, 0.32, 1);
-    font-family: 'Noto Serif JP', serif;
-    font-size: 14px;
+    transition: all 0.2s ease;
 }
 
-.pagination button:hover:not(:disabled) {
-    border-color: var(--ink-dark);
-    color: var(--ink-black);
-    transform: translateY(-2px);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-}
-
-.pagination button.active {
-    background: var(--ink-black);
-    color: var(--washi-white);
-    border-color: var(--ink-black);
-}
-
-.pagination button:disabled {
-    opacity: 0.3;
-    cursor: not-allowed;
+.filter-actions button:hover {
+    background: var(--ink-faint);
 }

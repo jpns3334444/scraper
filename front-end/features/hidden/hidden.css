@@ -1,62 +1,94 @@
 /**
  * hidden.css
- * Hidden items list styles
+ * Minimal Sumi-e hidden items list
  */
 
-.fav-list {
+ .fav-list {
     list-style: none;
-    padding: 20px;
+    padding: var(--space-lg) 0;
     margin: 0;
 }
 
 .fav-list li {
-    padding: 12px 16px;
-    margin: 8px 0;
-    background: white;
-    border-radius: 6px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    padding: var(--space-md);
+    margin: 0 0 var(--space-sm) 0;
+    background: var(--paper-white);
+    border: 1px solid var(--ink-faint);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    transition: all 0.2s ease;
+    transition: all 0.3s ease;
+    position: relative;
+}
+
+/* Subtle hover effect */
+.fav-list li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--ink-faint);
+    transition: all 0.3s ease;
+}
+
+.fav-list li:hover::before {
+    width: 4px;
+    background: var(--ink-gray);
 }
 
 .fav-list li:hover {
-    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-    transform: translateY(-1px);
+    border-color: var(--ink-gray);
 }
 
 .fav-list li a {
-    color: #333;
+    color: var(--ink-black);
     text-decoration: none;
-    font-weight: 500;
     flex: 1;
+    font-size: 13px;
+    transition: color 0.3s ease;
 }
 
 .fav-list li a:hover {
-    color: #695b8d;
+    color: var(--ink-gray);
 }
 
+/* Remove button */
 .fav-list .remove-btn {
-    background: #ff4444;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    padding: 4px 8px;
+    background: transparent;
+    color: var(--ink-light);
+    border: 1px solid var(--ink-faint);
+    padding: var(--space-xs) var(--space-sm);
     cursor: pointer;
-    font-size: 12px;
-    transition: all 0.2s;
+    font-size: 11px;
+    transition: all 0.3s ease;
+    letter-spacing: 0.05em;
 }
 
 .fav-list .remove-btn:hover {
-    background: #cc0000;
-    transform: scale(1.05);
+    border-color: var(--ink-gray);
+    color: var(--ink-black);
 }
 
 /* Empty state */
 .hidden-empty {
-    padding: 40px;
+    padding: var(--space-xxl);
     text-align: center;
-    color: #999;
-    font-style: italic;
+    color: var(--ink-light);
+    font-size: 14px;
+    letter-spacing: 0.1em;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+    .fav-list li {
+        padding: var(--space-sm);
+        font-size: 12px;
+    }
+    
+    .fav-list .remove-btn {
+        padding: var(--space-xs);
+        font-size: 10px;
+    }
 }

@@ -1,93 +1,125 @@
 /**
  * properties.css
- * Properties table styles, column specific styles, sort arrows, and skeleton loading
+ * Minimal Sumi-e properties table with proper column alignment
  */
 
-/* Header container for results info and controls */
-.header-container {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: var(--ma-sm) 0;
-    flex-wrap: wrap;
-    gap: var(--ma-sm);
-}
-
-.results-info {
-    font-family: 'Noto Serif JP', serif;
-    color: var(--ink-light);
-    font-size: 14px;
-    letter-spacing: 0.05em;
-    flex-shrink: 0;
-}
-
-.controls {
-    display: flex;
-    gap: var(--ma-sm);
-}
-
-.control-btn {
-    background: var(--washi-white);
-    border: 1px solid var(--ink-wash);
-    color: var(--ink-medium);
-    padding: var(--ma-xs) var(--ma-sm);
-    font-family: 'Noto Serif JP', serif;
-    font-size: 13px;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    letter-spacing: 0.05em;
-}
-
-.control-btn:hover {
-    background: var(--washi-cream);
-    border-color: var(--ink-medium);
-    color: var(--ink-dark);
-}
-
-/* Column-specific widths and styles */
-table {
-    table-layout: fixed;
+/* Ensure table takes full width and columns align properly */
+.table-container table {
     width: 100%;
+    table-layout: fixed;
 }
 
-/* Scroll sentinel for infinite loading */
-#scrollSentinel {
-    height: 20px;
-    margin-top: 20px;
+/* Column widths for proper alignment */
+th:nth-child(1), td:nth-child(1) { width: 80px; } /* Hearts/Hide */
+th:nth-child(2), td:nth-child(2) { width: 100px; } /* Price */
+th:nth-child(3), td:nth-child(3) { width: 90px; } /* Price/m² */
+th:nth-child(4), td:nth-child(4) { width: 90px; } /* Monthly */
+th:nth-child(5), td:nth-child(5) { width: 100px; } /* Ward */
+th:nth-child(6), td:nth-child(6) { width: 80px; } /* Discount */
+th:nth-child(7), td:nth-child(7) { width: 90px; } /* Median */
+th:nth-child(8), td:nth-child(8) { width: 120px; } /* Station */
+th:nth-child(9), td:nth-child(9) { width: 60px; } /* Walk */
+th:nth-child(10), td:nth-child(10) { width: 50px; } /* Floor */
+th:nth-child(11), td:nth-child(11) { width: 80px; } /* Age */
+th:nth-child(12), td:nth-child(12) { width: 60px; } /* Size */
+th:nth-child(13), td:nth-child(13) { width: 80px; } /* Light */
+th:nth-child(14), td:nth-child(14) { width: 100px; } /* Verdict */
+
+/* Column header alignment */
+.column-header {
+    width: 100%;
+    text-align: inherit;
 }
 
-/* Mobile responsiveness for table */
-@media (max-width: 768px) {
+/* Sortable columns */
+th.sortable .column-header {
+    justify-content: space-between;
+}
+
+/* Price columns right-aligned */
+th:nth-child(2) .column-header,
+th:nth-child(3) .column-header,
+th:nth-child(4) .column-header,
+th:nth-child(7) .column-header {
+    justify-content: flex-end;
+}
+
+/* Center-aligned columns */
+th:nth-child(6) .column-header,
+th:nth-child(9) .column-header,
+th:nth-child(10) .column-header,
+th:nth-child(11) .column-header,
+th:nth-child(12) .column-header {
+    justify-content: center;
+}
+
+/* Data cell specific styles */
+td.price {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+td.percent {
+    text-align: center;
+    font-family: monospace;
+    font-size: 12px;
+}
+
+td.numeric {
+    text-align: center;
+}
+
+td.age {
+    text-align: center;
+    color: var(--ink-light);
+}
+
+/* No data indicator */
+.no-data {
+    color: var(--ink-faint);
+    font-style: normal;
+}
+
+/* Row states */
+tbody tr.no-link {
+    cursor: default;
+}
+
+/* Ensure headers don't wrap */
+th {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Mobile responsive */
+@media (max-width: 1200px) {
+    .table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    
     table {
-        table-layout: auto;
+        min-width: 1000px;
     }
-    
+}
+
+@media (max-width: 768px) {
     th, td {
-        font-size: 12px;
-        padding: 10px 8px;
+        padding: var(--space-sm) var(--space-xs);
+        font-size: 11px;
     }
     
-    th:nth-child(1), td:nth-child(1) { width: 40px; }
-    th:nth-child(2), td:nth-child(2) { width: 80px; }
-    th:nth-child(3), td:nth-child(3) { width: 100px; }
-    th:nth-child(4), td:nth-child(4) { width: 70px; }
-    th:nth-child(5), td:nth-child(5) { width: 100px; }
-    th:nth-child(6), td:nth-child(6) { width: 70px; }
-    th:nth-child(7), td:nth-child(7) { width: 70px; }
-    th:nth-child(8), td:nth-child(8) { width: 70px; }
-    th:n-child(9), td:nth-child(9) { width: 80px; }
-    th:nth-child(10), td:nth-child(10) { width: 70px; }
-    th:nth-child(11), td:nth-child(11) { width: 80px; }
-    th:nth-child(12), td:nth-child(12) { width: 80px; }
-    
-    .property-image {
-        width: 35px;
-        height: 28px;
+    .heart-btn {
         font-size: 14px;
     }
     
-    .heart-btn, .hide-btn {
-        font-size: 16px;
-        padding: 2px 4px;
+    .hide-btn {
+        font-size: 12px;
+    }
+    
+    .verdict {
+        font-size: 9px;
+        padding: 1px 4px;
     }
 }
