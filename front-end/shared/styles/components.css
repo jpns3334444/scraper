@@ -1,0 +1,433 @@
+/**
+ * components.css
+ * Button styles, cards, modals, status badges, and other reusable components
+ */
+
+/* Table Styles */
+table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-family: 'Noto Sans JP', sans-serif;
+    table-layout: fixed;
+}
+
+th {
+    background: #f1eee8;
+    padding: 0;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    font-weight: 700;
+    font-size: 13px;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #333333;
+    border-bottom: 1px solid #cccccc;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+thead th {
+    position: sticky;
+    top: 0;
+    background: #f1eee8;
+    z-index: 20;
+}
+
+th.sortable {
+    user-select: none;
+}
+
+.column-header {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 14px 16px;
+    cursor: pointer;
+    min-height: 45px;
+    transition: all 120ms ease;
+    position: relative;
+}
+
+.column-header:hover {
+    background: rgba(105, 91, 141, 0.05);
+}
+
+.sort-arrows {
+    font-size: 11px;
+    color: #999999;
+    margin-left: 6px;
+    transition: all 120ms ease;
+}
+
+.sort-arrows.active {
+    color: #695b8d;
+    font-weight: 700;
+}
+
+td {
+    border-bottom: 1px solid #f0f0f0;
+    padding: 14px 16px;
+    font-size: 14px;
+    vertical-align: middle;
+    color: #333333;
+    font-family: 'Noto Sans JP', sans-serif;
+    font-weight: 400;
+    position: relative;
+    word-break: break-word;
+}
+
+/* Zebra striping */
+tbody tr:nth-child(odd) td {
+    background: #ffffff;
+}
+
+tbody tr:nth-child(even) td {
+    background: #fafaf8;
+}
+
+tbody tr {
+    transition: all 120ms ease;
+    animation: fadeInUp 0.3s ease-out;
+}
+
+/* First and last cell rounded corners */
+tbody tr td:first-child {
+    border-top-left-radius: 4px;
+    border-bottom-left-radius: 4px;
+}
+
+tbody tr td:last-child {
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+}
+
+/* Hover state */
+tbody tr:hover td {
+    background: #f3f0f8 !important;
+    transform: translateY(-1px) scale(1.002);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+/* Clickable row */
+tbody tr {
+    cursor: pointer;
+}
+
+tbody tr.no-link {
+    cursor: default;
+}
+
+/* Property Image */
+.property-image {
+    width: 50px;
+    height: 38px;
+    object-fit: cover;
+    border-radius: 4px;
+    background: #f5f5f5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    color: #999999;
+    border: 1px solid #e0e0e0;
+    font-family: 'Noto Sans JP', sans-serif;
+    overflow: hidden;
+}
+
+.skull-icon {
+    color: #cccccc;
+    font-family: 'Noto Sans JP', sans-serif;
+    font-size: 16px;
+    display: inline-block;
+}
+
+/* Data Cell Types */
+.price {
+    font-weight: 500;
+    color: #333333;
+    text-align: right;
+    font-size: 15px;
+    font-family: 'Noto Sans JP', sans-serif;
+}
+
+.numeric {
+    text-align: center;
+    font-weight: 500;
+}
+
+.percent {
+    text-align: center;
+    font-weight: 500;
+    font-family: monospace;
+}
+
+.age {
+    text-align: center;
+    color: #666666;
+}
+
+.no-data {
+    color: #cccccc;
+    font-style: italic;
+}
+
+/* Verdict Badges */
+.verdict {
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    text-align: center;
+    letter-spacing: 0.1em;
+    transition: all 120ms ease;
+    font-family: 'Noto Sans JP', sans-serif;
+    position: relative;
+    border: 1px solid transparent;
+}
+
+.verdict-buy, .verdict-strong_buy, .verdict-buy_candidate {
+    background: #e6f4ea;
+    color: #2e7d32;
+    border-color: #2e7d32;
+}
+
+.verdict-hold, .verdict-watch {
+    background: #fff4e5;
+    color: #b26a00;
+    border-color: #b26a00;
+}
+
+.verdict-pass, .verdict-reject {
+    background: #fdecea;
+    color: #c62828;
+    border-color: #c62828;
+}
+
+.verdict:hover {
+    transform: scale(1.02);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* Buttons */
+.link-button {
+    color: #333333;
+    text-decoration: none;
+    font-weight: 400;
+    font-size: 12px;
+    font-family: 'Noto Sans JP', sans-serif;
+    padding: 6px 12px;
+    border: 1px solid #cccccc;
+    border-radius: 4px;
+    background: transparent;
+    transition: all 120ms ease;
+    display: inline-block;
+}
+
+.link-button:hover {
+    background: #f3f0f8;
+    border-color: #695b8d;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* Tab Button */
+.tab-button {
+    padding: 10px 20px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    position: relative;
+    color: #666666;
+    font-family: 'Noto Sans JP', sans-serif;
+    font-size: 14px;
+    transition: all 120ms ease;
+}
+
+.tab-button.active {
+    color: #695b8d;
+    border-bottom: 3px solid #695b8d;
+}
+
+.tab-button:hover {
+    color: #695b8d;
+}
+
+.favorites-count {
+    background: #e91e63;
+    color: white;
+    border-radius: 10px;
+    padding: 2px 6px;
+    font-size: 12px;
+    margin-left: 5px;
+}
+
+/* Heart Button */
+.heart-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 20px;
+    padding: 4px 8px;
+    transition: all 0.2s;
+    color: #cccccc;
+}
+
+.heart-btn.favorited {
+    color: #e91e63;
+}
+
+.heart-btn:hover {
+    transform: scale(1.1);
+}
+
+.heart-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Hide Button */
+.hide-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 4px 6px;
+    transition: all 0.2s;
+    color: #cccccc;
+    margin-left: 4px;
+}
+
+.hide-btn:hover {
+    color: #999999;
+    transform: scale(1.1);
+}
+
+.hide-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Loading Skeleton */
+.loading {
+    background: #ffffff;
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+    overflow: hidden;
+    position: relative;
+    padding: 24px;
+}
+
+.loading::before {
+    content: 'Loading properties...';
+    position: absolute;
+    top: 20px;
+    left: 24px;
+    color: #999999;
+    font-size: 13px;
+    font-family: 'Noto Sans JP', sans-serif;
+}
+
+.skeleton {
+    animation: skeleton-loading 1.5s infinite ease-in-out;
+}
+
+.skeleton-row {
+    display: flex;
+    padding: 14px 16px;
+    border-bottom: 1px solid #f0f0f0;
+    margin-top: 40px;
+}
+
+.skeleton-cell {
+    height: 20px;
+    background: linear-gradient(90deg, 
+        #f5f5f5 0%, 
+        #eeeeee 25%, 
+        #f5f5f5 50%, 
+        #eeeeee 75%,
+        #f5f5f5 100%
+    );
+    background-size: 200% 100%;
+    border-radius: 4px;
+    margin-right: 12px;
+    position: relative;
+}
+
+.skeleton-cell:last-child {
+    margin-right: 0;
+}
+
+.skeleton-cell.link { width: 80px; }
+.skeleton-cell.price { width: 120px; }
+.skeleton-cell.ward { width: 100px; }
+.skeleton-cell.percent { width: 80px; }
+.skeleton-cell.station { width: 120px; }
+.skeleton-cell.numeric { width: 80px; }
+.skeleton-cell.age { width: 100px; }
+.skeleton-cell.light { width: 100px; }
+.skeleton-cell.verdict { width: 80px; }
+
+@keyframes skeleton-loading {
+    0% { 
+        background-position: -200% 0;
+    }
+    100% { 
+        background-position: 200% 0;
+    }
+}
+
+/* Error Banner */
+.error-banner {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #f44336;
+    color: white;
+    padding: 12px 24px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.error-banner button {
+    background: none;
+    border: none;
+    color: white;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 2px;
+}
+
+/* Status Bar */
+.terminal-status-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: #ffffff;
+    border-top: 1px solid #e0e0e0;
+    padding: 12px 24px;
+    font-family: 'Noto Sans JP', sans-serif;
+    font-size: 12px;
+    color: #666666;
+    z-index: 999;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.04);
+}
+
+.status-left, .status-right {
+    display: flex;
+    gap: 24px;
+}
+
+.status-item {
+    color: #666666;
+}

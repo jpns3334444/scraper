@@ -1,0 +1,109 @@
+/**
+ * layout.css
+ * Container, grid, spacing, and layout-related styles
+ */
+
+.container {
+    max-width: none;
+    width: 100%;
+    margin: 0;
+    padding: 40px 9px;
+    position: relative;
+    z-index: 10;
+    background: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(10px);
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+h1 {
+    color: #222222;
+    margin-bottom: 40px;
+    font-size: 48px;
+    font-weight: 700;
+    text-align: center;
+    font-family: 'Zen Kaku Gothic Antique', serif;
+    letter-spacing: 0.15em;
+    position: relative;
+    padding-bottom: 20px;
+}
+
+/* Brushstroke underline */
+h1::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 120px;
+    height: 3px;
+    background: linear-gradient(90deg, transparent 0%, #695b8d 20%, #695b8d 80%, transparent 100%);
+    border-radius: 2px;
+}
+
+.results-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 30px;
+    padding: 16px 24px;
+    background: #ffffff;
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+    position: relative;
+}
+
+.results-count {
+    font-size: 14px;
+    color: #666666;
+    font-weight: 400;
+    font-family: 'Noto Sans JP', sans-serif;
+}
+
+/* Table Container */
+.table-container {
+    background: #ffffff;
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+    overflow: visible;
+    position: relative;
+}
+
+/* Tab Navigation */
+.tab-navigation {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 30px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.tab-pane {
+    display: block;
+}
+
+.tab-pane:not(.active) {
+    display: none;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+    .container {
+        padding: 20px 9px;
+    }
+    
+    h1 {
+        font-size: 32px;
+        margin-bottom: 30px;
+    }
+    
+    .results-info {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+    
+    .tab-navigation {
+        justify-content: center;
+    }
+}

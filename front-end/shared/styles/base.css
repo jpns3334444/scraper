@@ -1,0 +1,71 @@
+/**
+ * base.css
+ * Base styles including fonts, reset, body styles, and Mt. Fuji background
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+Antique:wght@400;700&family=Noto+Sans+JP:wght@400;700&display=swap');
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Noto Sans JP', 'Hiragino Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #F7F5F2;
+    color: #222222;
+    line-height: 1.7;
+    font-size: 15px;
+    overflow-x: hidden;
+    position: relative;
+    font-weight: 400;
+}
+
+/* Subtle Mt. Fuji background */
+body::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 600px;
+    height: 400px;
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400"><path d="M300 100 L200 300 L400 300 Z" fill="%23e8e4e0" opacity="0.06"/><path d="M300 100 L250 200 L350 200 Z" fill="%23ffffff" opacity="0.08"/></svg>');
+    background-repeat: no-repeat;
+    background-position: top right;
+    background-size: contain;
+    pointer-events: none;
+    z-index: 0;
+}
+
+@keyframes fadeInUp {
+    0% {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes fadeIn {
+    0% {
+        opacity: 0;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+@keyframes pulse {
+    0% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+    100% {
+        opacity: 1;
+    }
+}

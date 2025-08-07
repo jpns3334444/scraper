@@ -1,0 +1,62 @@
+/**
+ * hidden.css
+ * Hidden items list styles
+ */
+
+.fav-list {
+    list-style: none;
+    padding: 20px;
+    margin: 0;
+}
+
+.fav-list li {
+    padding: 12px 16px;
+    margin: 8px 0;
+    background: white;
+    border-radius: 6px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: all 0.2s ease;
+}
+
+.fav-list li:hover {
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    transform: translateY(-1px);
+}
+
+.fav-list li a {
+    color: #333;
+    text-decoration: none;
+    font-weight: 500;
+    flex: 1;
+}
+
+.fav-list li a:hover {
+    color: #695b8d;
+}
+
+.fav-list .remove-btn {
+    background: #ff4444;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s;
+}
+
+.fav-list .remove-btn:hover {
+    background: #cc0000;
+    transform: scale(1.05);
+}
+
+/* Empty state */
+.hidden-empty {
+    padding: 40px;
+    text-align: center;
+    color: #999;
+    font-style: italic;
+}

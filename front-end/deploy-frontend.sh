@@ -17,9 +17,42 @@ CURRENT_BCRYPT_VERSION="4.1.2"   # Update this when you want to rebuild bcrypt l
 # Colors
 G='\033[0;32m' R='\033[0;31m' Y='\033[1;33m' B='\033[0;34m' NC='\033[0m'
 status() { echo -e "${G}[$(date +'%H:%M:%S')]${NC} $1"; }
-error() { echo -e "${R}ERROR:${NC} $1"; exit 1; }
+error() { echo -e "${R}ERROR:${NC} $1"; cleanup_and_exit 1; }
 warn() { echo -e "${Y}WARNING:${NC} $1"; }
 info() { echo -e "${B}INFO:${NC} $1"; }
+
+# Cleanup function
+cleanup_and_exit() {
+    local exit_code=${1:-0}
+    
+    info "Cleaning up temporary files..."
+    
+    # Remove backup files
+    [ -f "$SCRIPT_DIR/index.html.bak" ] && rm -f "$SCRIPT_DIR/index.html.bak" && info "Removed index.html.bak"
+    
+    # Remove temporary Docker files if they exist
+    [ -f "$SCRIPT_DIR/Dockerfile.bcrypt" ] && rm -f "$SCRIPT_DIR/Dockerfile.bcrypt" && info "Removed Dockerfile.bcrypt"
+    
+    # Remove temporary zip files
+    [ -f "$SCRIPT_DIR/frontend-bcrypt-layer.zip" ] && rm -f "$SCRIPT_DIR/frontend-bcrypt-layer.zip" && info "Removed frontend-bcrypt-layer.zip"
+    [ -f "$SCRIPT_DIR/dashboard_api.zip" ] && rm -f "$SCRIPT_DIR/dashboard_api.zip" && info "Removed dashboard_api.zip"
+    [ -f "$SCRIPT_DIR/favorites_api.zip" ] && rm -f "$SCRIPT_DIR/favorites_api.zip" && info "Removed favorites_api.zip"
+    [ -f "$SCRIPT_DIR/register_user.zip" ] && rm -f "$SCRIPT_DIR/register_user.zip" && info "Removed register_user.zip"
+    [ -f "$SCRIPT_DIR/login_user.zip" ] && rm -f "$SCRIPT_DIR/login_user.zip" && info "Removed login_user.zip"
+    
+    # Note: We keep the .frontend-bcrypt-layer-version file as it's used for caching
+    # Only remove it if explicitly requested or on error during bcrypt build
+    if [ "$exit_code" -ne 0 ] && [ "$NEED_BCRYPT_LAYER_BUILD" = true ]; then
+        warn "Build failed during bcrypt layer creation, removing version file for retry"
+        [ -f "$BCRYPT_LAYER_VERSION_FILE" ] && rm -f "$BCRYPT_LAYER_VERSION_FILE"
+    fi
+    
+    status "✅ Cleanup completed"
+    exit $exit_code
+}
+
+# Set up trap to ensure cleanup on exit
+trap cleanup_and_exit EXIT
 
 echo "🚀 Frontend Stack Smart Deployment (Windows Compatible)"
 echo "======================================================="
@@ -28,11 +61,11 @@ echo "======================================================="
 cd "$SCRIPT_DIR"
 
 # Check prerequisites
-command -v docker >/dev/null || error "Docker not found"
-command -v aws >/dev/null || error "AWS CLI not found"
-aws sts get-caller-identity >/dev/null || error "AWS credentials not configured"
-[ -f "$TEMPLATE_FILE" ] || error "CloudFormation template $TEMPLATE_FILE not found"
-[ -f "index.html" ] || error "Dashboard HTML file index.html not found"
+command -v docker >/dev/null || { echo "Docker not found"; cleanup_and_exit 1; }
+command -v aws >/dev/null || { echo "AWS CLI not found"; cleanup_and_exit 1; }
+aws sts get-caller-identity >/dev/null || { echo "AWS credentials not configured"; cleanup_and_exit 1; }
+[ -f "$TEMPLATE_FILE" ] || { echo "CloudFormation template $TEMPLATE_FILE not found"; cleanup_and_exit 1; }
+[ -f "index.html" ] || { echo "Dashboard HTML file index.html not found"; cleanup_and_exit 1; }
 
 # Debug Python availability
 info "Checking Python availability..."
@@ -95,11 +128,11 @@ EOF
     docker cp "$CONTAINER_ID:/layer/frontend-bcrypt-layer.zip" ./frontend-bcrypt-layer.zip
     docker rm "$CONTAINER_ID"
     
-    # Cleanup
-    rm Dockerfile.bcrypt
+    # Cleanup Docker artifacts immediately
+    rm -f Dockerfile.bcrypt
     docker rmi frontend-bcrypt-layer-builder
     
-    [ -f frontend-bcrypt-layer.zip ] || error "Bcrypt layer build failed"
+    [ -f frontend-bcrypt-layer.zip ] || { echo "Bcrypt layer build failed"; cleanup_and_exit 1; }
     
     BCRYPT_LAYER_SIZE=$(du -sh frontend-bcrypt-layer.zip | cut -f1)
     status "✅ Bcrypt layer built ($BCRYPT_LAYER_SIZE)"
@@ -118,8 +151,8 @@ EOF
     # Save version
     echo "$CURRENT_BCRYPT_VERSION" > $BCRYPT_LAYER_VERSION_FILE
     
-    # Cleanup
-    rm frontend-bcrypt-layer.zip
+    # Cleanup zip file immediately after upload
+    rm -f frontend-bcrypt-layer.zip
 else
     info "Skipping bcrypt layer build - using cached version"
 fi
@@ -134,7 +167,7 @@ REGISTER_USER_VERSION="latest"
 LOGIN_USER_VERSION="latest"
 
 for func in dashboard_api favorites_api register_user login_user; do
-    [ -d "../lambda/$func" ] || error "Function directory ../lambda/$func not found"
+    [ -d "../lambda/$func" ] || { echo "Function directory ../lambda/$func not found"; cleanup_and_exit 1; }
     
     info "Packaging $func..."
     
@@ -152,7 +185,7 @@ for func in dashboard_api favorites_api register_user login_user; do
     done
     
     # Use Python method with shared modules
-    [ -n "$PYTHON_CMD" ] || error "Python not found - required for packaging"
+    [ -n "$PYTHON_CMD" ] || { echo "Python not found - required for packaging"; cleanup_and_exit 1; }
     
     $PYTHON_CMD -c "
 import zipfile
@@ -198,7 +231,7 @@ create_zip('$func', '$func.zip')
 print('Created $func.zip with shared modules')
 "
     
-    [ -f "$func.zip" ] || error "Failed to create $func.zip"
+    [ -f "$func.zip" ] || { echo "Failed to create $func.zip"; cleanup_and_exit 1; }
     
     # Upload to S3 and capture version
     aws s3 cp $func.zip s3://$BUCKET_NAME/frontend-functions/$func.zip --region $REGION
@@ -222,7 +255,8 @@ print('Created $func.zip with shared modules')
             ;;
     esac
     
-    rm $func.zip
+    # Clean up zip file immediately after upload
+    rm -f $func.zip
     
     status "✅ $func packaged and uploaded (version: $OBJECT_VERSION)"
 done
@@ -301,7 +335,7 @@ FAVORITES_API_FUNCTION_ARN=$(aws cloudformation describe-stacks \
 
 # Update index.html with API endpoint
 status "Updating dashboard HTML with API endpoint..."
-# Create a backup first
+# Create a backup first (will be cleaned up on exit)
 cp index.html index.html.bak
 
 # Replace the API URL placeholder or the hardcoded URL
@@ -317,7 +351,7 @@ status "Uploading dashboard to S3..."
 aws s3 cp index.html s3://$S3_BUCKET/index.html \
     --region $REGION \
     --content-type text/html \
-    --cache-control "no-cache" || error "Failed to upload HTML to S3"
+    --cache-control "no-cache" || { echo "Failed to upload HTML to S3"; cleanup_and_exit 1; }
 
 status "✅ Dashboard uploaded successfully"
 
@@ -352,3 +386,5 @@ echo "💡 Next Deployments:"
 echo "  - Layer will be cached (fast deployments)"
 echo "  - Only Lambda functions will be rebuilt"
 echo "  - To force layer rebuild: rm $BCRYPT_LAYER_VERSION_FILE"
+
+# The trap will automatically call cleanup_and_exit when script ends successfully

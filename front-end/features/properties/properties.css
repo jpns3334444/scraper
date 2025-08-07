@@ -1,0 +1,60 @@
+/**
+ * properties.css
+ * Properties table styles, column specific styles, sort arrows, and skeleton loading
+ */
+
+/* Column-specific widths and styles */
+th:nth-child(1), td:nth-child(1) { width: 50px; }  /* Image */
+th:nth-child(2), td:nth-child(2) { width: 100px; } /* Link */
+th:nth-child(3), td:nth-child(3) { width: 120px; } /* Price */
+th:nth-child(4), td:nth-child(4) { width: 80px; }  /* Percent */
+th:nth-child(5), td:nth-child(5) { width: 120px; } /* Ward */
+th:nth-child(6), td:nth-child(6) { width: 80px; }  /* Station */
+th:nth-child(7), td:nth-child(7) { width: 80px; }  /* Size */
+th:nth-child(8), td:nth-child(8) { width: 80px; }  /* Age */
+th:nth-child(9), td:nth-child(9) { width: 100px; } /* Light */
+th:nth-child(10), td:nth-child(10) { width: 80px; } /* Score */
+th:nth-child(11), td:nth-child(11) { width: 100px; } /* Verdict */
+th:nth-child(12), td:nth-child(12) { width: 100px; } /* Actions */
+
+/* Scroll sentinel for infinite loading */
+#scrollSentinel {
+    height: 20px;
+    margin-top: 20px;
+}
+
+/* Mobile responsiveness for table */
+@media (max-width: 768px) {
+    table {
+        table-layout: auto;
+    }
+    
+    th, td {
+        font-size: 12px;
+        padding: 10px 8px;
+    }
+    
+    th:nth-child(1), td:nth-child(1) { width: 40px; }
+    th:nth-child(2), td:nth-child(2) { width: 80px; }
+    th:nth-child(3), td:nth-child(3) { width: 100px; }
+    th:nth-child(4), td:nth-child(4) { width: 70px; }
+    th:nth-child(5), td:nth-child(5) { width: 100px; }
+    th:nth-child(6), td:nth-child(6) { width: 70px; }
+    th:nth-child(7), td:nth-child(7) { width: 70px; }
+    th:nth-child(8), td:nth-child(8) { width: 70px; }
+    th:nth-child(9), td:nth-child(9) { width: 80px; }
+    th:nth-child(10), td:nth-child(10) { width: 70px; }
+    th:nth-child(11), td:nth-child(11) { width: 80px; }
+    th:nth-child(12), td:nth-child(12) { width: 80px; }
+    
+    .property-image {
+        width: 35px;
+        height: 28px;
+        font-size: 14px;
+    }
+    
+    .heart-btn, .hide-btn {
+        font-size: 16px;
+        padding: 2px 4px;
+    }
+}
