@@ -1,0 +1,9 @@
+{
+    "httpMethod": "DELETE",
+    "path": "/favorites/PROP%2320250804_1421770022572",
+    "pathParameters": {"id": "PROP%2320250804_1421770022572"},
+    "headers": {
+        "X-User-Email": "jpns3334444@gmail.com",
+        "Content-Type": "application/json"
+    }
+}

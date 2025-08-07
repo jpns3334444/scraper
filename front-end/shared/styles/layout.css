@@ -63,14 +63,26 @@ h1::after {
     height: 100%;
 }
 
-/* Tab Navigation - aligned left */
+/* Tab Navigation - aligned left with proper underline */
 .tab-navigation {
     display: flex;
     gap: var(--space-xl);
     margin-bottom: var(--space-xl);
     padding-left: 0;
-    border-bottom: 1px solid var(--ink-faint);
+    position: relative;
     justify-content: flex-start;
+}
+
+/* Remove the old border-bottom from tab-navigation since we'll use the active tab underline */
+.tab-navigation::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--ink-faint);
+    z-index: 1;
 }
 
 /* Tab panes */

@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 from decimal import Decimal
 import sys
+from urllib.parse import unquote
 sys.path.append('/opt')
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -245,6 +246,9 @@ def remove_preference(event, user_id, preference_type):
         # Get property_id from path
         path_params = event.get('pathParameters', {})
         property_id = path_params.get('id') or event.get('path', '').split('/')[-1]
+        
+        # URL decode the property_id in case it contains encoded characters like %23 for #
+        property_id = unquote(property_id)
 
         if not property_id:
             return {
