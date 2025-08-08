@@ -125,19 +125,20 @@
                 <!-- Loading skeleton will be populated by PropertiesView -->
             </div>
             
-            <div class="table-container" id="tableContainer" style="display: none;">
-                <table>
-                    <thead>
-                        <!-- Table header will be populated by PropertiesView -->
-                    </thead>
-                    <tbody id="propertiesTable">
-                        <!-- Table rows will be populated by PropertiesView -->
-                    </tbody>
+            <!-- Results info -->
+            <div class="results-info" id="resultsInfo" style="display: none;">
+                <div class="results-count" id="resultsCount"></div>
+            </div>
+            
+            <!-- Simple properties table with 50px padding -->
+            <div class="properties-table-wrapper" id="tableContainer" style="display: none;">
+                <table class="properties-table" id="propertiesTable">
+                    <!-- Table content will be populated by PropertiesView -->
                 </table>
             </div>
             
-            <!-- Pagination -->
-            <div class="pagination-container" id="paginationContainer" style="display: none;">
+            <!-- Clean pagination -->
+            <div class="pagination-wrapper" id="paginationContainer" style="display: none;">
                 <div class="pagination" id="pagination"></div>
             </div>
         </div>
@@ -526,7 +527,7 @@
     <script src="core/api.js"></script>
     <script src="core/state.js"></script>
     <script src="core/router.js"></script>
-    <script src="shared/components/Pagination.js"></script>
+    <!-- Removed pagination component - using inline implementation -->
     <script src="shared/components/FilterDropdown.js"></script>
     <script src="shared/components/Table.js"></script>
     <script src="features/auth/AuthManager.js"></script>

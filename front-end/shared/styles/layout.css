@@ -112,8 +112,8 @@ h1::after {
     letter-spacing: 0.05em;
 }
 
-/* Table container */
-.table-container {
+/* Properties table wrapper styles */
+.properties-table-wrapper {
     background: var(--paper-white);
     margin-bottom: var(--space-xl);
     position: relative;
@@ -121,16 +121,16 @@ h1::after {
 }
 
 /* Subtle shadow for depth */
-.table-container::after {
+.properties-table-wrapper::after {
     content: '';
     position: absolute;
     bottom: -5px;
-    left: 10px;
-    right: 10px;
-    height: 5px;
+    left: 60px;
+    right: 60px;
+    height: 3px;
     background: linear-gradient(
         to bottom,
-        rgba(0,0,0,0.05) 0%,
+        rgba(0,0,0,0.03) 0%,
         transparent 100%
     );
     pointer-events: none;
@@ -176,11 +176,9 @@ h1::after {
     100% { background-position: 200% 0; }
 }
 
-/* Pagination container */
-.pagination-container {
+/* Pagination wrapper styles */
+.pagination-wrapper {
     margin-top: var(--space-xl);
-    padding-top: var(--space-lg);
-    border-top: 1px solid var(--ink-faint);
     display: flex;
     justify-content: center;
 }

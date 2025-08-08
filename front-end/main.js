@@ -56,13 +56,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         const banner = document.getElementById('errorBanner');
         if (banner) banner.style.display = 'none';
     };
-    window.goToPage = (page) => {
-        const totalPages = Math.ceil(appState.filteredProperties.length / appState.itemsPerPage);
-        if (page < 1 || page > totalPages) return;
-        appState.setPage(page);
-        propertiesManager.renderCurrentPage();
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-    };
+    // goToPage function now defined in PropertiesManager.js
     window.applyColumnFilter = (column) => {
         const checkboxes = document.querySelectorAll(`#${column}-filter-options input[type="checkbox"]:checked`);
         appState.currentFilters[column] = Array.from(checkboxes).map(cb => cb.value);

@@ -329,6 +329,13 @@ function toggleHidden(propertyId, button) {
     }
 }
 
+function goToPage(page) {
+    if (window.app && window.app.properties) {
+        window.app.properties.state.setPage(page);
+        window.app.properties.renderCurrentPage();
+    }
+}
+
 function openListing(event, url) {
     // Don't open if clicking on buttons or other interactive elements
     if (event.target.tagName === 'BUTTON' || event.target.closest('button')) {
