@@ -54,7 +54,9 @@ class FavoritesView {
                     <div class="favorite-price">${price}</div>
                     <div class="favorite-size">${size}</div>
                 </div>
-                <span class="processing-status ${statusClass}">${statusText}</span>
+                ${statusClass === 'processed' ? 
+                    `<span class="processing-status ${statusClass}" onclick="window.app.favorites.showAnalysis('${property.property_id}'); event.stopPropagation();" style="cursor: pointer;" title="View Analysis">${statusText}</span>` :
+                    `<span class="processing-status ${statusClass}">${statusText}</span>`}
                 <button class="remove-favorite-btn" onclick="event.stopPropagation(); removeFavorite('${property.property_id}')" title="Remove from favorites">
                     <svg width="12" height="12" viewBox="0 0 12 12">
                         <path d="M1 1l10 10M11 1L1 11" stroke="currentColor" stroke-width="1.5"/>

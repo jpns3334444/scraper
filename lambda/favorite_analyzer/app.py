@@ -1,5 +1,12 @@
 import json
 import boto3
+
+# Import centralized configuration
+try:
+    from config_loader import get_config
+    config = get_config()
+except ImportError:
+    config = None  # Fallback to environment variables
 import os
 import logging
 from datetime import datetime
@@ -14,27 +21,23 @@ dynamodb = boto3.resource('dynamodb')
 s3_client = boto3.client('s3')
 secrets_client = boto3.client('secretsmanager')
 
-favorites_table = dynamodb.Table(os.environ['FAVORITES_TABLE'])
+preferences_table = dynamodb.Table(os.environ['PREFERENCES_TABLE'])
 properties_table = dynamodb.Table(os.environ['PROPERTIES_TABLE'])
 bucket = os.environ['DATA_BUCKET']
 
 def lambda_handler(event, context):
-    # Process SQS messages
-    for record in event['Records']:
-        message = json.loads(record['body'])
-        try:
-            analyze_favorite(message)
-        except Exception as e:
-            logger.error(f"Error analyzing favorite: {str(e)}")
-            # Message will return to queue if not deleted
+    if 'Records' in event:  # backward compatibility
+        for record in event['Records']:
+            body = json.loads(record['body'])
+            analyze(body['user_id'], body['property_id'])
+    else:
+        analyze(event['user_id'], event['property_id'])
 
-def analyze_favorite(message):
-    favorite_id = message['favorite_id']
-    property_id = message['property_id']
+def analyze(user_id, property_id):
     
     # Update status to processing
-    favorites_table.update_item(
-        Key={'favorite_id': favorite_id},
+    preferences_table.update_item(
+        Key={'user_id': user_id, 'property_id': property_id},
         UpdateExpression='SET analysis_status = :status',
         ExpressionAttributeValues={':status': 'processing'}
     )
@@ -50,24 +53,30 @@ def analyze_favorite(message):
         analysis = get_chatgpt_analysis(prompt, data_package.get('image_urls', []))
         
         # Store analysis result
-        favorites_table.update_item(
-            Key={'favorite_id': favorite_id},
+        preferences_table.update_item(
+            Key={'user_id': user_id, 'property_id': property_id},
             UpdateExpression='''
                 SET analysis_status = :status,
                     analysis_completed_at = :completed,
-                    analysis_result = :result
+                    analysis_result = :result,
+                    analysis_summary = :summary
             ''',
             ExpressionAttributeValues={
                 ':status': 'completed',
                 ':completed': datetime.utcnow().isoformat(),
-                ':result': analysis
+                ':result': analysis,
+                ':summary': {
+                    'investment_rating': analysis.get('investment_rating'),
+                    'final_verdict': analysis.get('final_verdict'),
+                    'rental_yield_net': analysis.get('rental_yield_net')
+                }
             }
         )
         
     except Exception as e:
         # Update with error status
-        favorites_table.update_item(
-            Key={'favorite_id': favorite_id},
+        preferences_table.update_item(
+            Key={'user_id': user_id, 'property_id': property_id},
             UpdateExpression='''
                 SET analysis_status = :status,
                     last_error = :error,

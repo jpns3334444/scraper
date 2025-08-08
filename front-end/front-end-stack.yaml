@@ -122,15 +122,6 @@ Resources:
                     - "${TableArn}/index/*"
                     - TableArn: 
                         Fn::ImportValue: !Sub "${AIStackName}-UserPreferencesTableArn"
-        - PolicyName: "SQSAccess"
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: "Allow"
-                Action:
-                  - "sqs:SendMessage"
-                Resource:
-                  - Fn::ImportValue: !Sub "${AIStackName}-FavoriteAnalysisQueueArn"
         - PolicyName: "S3Access"
           PolicyDocument:
             Version: "2012-10-17"
@@ -166,9 +157,9 @@ Resources:
         - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
       Environment:
         Variables:
-          DYNAMODB_TABLE:
+          DYNAMODB_TABLE:  # Will resolve to: tokyo-real-estate-ai-analysis-db
             Fn::ImportValue: !Sub "${AIStackName}-DynamoDBTableName"
-          PREFERENCES_TABLE:
+          PREFERENCES_TABLE:  # Will resolve to: tokyo-real-estate-ai-user-preferences
             Fn::ImportValue: !Sub "${AIStackName}-UserPreferencesTableName"
 
   # Favorites API Lambda Function
@@ -189,12 +180,10 @@ Resources:
         - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
       Environment:
         Variables:
-          PREFERENCES_TABLE:
+          PREFERENCES_TABLE:  # Will resolve to: tokyo-real-estate-ai-user-preferences
             Fn::ImportValue: !Sub "${AIStackName}-UserPreferencesTableName"
           PROPERTIES_TABLE:
             Fn::ImportValue: !Sub "${AIStackName}-DynamoDBTableName"
-          ANALYSIS_QUEUE_URL:
-            Fn::ImportValue: !Sub "${AIStackName}-FavoriteAnalysisQueueUrl"
           OUTPUT_BUCKET:
             Fn::ImportValue: !Sub "${AIStackName}-OutputBucketName"
 
@@ -216,7 +205,7 @@ Resources:
         - !Ref BcryptLayer
       Environment:
         Variables:
-          USERS_TABLE:
+          USERS_TABLE:  # Will resolve to: tokyo-real-estate-ai-users
             Fn::ImportValue: !Sub "${AIStackName}-UsersTableName"
 
   # Login User Lambda Function
@@ -237,7 +226,7 @@ Resources:
         - !Ref BcryptLayer
       Environment:
         Variables:
-          USERS_TABLE:
+          USERS_TABLE:  # Will resolve to: tokyo-real-estate-ai-users
             Fn::ImportValue: !Sub "${AIStackName}-UsersTableName"
 
   # API Gateway REST API

@@ -14,6 +14,11 @@ class FavoritesManager {
         this.view = view;
     }
     
+    setViews(favoritesView, analysisView) {
+        this.view = favoritesView;
+        this.analysisView = analysisView;
+    }
+    
     async toggleFavorite(propertyId, button) {
         event.stopPropagation();
         button.disabled = true;
@@ -216,6 +221,31 @@ class FavoritesManager {
         if (el) {
             el.textContent = Math.max(0, (parseInt(el.textContent) || 0) + delta);
         }
+    }
+    
+    async showAnalysis(propertyId) {
+        if (!this.state.currentUser) return;
+        
+        let data = this.state.getFavoriteAnalysis(propertyId);
+        if (!data) {
+            try {
+                data = await this.api.fetchFavoriteAnalysis(this.state.currentUser.email, propertyId);
+                this.state.setFavoriteAnalysis(propertyId, data);
+            } catch (error) {
+                console.error('Failed to load analysis:', error);
+                alert('Failed to load analysis. Please try again.');
+                return;
+            }
+        }
+        
+        this.analysisData = data; // cache for renderAnalysis
+        await this.renderAnalysis(); // render immediately
+        window.app.router.switchTab('analysis');
+    }
+    
+    async renderAnalysis() {
+        if (!this.analysisView || !this.analysisData) return;
+        await this.analysisView.render(this.analysisData);
     }
 }
 

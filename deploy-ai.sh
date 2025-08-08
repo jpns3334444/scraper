@@ -5,22 +5,32 @@ set -e
 # Get the directory of this script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Configuration
-REGION="${AWS_REGION:-ap-northeast-1}"
-STACK_NAME="${STACK_NAME:-tokyo-real-estate-ai}"
-BUCKET_NAME="ai-scraper-artifacts-$REGION"
-LAYER_VERSION_FILE="$SCRIPT_DIR/.layer-version"
-BCRYPT_LAYER_VERSION_FILE="$SCRIPT_DIR/.bcrypt-layer-version"
-TEMPLATE_FILE="$SCRIPT_DIR/ai-stack.yaml"
-CURRENT_OPENAI_VERSION="1.95.0"  # Update this when you want to rebuild layer
-CURRENT_BCRYPT_VERSION="4.1.2"   # Update this when you want to rebuild bcrypt layer
-
-# Colors
+# Colors and functions first
 G='\033[0;32m' R='\033[0;31m' Y='\033[1;33m' B='\033[0;34m' NC='\033[0m'
 status() { echo -e "${G}[$(date +'%H:%M:%S')]${NC} $1"; }
 error() { echo -e "${R}ERROR:${NC} $1"; exit 1; }
 warn() { echo -e "${Y}WARNING:${NC} $1"; }
 info() { echo -e "${B}INFO:${NC} $1"; }
+
+# Load .env file if it exists
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    info "Loading configuration from .env file..."
+    export $(grep -v '^#' "$SCRIPT_DIR/.env" | xargs)
+fi
+
+# Configuration from .env with fallbacks
+REGION="${AWS_REGION:-ap-northeast-1}"
+STACK_NAME="${MAIN_STACK_NAME:-tokyo-real-estate-ai}"
+BUCKET_NAME="${DEPLOYMENT_BUCKET_PREFIX:-ai-scraper-artifacts}-$REGION"
+OUTPUT_BUCKET="${OUTPUT_BUCKET:-tokyo-real-estate-ai-data}"
+EMAIL_FROM="${EMAIL_FROM:-jpns3334444@gmail.com}"
+EMAIL_TO="${EMAIL_TO:-jpns3334444@gmail.com}"
+LAYER_VERSION_FILE="$SCRIPT_DIR/.layer-version"
+BCRYPT_LAYER_VERSION_FILE="$SCRIPT_DIR/.bcrypt-layer-version"
+TEMPLATE_FILE="$SCRIPT_DIR/ai-stack.yaml"
+CURRENT_OPENAI_VERSION="${OPENAI_VERSION:-1.95.0}"
+CURRENT_BCRYPT_VERSION="${BCRYPT_VERSION:-4.1.2}"
+
 
 echo "🚀 AI Stack Smart Deployment (Windows Compatible)"
 echo "================================================="
@@ -406,9 +416,9 @@ aws cloudformation deploy \
   --region $REGION \
   --parameter-overrides \
       DeploymentBucket=$BUCKET_NAME \
-      OutputBucket=tokyo-real-estate-ai-data \
-      EmailFrom=jpns3334444@gmail.com \
-      EmailTo=jpns3334444@gmail.com \
+      OutputBucket=$OUTPUT_BUCKET \
+      EmailFrom=$EMAIL_FROM \
+      EmailTo=$EMAIL_TO \
       URLCollectorCodeVersion=$URL_COLLECTOR_VERSION \
       PropertyProcessorCodeVersion=$PROPERTY_PROCESSOR_VERSION \
       PropertyAnalyzerCodeVersion=$PROPERTY_ANALYZER_VERSION \

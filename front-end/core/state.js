@@ -11,6 +11,7 @@ class AppState {
         this.filteredProperties = [];
         this.favorites = new Set();
         this.hidden = new Set();
+        this.favoriteAnalyses = new Map();
         
         // User state
         this.currentUser = null;
@@ -184,6 +185,19 @@ class AppState {
     
     getVisibleProperties() {
         return this.allProperties.filter(p => !this.hidden.has(p.property_id));
+    }
+    
+    // Favorite analyses management
+    setFavoriteAnalysis(propertyId, data) {
+        this.favoriteAnalyses.set(propertyId, data);
+    }
+    
+    getFavoriteAnalysis(propertyId) {
+        return this.favoriteAnalyses.get(propertyId);
+    }
+    
+    clearFavoriteAnalyses() {
+        this.favoriteAnalyses.clear();
     }
 }
 

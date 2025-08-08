@@ -163,6 +163,16 @@ class Router {
             if (hiddenList) {
                 console.log(`[DEBUG] hiddenList computed style:`, window.getComputedStyle(hiddenList));
             }
+        } else if (tabName === TABS.ANALYSIS) {
+            console.log('[DEBUG] Loading analysis tab content...');
+            DOMUtils.hideElement('tableContainer');
+            DOMUtils.hideElement('loading');
+            DOMUtils.hideElement('paginationContainer');
+            
+            if (window.app.favorites && window.app.favorites.renderAnalysis) {
+                await window.app.favorites.renderAnalysis();
+            }
+            console.log('[DEBUG] Analysis tab loaded');
         } else {
             console.log('[DEBUG] Showing main properties table');
             DOMUtils.showElement('tableContainer');

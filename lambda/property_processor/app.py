@@ -4,6 +4,13 @@ Property Processor Lambda - Processes unprocessed URLs from the tracking table
 Scraping only - scoring handled by separate PropertyAnalyzer Lambda
 """
 import os
+
+# Load environment variables from .env if available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not available, use existing environment
 import time
 import pandas as pd
 import json
@@ -184,8 +191,8 @@ def parse_lambda_event(event):
         'max_properties': event.get('max_properties', int(os.environ.get('MAX_PROPERTIES', '0'))),
         'output_bucket': event.get('output_bucket', os.environ.get('OUTPUT_BUCKET', '')),
         'max_runtime_minutes': event.get('max_runtime_minutes', int(os.environ.get('MAX_RUNTIME_MINUTES', '14'))),
-        'dynamodb_table': event.get('dynamodb_table', os.environ.get('DYNAMODB_TABLE', 'tokyo-real-estate-ai-analysis-db')),
-        'url_tracking_table': event.get('url_tracking_table', os.environ.get('URL_TRACKING_TABLE', 'tokyo-real-estate-urls')),
+        'dynamodb_table': event.get('dynamodb_table', os.environ.get('PROPERTIES_TABLE', 'tokyo-real-estate-ai-analysis-db')),
+        'url_tracking_table': event.get('url_tracking_table', os.environ.get('URL_TRACKING_TABLE', 'tokyo-real-estate-ai-urls')),
         'log_level': event.get('log_level', os.environ.get('LOG_LEVEL', 'INFO')),
         'max_workers': event.get('max_workers', int(os.environ.get('MAX_WORKERS', '5'))),
         'requests_per_second': event.get('requests_per_second', int(os.environ.get('REQUESTS_PER_SECOND', '5'))),

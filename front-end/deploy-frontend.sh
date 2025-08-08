@@ -5,21 +5,29 @@ set -e
 # Get the directory of this script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Configuration
-REGION="${AWS_REGION:-ap-northeast-1}"
-STACK_NAME="${STACK_NAME:-tokyo-real-estate-frontend}"
-AI_STACK_NAME="${AI_STACK_NAME:-tokyo-real-estate-ai}"
-BUCKET_NAME="ai-scraper-artifacts-$REGION"
-BCRYPT_LAYER_VERSION_FILE="$SCRIPT_DIR/.frontend-bcrypt-layer-version"
-TEMPLATE_FILE="$SCRIPT_DIR/front-end-stack.yaml"
-CURRENT_BCRYPT_VERSION="4.1.2"   # Update this when you want to rebuild bcrypt layer
-
-# Colors
+# Colors and functions first
 G='\033[0;32m' R='\033[0;31m' Y='\033[1;33m' B='\033[0;34m' NC='\033[0m'
 status() { echo -e "${G}[$(date +'%H:%M:%S')]${NC} $1"; }
 error() { echo -e "${R}ERROR:${NC} $1"; cleanup_and_exit 1; }
 warn() { echo -e "${Y}WARNING:${NC} $1"; }
 info() { echo -e "${B}INFO:${NC} $1"; }
+
+# Load .env file from parent directory if it exists
+ENV_FILE="$SCRIPT_DIR/../.env"
+if [ -f "$ENV_FILE" ]; then
+    info "Loading configuration from .env file..."
+    export $(grep -v '^#' "$ENV_FILE" | xargs)
+fi
+
+# Configuration from .env with fallbacks
+REGION="${AWS_REGION:-ap-northeast-1}"
+STACK_NAME="${FRONTEND_STACK_NAME:-tokyo-real-estate-dashboard}"
+AI_STACK_NAME="${MAIN_STACK_NAME:-tokyo-real-estate-ai}"
+BUCKET_NAME="${DEPLOYMENT_BUCKET_PREFIX:-ai-scraper-artifacts}-$REGION"
+BCRYPT_LAYER_VERSION_FILE="$SCRIPT_DIR/.frontend-bcrypt-layer-version"
+TEMPLATE_FILE="$SCRIPT_DIR/front-end-stack.yaml"
+CURRENT_BCRYPT_VERSION="${BCRYPT_VERSION:-4.1.2}"
+
 
 # Cleanup function
 cleanup_and_exit() {

@@ -1,4 +1,11 @@
 import boto3
+
+# Import centralized configuration
+try:
+    from config_loader import get_config
+    config = get_config()
+except ImportError:
+    config = None  # Fallback to environment variables
 import time
 import json
 import statistics

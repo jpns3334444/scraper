@@ -169,9 +169,20 @@ class AuthManager {
     }
     
     clearAnonymousData() {
+        // Get the anonymous user ID before clearing it
+        const anonymousUserId = localStorage.getItem('user_id');
+        if (anonymousUserId) {
+            localStorage.removeItem(`favorites_${anonymousUserId}`);
+            localStorage.removeItem(`hidden_${anonymousUserId}`);
+        }
+        
+        // Also remove any old format keys
         localStorage.removeItem('favorites');
+        localStorage.removeItem('hidden');
         localStorage.removeItem('user_id');
+        
         this.state.setFavorites(new Set());
+        this.state.setHidden(new Set());
     }
     
     getCurrentUser() {

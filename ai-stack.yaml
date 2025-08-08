@@ -154,14 +154,6 @@ Resources:
                   - !GetAtt URLCollectorDeadLetterQueue.Arn
                   - !GetAtt PropertyProcessorDeadLetterQueue.Arn
                   - !GetAtt PropertyAnalyzerDeadLetterQueue.Arn
-                  - !GetAtt FavoriteAnalysisQueue.Arn
-              - Effect: Allow
-                Action:
-                  - sqs:ReceiveMessage
-                  - sqs:DeleteMessage
-                  - sqs:GetQueueAttributes
-                Resource:
-                  - !GetAtt FavoriteAnalysisQueue.Arn
 
   # Simplified IAM Role for URL collection and property processing functions
   ScraperExecutionRole:
@@ -222,7 +214,7 @@ Resources:
   RealEstateAnalysisDB:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub '${AWS::StackName}-analysis-db'
+      TableName: !Sub '${AWS::StackName}-analysis-db'  # Generates: tokyo-real-estate-ai-analysis-db
       AttributeDefinitions:
         - AttributeName: property_id
           AttributeType: S
@@ -294,7 +286,7 @@ Resources:
   URLTrackingDB:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub '${AWS::StackName}-urls'
+      TableName: !Sub '${AWS::StackName}-urls'  # Generates: tokyo-real-estate-ai-urls
       AttributeDefinitions:
         - AttributeName: url
           AttributeType: S
@@ -307,7 +299,7 @@ Resources:
   UsersTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub '${AWS::StackName}-users'
+      TableName: !Sub '${AWS::StackName}-users'  # Generates: tokyo-real-estate-ai-users
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: email
@@ -319,7 +311,7 @@ Resources:
   UserPreferencesTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub '${AWS::StackName}-user-preferences'
+      TableName: !Sub '${AWS::StackName}-user-preferences'  # Generates: tokyo-real-estate-ai-user-preferences
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: user_id
@@ -365,8 +357,8 @@ Resources:
         TargetArn: !GetAtt URLCollectorDeadLetterQueue.Arn
       Environment:
         Variables:
-          DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
-          URL_TRACKING_TABLE: !Ref URLTrackingDB
+          DYNAMODB_TABLE: !Ref RealEstateAnalysisDB  # tokyo-real-estate-ai-analysis-db
+          URL_TRACKING_TABLE: !Ref URLTrackingDB  # tokyo-real-estate-ai-urls
           MAX_CONCURRENT_AREAS: '5'
           AREAS: ''  # Empty = auto-detect all areas
 
@@ -391,8 +383,8 @@ Resources:
       Environment:
         Variables:
           OUTPUT_BUCKET: !Ref OutputBucket
-          DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
-          URL_TRACKING_TABLE: !Ref URLTrackingDB
+          DYNAMODB_TABLE: !Ref RealEstateAnalysisDB  # tokyo-real-estate-ai-analysis-db
+          URL_TRACKING_TABLE: !Ref URLTrackingDB  # tokyo-real-estate-ai-urls
           MAX_PROPERTIES: '0'  # 0 = unlimited
           MAX_RUNTIME_MINUTES: '14'  # Stop before Lambda timeout
 
@@ -416,7 +408,7 @@ Resources:
         TargetArn: !GetAtt PropertyAnalyzerDeadLetterQueue.Arn
       Environment:
         Variables:
-          DYNAMODB_TABLE: !Ref RealEstateAnalysisDB
+          DYNAMODB_TABLE: !Ref RealEstateAnalysisDB  # tokyo-real-estate-ai-analysis-db
           DAYS_BACK: '7'  # Analyze properties from last 7 days by default
           ANALYZE_ALL: 'false'  # Set to 'true' to analyze all properties
 
@@ -442,7 +434,7 @@ Resources:
         - !Ref OpenAILayer
       Environment:
         Variables:
-          PREFERENCES_TABLE: !Ref UserPreferencesTable
+          PREFERENCES_TABLE: !Ref UserPreferencesTable  # tokyo-real-estate-ai-user-preferences
           PROPERTIES_TABLE: !Ref RealEstateAnalysisDB
           DATA_BUCKET: !Ref OutputBucket
           OPENAI_SECRET_NAME: ai-scraper/openai-api-key
@@ -464,6 +456,7 @@ Resources:
       Environment:
         Variables:
           PROPERTIES_TABLE: !Ref RealEstateAnalysisDB
+          PREFERENCES_TABLE: !Ref UserPreferencesTable  # tokyo-real-estate-ai-user-preferences
 
   # Favorites API Lambda Function
   FavoritesAPIFunction:
@@ -481,7 +474,10 @@ Resources:
       MemorySize: 512
       Environment:
         Variables:
-          PREFERENCES_TABLE: !Ref UserPreferencesTable
+          PREFERENCES_TABLE: !Ref UserPreferencesTable  # tokyo-real-estate-ai-user-preferences
+          PROPERTIES_TABLE: !Ref RealEstateAnalysisDB
+          OUTPUT_BUCKET: !Ref OutputBucket
+          FAVORITE_ANALYZER_FUNCTION: !Ref FavoriteAnalyzerFunction
 
   # Register User Lambda Function
   RegisterUserFunction:
@@ -501,7 +497,7 @@ Resources:
         - !Ref BcryptLayer
       Environment:
         Variables:
-          USERS_TABLE: !Ref UsersTable
+          USERS_TABLE: !Ref UsersTable  # tokyo-real-estate-ai-users
 
   # Login User Lambda Function
   LoginUserFunction:
@@ -521,15 +517,18 @@ Resources:
         - !Ref BcryptLayer
       Environment:
         Variables:
-          USERS_TABLE: !Ref UsersTable
+          USERS_TABLE: !Ref UsersTable  # tokyo-real-estate-ai-users
 
-  # Event Source Mapping for Favorite Analyzer
-  FavoriteAnalyzerEventSourceMapping:
-    Type: AWS::Lambda::EventSourceMapping
+
+  # Lambda Invoke Permission for FavoriteAnalyzer
+  FavoriteAnalyzerInvokePermission:
+    Type: AWS::Lambda::Permission
     Properties:
-      EventSourceArn: !GetAtt FavoriteAnalysisQueue.Arn
-      FunctionName: !GetAtt FavoriteAnalyzerFunction.Arn
-      BatchSize: 1
+      FunctionName: !Ref FavoriteAnalyzerFunction
+      Action: lambda:InvokeFunction
+      Principal: lambda.amazonaws.com
+      SourceArn: !GetAtt FavoritesAPIFunction.Arn
+
 
   # Dead Letter Queues for Lambda functions
 
@@ -551,22 +550,7 @@ Resources:
       QueueName: !Sub '${AWS::StackName}-property-analyzer-dlq'
       MessageRetentionPeriod: 1209600  # 14 days
 
-  # SQS Queue for Favorite Analysis Processing
-  FavoriteAnalysisQueue:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: !Sub '${AWS::StackName}-favorite-analysis'
-      VisibilityTimeout: 900
-      MessageRetentionPeriod: 1209600
-      RedrivePolicy:
-        deadLetterTargetArn: !GetAtt FavoriteAnalysisDLQ.Arn
-        maxReceiveCount: 3
 
-  FavoriteAnalysisDLQ:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: !Sub '${AWS::StackName}-favorite-analysis-dlq'
-      MessageRetentionPeriod: 1209600  # 14 days
 
 
 Outputs:
@@ -655,15 +639,6 @@ Outputs:
     Export:
       Name: !Sub "${AWS::StackName}-UsersTableArn"
   
-  FavoriteAnalysisQueueUrl:
-    Value: !Ref FavoriteAnalysisQueue
-    Export:
-      Name: !Sub "${AWS::StackName}-FavoriteAnalysisQueueUrl"
-  
-  FavoriteAnalysisQueueArn:
-    Value: !GetAtt FavoriteAnalysisQueue.Arn
-    Export:
-      Name: !Sub "${AWS::StackName}-FavoriteAnalysisQueueArn"
   
   OutputBucketName:
     Value: !Ref OutputBucket

@@ -32,9 +32,30 @@ class HiddenManager {
         }
     }
     
-    loadFromStorage() {
+    async loadUserHidden() {
+        if (!this.state.currentUser) {
+            this.loadHiddenFromStorage();
+            return;
+        }
+        
+        try {
+            const hiddenList = await this.api.loadUserHidden(this.state.currentUser.email);
+            const hiddenIds = hiddenList.map(hidden => hidden.property_id);
+            this.state.setHidden(hiddenIds);
+            this.updateHiddenCount();
+        } catch (error) {
+            console.error('Failed to load user hidden properties:', error);
+            this.loadHiddenFromStorage();
+        }
+    }
+    
+    loadHiddenFromStorage() {
         const hidden = StorageManager.loadHidden();
         this.state.setHidden(hidden);
+    }
+    
+    loadFromStorage() {
+        this.loadHiddenFromStorage();
     }
     
     updateHiddenCount() {
@@ -54,10 +75,32 @@ class HiddenManager {
             
             // Update local state
             this.state.removeHidden(propertyId);
+            StorageManager.saveHidden(this.state.hidden);
             this.updateHiddenCount();
             
-            // Refresh the hidden list display
-            this.loadHidden();
+            // Animate removal from hidden view
+            const card = document.querySelector(`.hidden-card[data-property-id="${propertyId}"]`);
+            if (card) {
+                card.style.transition = 'all 0.3s';
+                card.style.opacity = '0';
+                card.style.transform = 'translateX(-100%)';
+                setTimeout(() => {
+                    card.remove();
+                    // Check if no hidden items left
+                    if (document.querySelectorAll('.hidden-card').length === 0) {
+                        document.querySelector('.hidden-container').innerHTML = 
+                            '<div style="padding:40px; text-align:center; color:#999;">No hidden items.</div>';
+                    }
+                }, 300);
+            } else {
+                // Fallback: refresh the hidden list display
+                this.loadHidden();
+            }
+            
+            // Refresh properties if on that tab to show restored property
+            if (document.getElementById('properties-tab').classList.contains('active')) {
+                window.app.properties.applyFilters();
+            }
             
         } catch (error) {
             console.error('Error removing hidden property:', error);

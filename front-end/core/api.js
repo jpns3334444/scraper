@@ -83,6 +83,22 @@ class PropertyAPI {
         return data.favorites || [];
     }
     
+    // Hidden API
+    async loadUserHidden(userEmail) {
+        const response = await fetch(`${this.favoritesApiUrl}/hidden/user/${userEmail}`, {
+            headers: { 
+                'X-User-Email': userEmail
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Failed to load hidden: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        return data.hidden || [];
+    }
+    
     async addFavorite(propertyId, userEmail) {
         const response = await fetch(`${this.favoritesApiUrl}/favorites`, {
             method: 'POST',
@@ -181,5 +197,21 @@ class PropertyAPI {
         }
         
         return true;
+    }
+    
+    async fetchFavoriteAnalysis(userEmail, propertyId) {
+        const url = `${this.favoritesApiUrl}/favorites/${encodeURIComponent(userEmail)}/${encodeURIComponent(propertyId)}`;
+        const response = await fetch(url, {
+            headers: { 
+                'X-User-Email': userEmail
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Failed analysis fetch: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        return data; // {analysis_result, property_images, property_summary}
     }
 }

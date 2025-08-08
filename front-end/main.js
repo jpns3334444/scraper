@@ -21,6 +21,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     
     const favoritesManager = new FavoritesManager(api, appState);
     const favoritesView = new FavoritesView();
+    const analysisView = new AnalysisView();
     
     const hiddenManager = new HiddenManager(api, appState);
     const hiddenView = new HiddenView();
@@ -30,7 +31,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     authModal.setAuthManager(authManager);
     
     propertiesManager.setView(propertiesView);
-    favoritesManager.setView(favoritesView);
+    favoritesManager.setViews(favoritesView, analysisView);
     hiddenManager.setView(hiddenView);
     
     propertiesView.init();
@@ -74,8 +75,12 @@ document.addEventListener('DOMContentLoaded', async function() {
         // Check authentication
         authManager.checkAuth();
         
-        // Load hidden items from storage
-        hiddenManager.loadFromStorage();
+        // Load hidden items (from API for logged-in users, storage for anonymous)
+        if (authManager.getCurrentUser()) {
+            await hiddenManager.loadUserHidden();
+        } else {
+            hiddenManager.loadFromStorage();
+        }
         
         // Initialize router and tabs
         router.init();

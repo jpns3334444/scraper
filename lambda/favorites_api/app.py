@@ -1,5 +1,12 @@
 import json
 import boto3
+
+# Import centralized configuration
+try:
+    from config_loader import get_config
+    config = get_config()
+except ImportError:
+    config = None  # Fallback to environment variables
 import os
 from datetime import datetime
 from decimal import Decimal
@@ -9,13 +16,12 @@ sys.path.append('/opt')
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 dynamodb = boto3.resource('dynamodb')
-sqs = boto3.client('sqs')
+lambda_client = boto3.client('lambda')
 s3 = boto3.client('s3')
 
 preferences_table = dynamodb.Table(os.environ['PREFERENCES_TABLE'])
 properties_table = dynamodb.Table(os.environ['PROPERTIES_TABLE'])
-queue_url = os.environ['ANALYSIS_QUEUE_URL']
-output_bucket = os.environ.get('OUTPUT_BUCKET', 'tokyo-real-estate-ai-data')
+output_bucket = config.get_env_var('OUTPUT_BUCKET') if config else os.environ.get('OUTPUT_BUCKET', 'tokyo-real-estate-ai-data')
 
 
 def decimal_to_float(obj):
@@ -99,6 +105,12 @@ def lambda_handler(event, context):
             path_params = event.get('pathParameters', {})
             if path_params and 'userId' in path_params:
                 return get_user_preferences(event, path_params['userId'], 'hidden')
+        elif method == 'GET' and path.startswith('/favorites/') and '/favorites/user/' not in path:
+            # Handle GET /favorites/{userId}/{propertyId} for analysis
+            path_parts = path.strip('/').split('/')
+            if len(path_parts) == 3 and path_parts[0] == 'favorites':
+                user_id, property_id = path_parts[1], unquote(path_parts[2])
+                return get_favorite_analysis(event, user_id, property_id)
         
         # If no route matched, return 404
         return {
@@ -199,19 +211,17 @@ def add_preference(event, user_id, preference_type):
         
         preferences_table.put_item(Item=preference_item)
         
-        # Send to analysis queue for favorites only
+        # Invoke analyzer Lambda directly for favorites only
         if preference_type == 'favorite':
             try:
-                sqs.send_message(
-                    QueueUrl=queue_url,
-                    MessageBody=json.dumps({
-                        'user_id': user_id,
-                        'property_id': property_id
-                    })
+                lambda_client.invoke(
+                    FunctionName=os.environ['FAVORITE_ANALYZER_FUNCTION'],
+                    InvocationType='Event',  # async
+                    Payload=json.dumps({'user_id': user_id, 'property_id': property_id})
                 )
             except Exception as e:
-                print(f"Warning: Failed to send SQS message: {str(e)}")
-                # Don't fail the request if SQS fails
+                print(f"Warning: Failed to invoke analyzer: {e}")
+                # Don't fail the request if analyzer fails
         
         return {
             "statusCode": 200,
@@ -221,6 +231,87 @@ def add_preference(event, user_id, preference_type):
                 "Access-Control-Allow-Credentials": "true"
             },
             "body": json.dumps({'success': True, 'user_id': user_id, 'property_id': property_id})
+        }
+        
+    except Exception as e:
+        print("ERROR:", e)
+        import traceback
+        print(traceback.format_exc())
+        return {
+            "statusCode": 500,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": origin_header,
+                "Access-Control-Allow-Credentials": "true"
+            },
+            "body": json.dumps({'error': str(e)})
+        }
+
+
+def get_favorite_analysis(event, user_id, property_id):
+    """Get analysis result and property images for a favorite"""
+    # Determine origin_header at runtime
+    origin_header = event.get("headers", {}).get("origin", "*")
+    
+    try:
+        # Get the favorite item with analysis
+        favorite_response = preferences_table.get_item(
+            Key={
+                'user_id': user_id,
+                'property_id': property_id
+            }
+        )
+        
+        if 'Item' not in favorite_response:
+            return {
+                "statusCode": 404,
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": origin_header,
+                    "Access-Control-Allow-Credentials": "true"
+                },
+                "body": json.dumps({'error': 'Favorite not found'})
+            }
+        
+        favorite_item = favorite_response['Item']
+        
+        # Get property data for images
+        property_response = properties_table.get_item(
+            Key={'property_id': property_id, 'sort_key': 'META'}
+        )
+        property_data = property_response.get('Item', {})
+        
+        # Generate presigned URLs for property images
+        property_images = []
+        if property_data.get('photo_filenames'):
+            for s3_key in property_data['photo_filenames'].split('|')[:5]:
+                if s3_key.strip():
+                    try:
+                        url = s3.generate_presigned_url(
+                            'get_object',
+                            Params={'Bucket': output_bucket, 'Key': s3_key.strip()},
+                            ExpiresIn=3600
+                        )
+                        property_images.append(url)
+                    except Exception as e:
+                        print(f"Warning: Failed to generate presigned URL for {s3_key}: {e}")
+        
+        # Convert Decimals to floats for JSON serialization
+        analysis_result = decimal_to_float(favorite_item.get('analysis_result', {}))
+        property_summary = decimal_to_float(favorite_item.get('property_summary', {}))
+        
+        return {
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": origin_header,
+                "Access-Control-Allow-Credentials": "true"
+            },
+            "body": json.dumps({
+                "analysis_result": analysis_result,
+                "property_images": property_images,
+                "property_summary": property_summary
+            })
         }
         
     except Exception as e:
@@ -366,6 +457,87 @@ def get_user_preferences(event, user_id, preference_type):
                 "Access-Control-Allow-Credentials": "true"
             },
             "body": json.dumps({result_key: preferences})
+        }
+        
+    except Exception as e:
+        print("ERROR:", e)
+        import traceback
+        print(traceback.format_exc())
+        return {
+            "statusCode": 500,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": origin_header,
+                "Access-Control-Allow-Credentials": "true"
+            },
+            "body": json.dumps({'error': str(e)})
+        }
+
+
+def get_favorite_analysis(event, user_id, property_id):
+    """Get analysis result and property images for a favorite"""
+    # Determine origin_header at runtime
+    origin_header = event.get("headers", {}).get("origin", "*")
+    
+    try:
+        # Get the favorite item with analysis
+        favorite_response = preferences_table.get_item(
+            Key={
+                'user_id': user_id,
+                'property_id': property_id
+            }
+        )
+        
+        if 'Item' not in favorite_response:
+            return {
+                "statusCode": 404,
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": origin_header,
+                    "Access-Control-Allow-Credentials": "true"
+                },
+                "body": json.dumps({'error': 'Favorite not found'})
+            }
+        
+        favorite_item = favorite_response['Item']
+        
+        # Get property data for images
+        property_response = properties_table.get_item(
+            Key={'property_id': property_id, 'sort_key': 'META'}
+        )
+        property_data = property_response.get('Item', {})
+        
+        # Generate presigned URLs for property images
+        property_images = []
+        if property_data.get('photo_filenames'):
+            for s3_key in property_data['photo_filenames'].split('|')[:5]:
+                if s3_key.strip():
+                    try:
+                        url = s3.generate_presigned_url(
+                            'get_object',
+                            Params={'Bucket': output_bucket, 'Key': s3_key.strip()},
+                            ExpiresIn=3600
+                        )
+                        property_images.append(url)
+                    except Exception as e:
+                        print(f"Warning: Failed to generate presigned URL for {s3_key}: {e}")
+        
+        # Convert Decimals to floats for JSON serialization
+        analysis_result = decimal_to_float(favorite_item.get('analysis_result', {}))
+        property_summary = decimal_to_float(favorite_item.get('property_summary', {}))
+        
+        return {
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": origin_header,
+                "Access-Control-Allow-Credentials": "true"
+            },
+            "body": json.dumps({
+                "analysis_result": analysis_result,
+                "property_images": property_images,
+                "property_summary": property_summary
+            })
         }
         
     except Exception as e:

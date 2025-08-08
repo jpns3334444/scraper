@@ -3,6 +3,13 @@
 URL Collector Lambda - Collects URLs from all areas and tracks new ones
 """
 import os
+
+# Import centralized configuration
+try:
+    from config_loader import get_config
+    config = get_config()
+except ImportError:
+    config = None  # Fallback to environment variables
 import time
 import json
 import random
@@ -87,8 +94,8 @@ def parse_lambda_event(event):
         'session_id': event.get('session_id', os.environ.get('SESSION_ID', f'url-collector-{int(time.time())}')),
         'max_concurrent_areas': event.get('max_concurrent_areas', int(os.environ.get('MAX_CONCURRENT_AREAS', '5'))),
         'areas': event.get('areas', os.environ.get('AREAS', '')),
-        'dynamodb_table': event.get('dynamodb_table', os.environ.get('DYNAMODB_TABLE', 'tokyo-real-estate-ai-analysis-db')),
-        'url_tracking_table': event.get('url_tracking_table', os.environ.get('URL_TRACKING_TABLE', 'tokyo-real-estate-ai-urls')),
+        'dynamodb_table': event.get('dynamodb_table', config.get_env_var('DYNAMODB_TABLE') if config else os.environ.get('DYNAMODB_TABLE', 'tokyo-real-estate-ai-analysis-db')),
+        'url_tracking_table': event.get('url_tracking_table', config.get_env_var('URL_TRACKING_TABLE') if config else os.environ.get('URL_TRACKING_TABLE', 'tokyo-real-estate-ai-urls')),
         'log_level': event.get('log_level', os.environ.get('LOG_LEVEL', 'INFO'))
     }
 

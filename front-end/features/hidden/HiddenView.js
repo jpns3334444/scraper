@@ -73,19 +73,8 @@ class HiddenView {
 }
 
 // Add global function for restore
-function restoreProperty(propertyId) {
-    if (window.app && window.app.properties) {
-        // Remove from hidden
-        window.app.state.removeHidden(propertyId);
-        StorageManager.saveHidden(window.app.state.hidden);
-        
-        // Update UI
-        window.app.hidden.updateHiddenCount();
-        window.app.hidden.loadHidden();
-        
-        // Refresh properties if on that tab
-        if (document.getElementById('properties-tab').classList.contains('active')) {
-            window.app.properties.applyFilters();
-        }
+async function restoreProperty(propertyId) {
+    if (window.app && window.app.hidden) {
+        await window.app.hidden.removeHidden(propertyId);
     }
 }

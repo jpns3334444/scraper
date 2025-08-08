@@ -1,6 +1,13 @@
 import json
 import logging
 import os
+
+# Load environment variables from .env if available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not available, use existing environment
 from decimal import Decimal
 from datetime import datetime
 import boto3
@@ -14,7 +21,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 dynamodb = boto3.resource('dynamodb')
-table_name = os.environ.get('DYNAMODB_TABLE', 'tokyo-real-estate-ai-RealEstateAnalysis')
+table_name = os.environ.get('PROPERTIES_TABLE', 'tokyo-real-estate-ai-analysis-db')
 table = dynamodb.Table(table_name)
 
 # S3 configuration for image URLs
@@ -200,16 +207,16 @@ def get_user_favorite_ids(user_id):
         return set()
     
     try:
-        favorites_table_name = os.environ.get('FAVORITES_TABLE')
-        if not favorites_table_name:
+        preferences_table_name = os.environ.get('PREFERENCES_TABLE')
+        if not preferences_table_name:
             return set()
         
-        favorites_table = dynamodb.Table(favorites_table_name)
+        prefs_table = dynamodb.Table(preferences_table_name)
         
-        response = favorites_table.query(
-            IndexName='user-favorites-index',
-            KeyConditionExpression='user_id = :uid',
-            ExpressionAttributeValues={':uid': user_id},
+        response = prefs_table.query(
+            IndexName='user-type-index',
+            KeyConditionExpression='user_id = :uid AND preference_type = :fav',
+            ExpressionAttributeValues={':uid': user_id, ':fav': 'favorite'},
             ProjectionExpression='property_id'
         )
         

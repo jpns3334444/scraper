@@ -1,5 +1,12 @@
 import json
 import boto3
+
+# Import centralized configuration
+try:
+    from config_loader import get_config
+    config = get_config()
+except ImportError:
+    config = None  # Fallback to environment variables
 import bcrypt
 from datetime import datetime
 import os
@@ -8,7 +15,7 @@ sys.path.append('/opt')
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 dynamodb = boto3.resource('dynamodb')
-users_table_name = os.environ.get('USERS_TABLE', 'tokyo-real-estate-users')
+users_table_name = config.get_env_var('USERS_TABLE') if config else os.environ.get('USERS_TABLE', 'tokyo-real-estate-ai-users')
 users_table = dynamodb.Table(users_table_name)
 
 

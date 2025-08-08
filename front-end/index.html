@@ -19,6 +19,7 @@
     <link rel="stylesheet" href="shared/styles/components.css">
     <link rel="stylesheet" href="features/properties/properties.css">
     <link rel="stylesheet" href="features/favorites/favorites.css">
+    <link rel="stylesheet" href="features/favorites/analysis.css">
     <link rel="stylesheet" href="features/auth/auth.css">
     <link rel="stylesheet" href="features/hidden/hidden.css">
     
@@ -151,6 +152,12 @@
         <!-- Hidden Tab -->
         <div id="hidden-tab" class="tab-pane" style="display: none;">
             <ul class="fav-list" id="hiddenList"></ul>
+        </div>
+        
+        <!-- Analysis Page (no tab button) -->
+        <div id="analysis-tab" class="tab-pane" style="display: none;">
+            <div id="analysisContent"></div>
+            <button class="ink-btn" onclick="window.app.router.switchTab('favorites')">Back to Favorites</button>
         </div>
     </div>
     
@@ -536,6 +543,7 @@
     <script src="features/properties/PropertiesView.js"></script>
     <script src="features/favorites/FavoritesManager.js"></script>
     <script src="features/favorites/FavoritesView.js"></script>
+    <script src="features/favorites/AnalysisView.js"></script>
     <script src="features/hidden/HiddenManager.js"></script>
     <script src="features/hidden/HiddenView.js"></script>
     <script src="main.js"></script>

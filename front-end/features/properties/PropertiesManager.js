@@ -32,6 +32,9 @@ class PropertiesManager {
             
             this.state.filteredProperties = [...this.state.allProperties];
             
+            // Apply filters (including hidden properties filter) BEFORE displaying
+            this.applyFilters();
+            
             // Hide loading and show table immediately
             DOMUtils.hideElement('loading');
             DOMUtils.showElement('tableContainer');
@@ -81,7 +84,11 @@ class PropertiesManager {
             
             // Update filtered properties if no filters are active
             if (!this.state.hasActiveFilters()) {
-                this.state.filteredProperties.push(...filteredItems);
+                // Filter out hidden properties from new items before adding them
+                const visibleItems = filteredItems.filter(property => 
+                    !this.state.hidden.has(property.property_id)
+                );
+                this.state.filteredProperties.push(...visibleItems);
                 // Mark that a resort is needed but don't do it immediately during background loading
                 this.state.needsResort = true;
                 
@@ -296,16 +303,38 @@ class PropertiesManager {
     async toggleHidden(propertyId, button) {
         event.stopPropagation();
         
-        this.state.toggleHidden(propertyId);
-        
-        // Save to storage
-        StorageManager.saveHidden(this.state.hidden);
-        
-        // Update UI
-        this.updateHiddenCount();
-        
-        // Re-apply filters to hide the property
-        this.applyFilters();
+        try {
+            // Check if property is currently hidden
+            const isCurrentlyHidden = this.state.hidden.has(propertyId);
+            
+            if (isCurrentlyHidden) {
+                // Use HiddenManager to properly remove (handles both API and local storage)
+                if (window.app && window.app.hidden) {
+                    await window.app.hidden.removeHidden(propertyId);
+                }
+            } else {
+                // Add to hidden - handle both logged-in and anonymous users
+                if (this.state.currentUser) {
+                    await this.api.addHidden(propertyId, this.state.currentUser.email);
+                }
+                
+                // Update local state
+                this.state.addHidden(propertyId);
+                
+                // Save to storage for anonymous users
+                StorageManager.saveHidden(this.state.hidden);
+            }
+            
+            // Update UI
+            this.updateHiddenCount();
+            
+            // Re-apply filters to hide/show the property
+            this.applyFilters();
+            
+        } catch (error) {
+            console.error('Error toggling hidden property:', error);
+            alert('Error updating hidden status');
+        }
     }
     
     updateHiddenCount() {

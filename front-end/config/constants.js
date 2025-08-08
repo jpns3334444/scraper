@@ -1,3 +1,7 @@
+// This file contains frontend constants
+// Values should match .env file in the repository root
+// API_URL is dynamically updated during deployment
+
 /**
  * constants.js
  * Application configuration constants
@@ -24,15 +28,13 @@ const STATUS = {
     COMPLETED: 'completed'
 };
 
-// Verdict Types
+// Verdict Types (should match .env file)
 const VERDICT = {
-    BUY_CANDIDATE: 'BUY_CANDIDATE',
-    WATCH: 'WATCH',
-    REJECT: 'REJECT',
-    BUY: 'buy',
-    STRONG_BUY: 'strong_buy',
-    HOLD: 'hold',
-    PASS: 'pass'
+    BUY_CANDIDATE: 'BUY_CANDIDATE',  // VERDICT_BUY_CANDIDATE in .env
+    WATCH: 'WATCH',                  // VERDICT_WATCH in .env
+    REJECT: 'REJECT',                // VERDICT_REJECT in .env
+    BUY: 'BUY',                      // VERDICT_BUY in .env
+    HOLD: 'HOLD'                     // VERDICT_HOLD in .env
 };
 
 // Sort Directions
@@ -45,7 +47,8 @@ const SORT_DIRECTION = {
 const TABS = {
     PROPERTIES: 'properties',
     FAVORITES: 'favorites',
-    HIDDEN: 'hidden'
+    HIDDEN: 'hidden',
+    ANALYSIS: 'analysis'
 };
 
 // Local Storage Keys
