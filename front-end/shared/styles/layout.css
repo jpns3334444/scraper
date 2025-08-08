@@ -4,9 +4,9 @@
  */
 
  .container {
-    max-width: 1000px;
-    margin: 0 auto;
-    padding: var(--space-xl) calc(var(--space-md) * 0.3);
+    max-width: none;
+    margin: 0;
+    padding: var(--space-xl) 50px;
     position: relative;
     z-index: 10;
 }
@@ -125,8 +125,8 @@ h1::after {
     content: '';
     position: absolute;
     bottom: -5px;
-    left: 60px;
-    right: 60px;
+    left: 10px;
+    right: 10px;
     height: 3px;
     background: linear-gradient(
         to bottom,
@@ -183,11 +183,8 @@ h1::after {
     justify-content: center;
 }
 
-/* Mobile responsiveness */
+/* Mobile responsiveness handled in properties.css */
 @media (max-width: 768px) {
-    .container {
-        padding: var(--space-lg) calc(var(--space-md) * 0.3);
-    }
     
     h1 {
         font-size: 1.618rem;
@@ -206,8 +203,4 @@ h1::after {
         padding-bottom: var(--space-sm);
     }
     
-    .table-container {
-        margin-left: calc(var(--space-md) * -1);
-        margin-right: calc(var(--space-md) * -1);
-    }
 }

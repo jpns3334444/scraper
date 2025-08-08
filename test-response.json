@@ -1,1 +1,0 @@
-{"statusCode": 400, "headers": {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-User-Id,X-User-Email", "Access-Control-Allow-Methods": "POST,OPTIONS"}, "body": "{\"success\": false, \"error\": \"Email and password are required\"}"}

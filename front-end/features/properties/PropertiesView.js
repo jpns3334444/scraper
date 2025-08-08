@@ -77,9 +77,6 @@ class PropertiesView {
                             <span class="sort-arrows" id="sort-ward_median_price_per_sqm">▼</span>
                         </div>
                     </th>
-                    <th>
-                        <div class="column-header">Station</div>
-                    </th>
                     <th class="sortable" onclick="sortTable('station_distance_minutes')" style="text-align: center;">
                         <div class="column-header">
                             Walk
@@ -160,7 +157,6 @@ class PropertiesView {
         const ward = property.ward || '<span class="no-data">—</span>';
         const wardDiscount = formatPercent(property.ward_discount_pct);
         const wardMedian = formatPrice(property.ward_median_price_per_sqm);
-        const closestStation = property.closest_station || '<span class="no-data">—</span>';
         const walkTime = property.station_distance_minutes 
             ? `${property.station_distance_minutes}min`
             : '<span class="no-data">—</span>';
@@ -196,7 +192,6 @@ class PropertiesView {
                 <td>${ward}</td>
                 <td class="percent">${wardDiscount}</td>
                 <td class="price">${wardMedian}</td>
-                <td>${closestStation}</td>
                 <td class="numeric">${walkTime}</td>
                 <td class="numeric">${floor}</td>
                 <td class="numeric">${yearBuilt}</td>

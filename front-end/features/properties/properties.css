@@ -3,9 +3,9 @@
  * Clean, simple properties table with proper alignment
  */
 
-/* Table wrapper with 50px padding */
+/* Table wrapper - padding handled by container */
 .properties-table-wrapper {
-    padding: 0 50px;
+    padding: 0;
     width: 100%;
     box-sizing: border-box;
 }
@@ -181,7 +181,7 @@
 
 /* Results info styling */
 .results-info {
-    padding: 0 50px;
+    padding: 0;
     margin-bottom: 20px;
     background: var(--paper-gray);
     border-left: 3px solid var(--ink-faint);
@@ -196,7 +196,7 @@
 
 /* Pagination wrapper */
 .pagination-wrapper {
-    padding: 0 50px;
+    padding: 0;
     margin-top: 30px;
     text-align: center;
     border-top: 1px solid var(--ink-faint);
@@ -247,10 +247,8 @@
 
 /* Responsive design - no horizontal scrolling */
 @media (max-width: 1200px) {
-    .properties-table-wrapper,
-    .results-info,
-    .pagination-wrapper {
-        padding: 0 30px;
+    .container {
+        padding: var(--space-xl) 30px;
     }
     
     .properties-table {
@@ -274,10 +272,8 @@
 }
 
 @media (max-width: 768px) {
-    .properties-table-wrapper,
-    .results-info,
-    .pagination-wrapper {
-        padding: 0 20px;
+    .container {
+        padding: var(--space-lg) 20px;
     }
     
     .properties-table {
