@@ -1,110 +1,33 @@
 /**
  * properties.css
- * Fixed table alignment with proper column widths
+ * MINIMAL - NO SPACING OR ALIGNMENT
  */
 
-/* Ensure table takes full width */
+/* Basic table */
 .table-container {
     overflow-x: auto;
 }
 
 .table-container table {
     width: 100%;
-    table-layout: auto;
     min-width: 1200px;
-}
-
-/* Column widths and alignment */
-th, td {
-    padding: var(--space-sm);
-    white-space: nowrap;
-}
-
-/* Actions column */
-th:nth-child(1) { width: 70px; text-align: center; }
-td:nth-child(1) { width: 70px; text-align: center; }
-
-/* Price columns - right aligned */
-th:nth-child(2), th:nth-child(3), th:nth-child(4), th:nth-child(7) { text-align: right; }
-td:nth-child(2), td:nth-child(3), td:nth-child(4), td:nth-child(7) { text-align: right; }
-
-/* Ward column */
-th:nth-child(5) { text-align: left; min-width: 100px; }
-td:nth-child(5) { text-align: left; }
-
-/* Percent column - center */
-th:nth-child(6) { text-align: center; width: 80px; }
-td:nth-child(6) { text-align: center; }
-
-/* Station column */
-th:nth-child(8) { text-align: left; min-width: 120px; }
-td:nth-child(8) { text-align: left; }
-
-/* Numeric columns - center */
-th:nth-child(9), th:nth-child(10), th:nth-child(11), th:nth-child(12) { text-align: center; width: 60px; }
-td:nth-child(9), td:nth-child(10), td:nth-child(11), td:nth-child(12) { text-align: center; }
-
-/* Light column */
-th:nth-child(13) { text-align: left; min-width: 80px; }
-td:nth-child(13) { text-align: left; }
-
-/* Verdict column */
-th:nth-child(14) { text-align: center; min-width: 100px; }
-td:nth-child(14) { text-align: center; }
-
-/* Column headers with proper spacing */
-.column-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-xs);
-    width: 100%;
-}
-
-/* Headers that need different alignment */
-th:nth-child(2) .column-header,
-th:nth-child(3) .column-header,
-th:nth-child(4) .column-header,
-th:nth-child(7) .column-header {
-    justify-content: flex-end;
-}
-
-th:nth-child(6) .column-header,
-th:nth-child(9) .column-header,
-th:nth-child(10) .column-header,
-th:nth-child(11) .column-header,
-th:nth-child(12) .column-header,
-th:nth-child(14) .column-header {
-    justify-content: center;
-}
-
-/* Sort arrows should not disappear */
-.sort-arrows {
-    margin-left: 4px;
-    font-size: 10px;
-    color: var(--ink-faint);
-    transition: color 0.3s ease;
-    flex-shrink: 0;
 }
 
 /* Data cell specific styles */
 td.price {
-    text-align: right;
     font-variant-numeric: tabular-nums;
 }
 
 td.percent {
-    text-align: center;
     font-family: monospace;
     font-size: 12px;
 }
 
 td.numeric {
-    text-align: center;
+    font-variant-numeric: tabular-nums;
 }
 
 td.age {
-    text-align: center;
     color: var(--ink-light);
 }
 
@@ -124,7 +47,6 @@ td.age {
 
 @media (max-width: 768px) {
     th, td {
-        padding: var(--space-xs);
         font-size: 11px;
     }
     

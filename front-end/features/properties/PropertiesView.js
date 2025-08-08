@@ -24,7 +24,7 @@ class PropertiesView {
         const tableContainer = document.getElementById('tableContainer');
         if (!tableContainer) return;
 
-        // Create the table with properly aligned headers
+        // Create the table with properly aligned headers - 14 columns total
         tableContainer.innerHTML = `
             <table>
                 <thead>
@@ -80,6 +80,11 @@ class PropertiesView {
                                 <span class="sort-arrows" id="sort-ward_median_price_per_sqm">▼</span>
                             </div>
                         </th>
+                        <th>
+                            <div class="column-header">
+                                Station
+                            </div>
+                        </th>
                         <th class="sortable" onclick="sortTable('station_distance_minutes')">
                             <div class="column-header">
                                 Walk
@@ -94,7 +99,7 @@ class PropertiesView {
                         </th>
                         <th class="sortable" onclick="sortTable('year_built')">
                             <div class="column-header">
-                                Year Built
+                                Year
                                 <span class="sort-arrows" id="sort-year_built">▼</span>
                             </div>
                         </th>
@@ -177,6 +182,7 @@ class PropertiesView {
         const hasLink = property.listing_url && property.listing_url.trim();
         const isFavorited = appState.favorites.has(property.property_id);
         
+        // Now rendering 14 columns to match the 14 headers
         return `
             <tr ${hasLink ? `onclick="openListing(event, '${property.listing_url}')"` : 'class="no-link"'} data-property-id="${property.property_id}">
                 <td style="text-align: center; white-space: nowrap;">
@@ -197,6 +203,7 @@ class PropertiesView {
                 <td>${ward}</td>
                 <td class="percent">${wardDiscount}</td>
                 <td class="price">${wardMedian}</td>
+                <td>${closestStation}</td>
                 <td class="numeric">${walkTime}</td>
                 <td class="numeric">${floor}</td>
                 <td class="numeric">${yearBuilt}</td>
@@ -234,9 +241,10 @@ class PropertiesView {
                     <div class="skeleton-cell" style="width: 90px;"></div>
                     <div class="skeleton-cell" style="width: 60px;"></div>
                     <div class="skeleton-cell" style="width: 75px;"></div>
+                    <div class="skeleton-cell" style="width: 100px;"></div>
                     <div class="skeleton-cell" style="width: 50px;"></div>
                     <div class="skeleton-cell" style="width: 45px;"></div>
-                    <div class="skeleton-cell" style="width: 70px;"></div>
+                    <div class="skeleton-cell" style="width: 50px;"></div>
                     <div class="skeleton-cell" style="width: 45px;"></div>
                     <div class="skeleton-cell" style="width: 60px;"></div>
                     <div class="skeleton-cell" style="width: 85px;"></div>

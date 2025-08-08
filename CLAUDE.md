@@ -6,11 +6,162 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a comprehensive Tokyo Real Estate Investment Analysis System that scrapes property data from Homes.co.jp, analyzes investment potential using a 12-factor scoring algorithm, and provides a web dashboard for property discovery and user favorites management.
 
+The backend is a serverless application using AWS Lambda functions written in Python, with DynamoDB for data storage and S3 for file storage. The infrastructure is defined in the `ai-stack.yaml` CloudFormation template.
+
+The frontend is a single-page application (SPA) built with vanilla JavaScript that allows users to view, filter, and manage property listings.
+
+## Folder Structure
+
+```
+/
+├── .claude/
+│   └── settings.local.json
+├── .github/
+│   └── workflows/
+│       └── ai-ci.yml
+├── front-end/
+│   ├── .claude/
+│   │   └── settings.local.json
+│   ├── config/
+│   │   └── constants.js
+│   ├── core/
+│   │   ├── api.js
+│   │   ├── router.js
+│   │   └── state.js
+│   ├── features/
+│   │   ├── auth/
+│   │   │   ├── auth.css
+│   │   │   ├── AuthManager.js
+│   │   │   └── AuthModal.js
+│   │   ├── favorites/
+│   │   │   ├── favorites.css
+│   │   │   ├── FavoritesManager.js
+│   │   │   └── FavoritesView.js
+│   │   ├── hidden/
+│   │   │   ├── hidden.css
+│   │   │   ├── HiddenManager.js
+│   │   │   └── HiddenView.js
+│   │   └── properties/
+│   │       ├── properties.css
+│   │       ├── PropertiesManager.js
+│   │       └── PropertiesView.js
+│   ├── shared/
+│   │   ├── components/
+│   │   │   ├── FilterDropdown.js
+│   │   │   ├── Pagination.js
+│   │   │   └── Table.js
+│   │   ├── styles/
+│   │   │   ├── base.css
+│   │   │   ├── components.css
+│   │   │   └── layout.css
+│   │   └── utils/
+│   │       ├── dom.js
+│   │       ├── formatters.js
+│   │       └── storage.js
+│   ├── .frontend-bcrypt-layer-version
+│   ├── backup-monolithic-scripts.html
+│   ├── backup-monolithic-styles.html
+│   ├── deploy-frontend.sh
+│   ├── front-end-stack.yaml
+│   ├── index.html
+│   ├── main.js
+│   ├── test_payload.json
+│   └── test_remove.json
+├── html/
+│   ├── individual-homes-listing.html
+│   └── listingspage.html
+├── lambda/
+│   ├── common/
+│   │   ├── __init__.py
+│   │   └── __pycache__/
+│   ├── dashboard_api/
+│   │   ├── app.py
+│   │   ├── dashboard_api.zip
+│   │   └── requirements.txt
+│   ├── favorite_analyzer/
+│   │   └── app.py
+│   ├── favorites_api/
+│   │   ├── app.py
+│   │   ├── favorites_api.zip
+│   │   └── requirements.txt
+│   ├── legacy/
+│   │   ├── daily_digest/
+│   │   │   └── app.py
+│   │   ├── dynamodb_writer/
+│   │   │   └── app.py
+│   │   ├── etl/
+│   │   │   ├── app.py
+│   │   │   └── __pycache__/
+│   │   ├── llm_batch/
+│   │   │   ├── app.py
+│   │   │   └── requirements.txt
+│   │   ├── prompt_builder/
+│   │   │   ├── app.py
+│   │   │   └── system_prompt.txt
+│   │   ├── report_sender/
+│   │   │   ├── app.py
+│   │   │   ├── email_template.html
+│   │   │   └── requirements.txt
+│   │   ├── snapshot_generator/
+│   │   │   └── app.py
+│   │   └── util/
+│   │       ├── __init__.py
+│   │       ├── config.py
+│   │       ├── metrics.py
+│   │       └── __pycache__/
+│   ├── login_user/
+│   │   ├── app.py
+│   │   └── requirements.txt
+│   ├── property_analyzer/
+│   │   ├── app.py
+│   │   ├── decimal_utils.py
+│   │   ├── README.md
+│   │   └── requirements.txt
+│   ├── property_processor/
+│   │   ├── app.py
+│   │   ├── core_scraper.py
+│   │   ├── dynamodb_utils.py
+│   │   ├── requirements.txt
+│   │   └── __pycache__/
+│   ├── register_user/
+│   │   ├── app.py
+│   │   └── requirements.txt
+│   └── url_collector/
+│       ├── app.py
+│       ├── core_scraper.py
+│       ├── dynamodb_utils.py
+│       ├── listings_debug.csv
+│       ├── requirements.txt
+│       ├── test_regression.py
+│       ├── test_url_regex.py
+│       └── __pycache__/
+├── tests/
+│   └── test_overview_parser.py
+├── .bcrypt-layer-version
+├── .gitignore
+├── .layer-version
+├── ai-stack.yaml
+├── CLAUDE.md
+├── clear-dydb.py
+├── debug_api_gateway.py
+├── deploy-ai.sh
+├── GEMINI.md
+├── test_favorites_fixed.py
+├── test_favorites.py
+├── test_fixed_endpoint.py
+├── test_lambda_direct.json
+├── test_payload.json
+├── test_simple.json
+├── test-response.json
+├── trigger-lambda.sh
+└── update-lambda.sh
+```
+
 ## Key Commands
 
 ### Deployment Commands
 - `./deploy-ai.sh` - Deploy the complete AI stack with Lambda functions, DynamoDB tables, and S3 resources
-- `./dashboard/deploy-dashboard.sh` - Deploy the web dashboard stack with S3 hosting and API Gateway
+- `front-end/deploy-frontend.sh` - Deploy the web dashboard stack with S3 hosting and API Gateway
 - `./update-lambda.sh <lambda_folder>` - Update individual Lambda functions without full redeployment
 
 ### Development Commands
@@ -81,13 +232,13 @@ All Lambda functions follow consistent patterns:
 3. Test regex patterns with `lambda/url_collector/test_url_regex.py`
 
 ### Dashboard Modifications
-1. Frontend code in `dashboard/index.html` (self-contained HTML/CSS/JavaScript)
+1. Frontend code in `front-end/`
 2. Backend API in `lambda/dashboard_api/app.py`
-3. Deploy dashboard with updated API endpoint using `./dashboard/deploy-dashboard.sh`
+3. Deploy dashboard with updated API endpoint using `front-end/deploy-frontend.sh`
 
 ### Infrastructure Changes
 1. Main stack: `ai-stack.yaml` - Core Lambda functions and databases
-2. Dashboard stack: `dashboard/dashboard-stack.yaml` - Web hosting and API Gateway
+2. Dashboard stack: `front-end/front-end-stack.yaml` - Web hosting and API Gateway
 3. Both stacks support parameter overrides for different environments
 
 ## Testing and Debugging
