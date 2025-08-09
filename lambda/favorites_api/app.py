@@ -5,8 +5,10 @@ import boto3
 try:
     from config_loader import get_config
     config = get_config()
-except ImportError:
+    print(f"[DEBUG] Config loaded successfully")
+except ImportError as e:
     config = None  # Fallback to environment variables
+    print(f"[DEBUG] Config loader import failed: {e}, using env vars")
 import os
 from datetime import datetime
 from decimal import Decimal
@@ -49,8 +51,21 @@ def ensure_decimal(value):
 
 
 def lambda_handler(event, context):
+    print(f"[DEBUG] === LAMBDA_HANDLER START ===")
     # Log the event for debugging
     print(f"Received event: {json.dumps(event)}")
+    
+    # Check if we have all required environment variables and resources
+    print(f"[DEBUG] Checking environment variables and resources...")
+    try:
+        print(f"[DEBUG] PREFERENCES_TABLE: {os.environ.get('PREFERENCES_TABLE', 'NOT SET')}")
+        print(f"[DEBUG] PROPERTIES_TABLE: {os.environ.get('PROPERTIES_TABLE', 'NOT SET')}")
+        print(f"[DEBUG] OUTPUT_BUCKET: {os.environ.get('OUTPUT_BUCKET', 'NOT SET')}")
+        print(f"[DEBUG] preferences_table: {preferences_table}")
+        print(f"[DEBUG] properties_table: {properties_table}")
+        print(f"[DEBUG] lambda_client: {lambda_client}")
+    except Exception as e:
+        print(f"[ERROR] Error checking resources: {e}")
     
     # Determine origin_header at runtime
     origin_header = event.get("headers", {}).get("origin", "*")
@@ -85,7 +100,18 @@ def lambda_handler(event, context):
         # Route handling
         if method == 'POST' and path == '/favorites':
             print(f"[DEBUG] Routing to add_preference for favorite")
-            return add_preference(event, user_id, 'favorite')
+            print(f"[DEBUG] About to call add_preference with event keys: {list(event.keys())}")
+            print(f"[DEBUG] user_id: {user_id}, type: {type(user_id)}")
+            try:
+                print(f"[DEBUG] Calling add_preference now...")
+                result = add_preference(event, user_id, 'favorite')
+                print(f"[DEBUG] add_preference returned: {result}")
+                return result
+            except Exception as e:
+                print(f"[ERROR] Exception in add_preference: {e}")
+                import traceback
+                print(f"[ERROR] add_preference traceback: {traceback.format_exc()}")
+                raise
         elif method == 'POST' and path == '/hidden':
             print(f"[DEBUG] Routing to add_preference for hidden")
             return add_preference(event, user_id, 'hidden')
@@ -140,14 +166,23 @@ def lambda_handler(event, context):
 
 
 def add_preference(event, user_id, preference_type):
+    print(f"[DEBUG] === add_preference ENTRY === user_id: {user_id}, preference_type: {preference_type}")
+    
     # Determine origin_header at runtime
     origin_header = event.get("headers", {}).get("origin", "*")
+    
+    print(f"[DEBUG] add_preference called with user_id: {user_id}, preference_type: {preference_type}")
+    print(f"[DEBUG] origin_header: {origin_header}")
     
     try:
         body = json.loads(event.get('body', '{}'))
         property_id = body.get('property_id')
         
+        print(f"[DEBUG] Parsed body: {body}")
+        print(f"[DEBUG] Property ID: {property_id}")
+        
         if not property_id:
+            print(f"[DEBUG] No property_id provided, returning 400")
             return {
                 "statusCode": 400,
                 "headers": {
@@ -159,6 +194,7 @@ def add_preference(event, user_id, preference_type):
             }
         
         # Check if preference already exists using composite key
+        print(f"[DEBUG] Checking if preference already exists...")
         existing = preferences_table.get_item(
             Key={
                 'user_id': user_id,
@@ -166,7 +202,10 @@ def add_preference(event, user_id, preference_type):
             }
         )
         
+        print(f"[DEBUG] Existing preference check result: {existing}")
+        
         if 'Item' in existing:
+            print(f"[DEBUG] Preference already exists, returning 200")
             return {
                 "statusCode": 200,
                 "headers": {
@@ -178,9 +217,16 @@ def add_preference(event, user_id, preference_type):
             }
         
         # Get property details for thumbnail
+        print(f"[DEBUG] Getting property details for property_id: {property_id}")
         property_data = properties_table.get_item(
             Key={'property_id': property_id, 'sort_key': 'META'}
         ).get('Item', {})
+        
+        print(f"[DEBUG] Property data retrieved: {bool(property_data)}")
+        if property_data:
+            print(f"[DEBUG] Property data keys: {list(property_data.keys())}")
+        else:
+            print(f"[DEBUG] No property data found for property_id: {property_id}")
         
         # Create preference record with Decimal values for DynamoDB
         preference_item = {
@@ -211,18 +257,28 @@ def add_preference(event, user_id, preference_type):
         
         preferences_table.put_item(Item=preference_item)
         
+        print(f"[DEBUG] Preference item created and stored in DynamoDB")
+        
         # Invoke analyzer Lambda directly for favorites only
         if preference_type == 'favorite':
             try:
-                lambda_client.invoke(
-                    FunctionName=os.environ['FAVORITE_ANALYZER_FUNCTION'],
+                analyzer_function = os.environ.get('FAVORITE_ANALYZER_FUNCTION', 'tokyo-real-estate-ai-favorite-analyzer')
+                print(f"[DEBUG] About to invoke analyzer function: {analyzer_function}")
+                print(f"[DEBUG] Analyzer payload: {{'user_id': '{user_id}', 'property_id': '{property_id}'}}")
+                
+                response = lambda_client.invoke(
+                    FunctionName=analyzer_function,
                     InvocationType='Event',  # async
                     Payload=json.dumps({'user_id': user_id, 'property_id': property_id})
                 )
+                print(f"[DEBUG] Analyzer invoke response: {response}")
             except Exception as e:
-                print(f"Warning: Failed to invoke analyzer: {e}")
+                print(f"[ERROR] Failed to invoke analyzer: {e}")
+                import traceback
+                print(f"[ERROR] Analyzer invoke traceback: {traceback.format_exc()}")
                 # Don't fail the request if analyzer fails
         
+        print(f"[DEBUG] Returning success response for {preference_type}")
         return {
             "statusCode": 200,
             "headers": {

@@ -32,16 +32,20 @@ class FavoritesView {
             `<img src="${imageUrl}" alt="Property image" onError="this.parentElement.classList.add('no-image'); this.parentElement.innerHTML='No Image';">` : 
             '<div class="no-image">No Image</div>';
         
-        // Determine processing status
+        // Determine processing status - Since analysis starts automatically when favorited, default to processing
         let statusClass = 'processing';
         let statusText = 'Processing';
-        if (property.analysis_status === 'completed' || property.verdict) {
+        let isClickable = false;
+        
+        if (property.analysis_status === 'completed' || (property.analysis_result && Object.keys(property.analysis_result).length > 0)) {
             statusClass = 'processed';
             statusText = 'Processed';
+            isClickable = true;
         } else if (property.analysis_status === 'failed') {
             statusClass = 'failed';
             statusText = 'Failed';
         }
+        // Default is already 'processing' for pending or processing states
         
         // Card with image on left, essential information
         return `
@@ -54,9 +58,10 @@ class FavoritesView {
                     <div class="favorite-price">${price}</div>
                     <div class="favorite-size">${size}</div>
                 </div>
-                ${statusClass === 'processed' ? 
-                    `<span class="processing-status ${statusClass}" onclick="window.app.favorites.showAnalysis('${property.property_id}'); event.stopPropagation();" style="cursor: pointer;" title="View Analysis">${statusText}</span>` :
-                    `<span class="processing-status ${statusClass}">${statusText}</span>`}
+                <button class="processing-status ${statusClass}" 
+                    ${isClickable ? `onclick="window.app.favorites.showAnalysisPopup('${property.property_id}'); event.stopPropagation();"` : 'disabled'}
+                    ${isClickable ? 'style="cursor: pointer;"' : ''}
+                    title="${isClickable ? 'View Analysis' : statusText}">${statusText}</button>
                 <button class="remove-favorite-btn" onclick="event.stopPropagation(); removeFavorite('${property.property_id}')" title="Remove from favorites">
                     <svg width="12" height="12" viewBox="0 0 12 12">
                         <path d="M1 1l10 10M11 1L1 11" stroke="currentColor" stroke-width="1.5"/>

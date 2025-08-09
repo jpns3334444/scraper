@@ -2,9 +2,15 @@
 # Dynamic Lambda function updater - works with any lambda in the project
 set -e
 
-# Configuration
-REGION="${AWS_REGION:-ap-northeast-1}"
-STACK_NAME="${STACK_NAME:-tokyo-real-estate-ai}"
+# Get the directory of this script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Load centralized config
+. "$SCRIPT_DIR/scripts/cfg.sh"
+
+# Configuration from centralized config
+REGION="$AWS_REGION"
+STACK_NAME="$AI_STACK"
 
 # Colors
 G='\033[0;32m' R='\033[0;31m' Y='\033[1;33m' B='\033[0;34m' NC='\033[0m'
@@ -88,8 +94,7 @@ echo "Region: $REGION"
 echo "Stack:  $STACK_NAME"
 echo ""
 
-# Get the directory of this script
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Change to script directory
 cd "$SCRIPT_DIR"
 
 # Check prerequisites
@@ -103,12 +108,12 @@ LAMBDA_DIR="lambda/$LAMBDA_FOLDER"
 # Determine function name pattern based on lambda type
 # Frontend functions have different naming pattern
 if [[ "$LAMBDA_FOLDER" == "register_user" || "$LAMBDA_FOLDER" == "login_user" || "$LAMBDA_FOLDER" == "dashboard_api" || "$LAMBDA_FOLDER" == "favorites_api" ]]; then
-    # Frontend stack pattern: tokyo-real-estate-frontend-function-name
-    FUNCTION_NAME="tokyo-real-estate-frontend-${LAMBDA_FOLDER//_/-}"
-    STACK_NAME="tokyo-real-estate-dashboard"  # Override stack name for frontend functions
+    # Frontend stack pattern
+    FUNCTION_NAME="$FRONTEND_STACK-${LAMBDA_FOLDER//_/-}"
+    STACK_NAME="$FRONTEND_STACK"  # Override stack name for frontend functions
 else
     # Main AI stack pattern: stack-name-lambda-folder
-    FUNCTION_NAME="$STACK_NAME-${LAMBDA_FOLDER//_/-}"
+    FUNCTION_NAME="$AI_STACK-${LAMBDA_FOLDER//_/-}"
 fi
 
 # Try to find the actual function name from AWS
@@ -118,12 +123,9 @@ ACTUAL_FUNCTION_NAME=$(aws lambda list-functions --region "$REGION" --query "Fun
 if [ -z "$ACTUAL_FUNCTION_NAME" ]; then
     # Try alternative patterns
     if [[ "$LAMBDA_FOLDER" == "register_user" || "$LAMBDA_FOLDER" == "login_user" ]]; then
-        # Try with different frontend prefixes
-        for prefix in "tre-frontend" "tokyo-real-estate-dashboard"; do
-            FUNCTION_NAME="$prefix-${LAMBDA_FOLDER//_/-}"
-            ACTUAL_FUNCTION_NAME=$(aws lambda list-functions --region "$REGION" --query "Functions[?starts_with(FunctionName, '$FUNCTION_NAME')].FunctionName" --output text 2>/dev/null | head -n1)
-            [ -n "$ACTUAL_FUNCTION_NAME" ] && break
-        done
+        # Try with frontend stack name
+        FUNCTION_NAME="$FRONTEND_STACK-${LAMBDA_FOLDER//_/-}"
+        ACTUAL_FUNCTION_NAME=$(aws lambda list-functions --region "$REGION" --query "Functions[?starts_with(FunctionName, '$FUNCTION_NAME')].FunctionName" --output text 2>/dev/null | head -n1)
     else
         # Try main stack alternative pattern
         FUNCTION_NAME="$STACK_NAME-${LAMBDA_FOLDER//_/-}-function"

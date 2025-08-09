@@ -1,0 +1,62 @@
+{
+  "_comment": "Tokyo Real Estate Project Configuration - Single source of truth for all AWS resource names",
+  
+  "core": {
+    "PROJECT": "tokyo-real-estate",
+    "AWS_REGION": "ap-northeast-1"
+  },
+  
+  "stacks": {
+    "AI_STACK": "tokyo-real-estate-ai",
+    "FRONTEND_STACK": "tokyo-real-estate-frontend"
+  },
+  
+  "s3": {
+    "DEPLOYMENT_BUCKET_PREFIX": "ai-scraper-artifacts",
+    "OUTPUT_BUCKET": "tokyo-real-estate-ai-data",
+    "FRONTEND_STATIC_BUCKET": "tokyo-real-estate-frontend-static"
+  },
+  
+  "dynamodb": {
+    "DDB_PROPERTIES": "tokyo-real-estate-ai-analysis-db",
+    "DDB_URL_TRACKING": "tokyo-real-estate-ai-urls",
+    "DDB_USERS": "tokyo-real-estate-ai-users",
+    "DDB_USER_PREFERENCES": "tokyo-real-estate-ai-user-preferences"
+  },
+  
+  "lambda": {
+    "_comment": "Lambda Function Names (stack prefix will be prepended)",
+    "LAMBDA_URL_COLLECTOR": "url-collector",
+    "LAMBDA_PROPERTY_PROCESSOR": "property-processor",
+    "LAMBDA_PROPERTY_ANALYZER": "property-analyzer",
+    "LAMBDA_FAVORITE_ANALYZER": "favorite-analyzer",
+    "LAMBDA_DASHBOARD_API": "dashboard-api",
+    "LAMBDA_FAVORITES_API": "favorites-api",
+    "LAMBDA_REGISTER_USER": "register-user",
+    "LAMBDA_LOGIN_USER": "login-user"
+  },
+  
+  "api": {
+    "API_NAME": "tokyo-real-estate-api"
+  },
+  
+  "email": {
+    "_comment": "Email Settings (for report sender)",
+    "EMAIL_FROM": "jpns3334444@gmail.com",
+    "EMAIL_TO": "haykaslanyan@gmail.com"
+  },
+  
+  "features": {
+    "LEAN_MODE": "1"
+  },
+  
+  "paths": {
+    "SCRIPT_DIR": "/home/azure/Projects/real-estate-scraper"
+  },
+  
+  "layers": {
+    "BCRYPT_LAYER_OBJECT_VERSION": "latest",
+    "OPENAI_VERSION": "1.99.3",
+    "BCRYPT_VERSION": "4.1.2"
+  }
+}

@@ -1,6 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
+# Get the directory of this script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Load centralized config
+. "$SCRIPT_DIR/scripts/cfg.sh"
+
 # Handle Ctrl+C
 cleanup() {
     echo ""
@@ -16,25 +22,31 @@ cleanup() {
 }
 trap cleanup INT
 
-# Configuration
-REGION="${AWS_DEFAULT_REGION:-ap-northeast-1}"
+# Configuration from centralized config
+REGION="$AWS_REGION"
 LOG_LEVEL="INFO" # Default log level
 FUNCTION_NAME=""
-DEFAULT_BUCKET="tokyo-real-estate-ai-data"  # Default S3 bucket
+DEFAULT_BUCKET="$OUTPUT_BUCKET"
 
 # Function mapping: folder name -> AWS Lambda function name
 declare -A FUNCTION_MAP=(
-    ["scraper"]="tokyo-real-estate-ai-scraper"
-    ["url-collector"]="tokyo-real-estate-ai-url-collector" 
-    ["property-processor"]="tokyo-real-estate-ai-property-processor"
-    ["property-analyzer"]="tokyo-real-estate-ai-property-analyzer"
-    ["etl"]="tokyo-real-estate-ai-etl"
-    ["prompt-builder"]="tokyo-real-estate-ai-prompt-builder"
-    ["llm-batch"]="tokyo-real-estate-ai-llm-batch"
-    ["report-sender"]="tokyo-real-estate-ai-report-sender"
-    ["dynamodb-writer"]="tokyo-real-estate-ai-dynamodb-writer"
-    ["snapshot-generator"]="tokyo-real-estate-ai-snapshot-generator"
-    ["daily-digest"]="tokyo-real-estate-ai-daily-digest"
+    ["url-collector"]="$LAMBDA_URL_COLLECTOR_FULL"
+    ["property-processor"]="$LAMBDA_PROPERTY_PROCESSOR_FULL"
+    ["property-analyzer"]="$LAMBDA_PROPERTY_ANALYZER_FULL"
+    ["favorite-analyzer"]="$LAMBDA_FAVORITE_ANALYZER_FULL"
+    ["dashboard-api"]="$LAMBDA_DASHBOARD_API_FULL"
+    ["favorites-api"]="$LAMBDA_FAVORITES_API_FULL"
+    ["register-user"]="$LAMBDA_REGISTER_USER_FULL"
+    ["login-user"]="$LAMBDA_LOGIN_USER_FULL"
+    # Legacy functions that might still exist
+    ["scraper"]="${AI_STACK}-scraper"
+    ["etl"]="${AI_STACK}-etl"
+    ["prompt-builder"]="${AI_STACK}-prompt-builder"
+    ["llm-batch"]="${AI_STACK}-llm-batch"
+    ["report-sender"]="${AI_STACK}-report-sender"
+    ["dynamodb-writer"]="${AI_STACK}-dynamodb-writer"
+    ["snapshot-generator"]="${AI_STACK}-snapshot-generator"
+    ["daily-digest"]="${AI_STACK}-daily-digest"
 )
 
 # Generate session ID first

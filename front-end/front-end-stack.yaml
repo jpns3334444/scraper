@@ -136,6 +136,15 @@ Resources:
                     - "arn:aws:s3:::${BucketName}/*"
                     - BucketName:
                         Fn::ImportValue: !Sub "${AIStackName}-OutputBucketName"
+        - PolicyName: "LambdaInvokeAccess"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "lambda:InvokeFunction"
+                Resource:
+                  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AIStackName}-favorite-analyzer"
 
   # Lambda Functions (following AI stack pattern with S3 versioning)
 
@@ -186,6 +195,7 @@ Resources:
             Fn::ImportValue: !Sub "${AIStackName}-DynamoDBTableName"
           OUTPUT_BUCKET:
             Fn::ImportValue: !Sub "${AIStackName}-OutputBucketName"
+          FAVORITE_ANALYZER_FUNCTION: !Sub '${AIStackName}-favorite-analyzer'
 
   # Register User Lambda Function
   RegisterUserFunction:

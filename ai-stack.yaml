@@ -23,18 +23,6 @@ Parameters:
   FavoriteAnalyzerCodeVersion:
     Type: String
     Default: latest
-  DashboardAPICodeVersion:
-    Type: String
-    Default: latest
-  FavoritesAPICodeVersion:
-    Type: String
-    Default: latest
-  RegisterUserCodeVersion:
-    Type: String
-    Default: latest
-  LoginUserCodeVersion:
-    Type: String
-    Default: latest
   OpenAILayerObjectVersion:
     Type: String
     Description: S3 object version ID for openai-layer.zip
@@ -154,6 +142,15 @@ Resources:
                   - !GetAtt URLCollectorDeadLetterQueue.Arn
                   - !GetAtt PropertyProcessorDeadLetterQueue.Arn
                   - !GetAtt PropertyAnalyzerDeadLetterQueue.Arn
+        - PolicyName: LambdaInvokeAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-favorite-analyzer'
 
   # Simplified IAM Role for URL collection and property processing functions
   ScraperExecutionRole:
@@ -439,95 +436,8 @@ Resources:
           DATA_BUCKET: !Ref OutputBucket
           OPENAI_SECRET_NAME: ai-scraper/openai-api-key
 
-  # Dashboard API Lambda Function
-  DashboardAPIFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${AWS::StackName}-dashboard-api'
-      Runtime: python3.12
-      Handler: app.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/dashboard_api.zip
-        S3ObjectVersion: !Ref DashboardAPICodeVersion
-      Timeout: 30
-      MemorySize: 512
-      Environment:
-        Variables:
-          PROPERTIES_TABLE: !Ref RealEstateAnalysisDB
-          PREFERENCES_TABLE: !Ref UserPreferencesTable  # tokyo-real-estate-ai-user-preferences
-
-  # Favorites API Lambda Function
-  FavoritesAPIFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${AWS::StackName}-favorites-api'
-      Runtime: python3.12
-      Handler: app.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/favorites_api.zip
-        S3ObjectVersion: !Ref FavoritesAPICodeVersion
-      Timeout: 30
-      MemorySize: 512
-      Environment:
-        Variables:
-          PREFERENCES_TABLE: !Ref UserPreferencesTable  # tokyo-real-estate-ai-user-preferences
-          PROPERTIES_TABLE: !Ref RealEstateAnalysisDB
-          OUTPUT_BUCKET: !Ref OutputBucket
-          FAVORITE_ANALYZER_FUNCTION: !Ref FavoriteAnalyzerFunction
-
-  # Register User Lambda Function
-  RegisterUserFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${AWS::StackName}-register-user'
-      Runtime: python3.12
-      Handler: app.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/register_user.zip
-        S3ObjectVersion: !Ref RegisterUserCodeVersion
-      Timeout: 30
-      MemorySize: 512
-      Layers:
-        - !Ref BcryptLayer
-      Environment:
-        Variables:
-          USERS_TABLE: !Ref UsersTable  # tokyo-real-estate-ai-users
-
-  # Login User Lambda Function
-  LoginUserFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${AWS::StackName}-login-user'
-      Runtime: python3.12
-      Handler: app.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        S3Bucket: !Ref DeploymentBucket
-        S3Key: functions/login_user.zip
-        S3ObjectVersion: !Ref LoginUserCodeVersion
-      Timeout: 30
-      MemorySize: 512
-      Layers:
-        - !Ref BcryptLayer
-      Environment:
-        Variables:
-          USERS_TABLE: !Ref UsersTable  # tokyo-real-estate-ai-users
 
 
-  # Lambda Invoke Permission for FavoriteAnalyzer
-  FavoriteAnalyzerInvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref FavoriteAnalyzerFunction
-      Action: lambda:InvokeFunction
-      Principal: lambda.amazonaws.com
-      SourceArn: !GetAtt FavoritesAPIFunction.Arn
 
 
   # Dead Letter Queues for Lambda functions

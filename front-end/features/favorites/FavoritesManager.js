@@ -168,6 +168,9 @@ class FavoritesManager {
                     let property = this.state.getProperty(propertyId);
                     
                     if (property) {
+                        // Merge analysis data from favorite into property
+                        property.analysis_status = favorite.analysis_status;
+                        property.analysis_result = favorite.analysis_result;
                         favoritedProperties.push(property);
                     } else {
                         // If property not found in allProperties, use the summary from favorites
@@ -180,8 +183,15 @@ class FavoritesManager {
                             closest_station: summary.station || 'Unknown Station',
                             verdict: 'favorited',
                             listing_url: '#',
+                            analysis_status: favorite.analysis_status,
+                            analysis_result: favorite.analysis_result,
                             isFallback: true
                         });
+                    }
+                    
+                    // Start polling for properties that are still processing
+                    if (!favorite.analysis_result || Object.keys(favorite.analysis_result).length === 0) {
+                        this.pollForAnalysisCompletion(propertyId);
                     }
                 }
                 
@@ -223,7 +233,94 @@ class FavoritesManager {
         }
     }
     
-    async showAnalysis(propertyId) {
+    async processAnalysis(propertyId) {
+        if (!this.state.currentUser) {
+            alert('Please login to process analysis');
+            return;
+        }
+        
+        try {
+            // Update UI to show processing state
+            const processBtn = document.querySelector(`[data-property-id="${propertyId}"] .process-button`);
+            if (processBtn) {
+                processBtn.disabled = true;
+                processBtn.textContent = 'Processing';
+                processBtn.classList.remove('pending');
+                processBtn.classList.add('processing');
+            }
+            
+            // Trigger analysis by re-adding the favorite (which triggers the analyzer Lambda)
+            const response = await fetch(`${this.api.favoritesApiUrl}/favorites`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-User-Email': this.state.currentUser.email
+                },
+                body: JSON.stringify({ property_id: propertyId })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Failed to trigger analysis: ${response.status}`);
+            }
+            
+            // Poll for completion
+            this.pollForAnalysisCompletion(propertyId);
+            
+        } catch (error) {
+            console.error('Failed to trigger analysis:', error);
+            alert('Failed to start analysis. Please try again.');
+            
+            // Reset button state
+            const processBtn = document.querySelector(`[data-property-id="${propertyId}"] .process-button`);
+            if (processBtn) {
+                processBtn.disabled = false;
+                processBtn.textContent = 'Process';
+                processBtn.classList.remove('processing');
+                processBtn.classList.add('pending');
+            }
+        }
+    }
+    
+    async pollForAnalysisCompletion(propertyId, attempts = 0) {
+        const maxAttempts = 30; // 30 attempts = 5 minutes max
+        
+        if (attempts >= maxAttempts) {
+            console.log('Analysis polling timed out');
+            return;
+        }
+        
+        try {
+            const data = await this.api.fetchFavoriteAnalysis(this.state.currentUser.email, propertyId);
+            
+            if (data.analysis_result && Object.keys(data.analysis_result).length > 0) {
+                // Analysis completed, update UI
+                const statusButton = document.querySelector(`[data-property-id="${propertyId}"] .processing-status`);
+                if (statusButton) {
+                    statusButton.classList.remove('processing');
+                    statusButton.classList.add('processed');
+                    statusButton.textContent = 'Processed';
+                    statusButton.disabled = false;
+                    statusButton.setAttribute('onclick', `window.app.favorites.showAnalysisPopup('${propertyId}'); event.stopPropagation();`);
+                    statusButton.style.cursor = 'pointer';
+                    statusButton.setAttribute('title', 'View Analysis');
+                }
+                
+                // Cache the data
+                this.state.setFavoriteAnalysis(propertyId, data);
+                return;
+            }
+            
+            // Continue polling
+            setTimeout(() => this.pollForAnalysisCompletion(propertyId, attempts + 1), 10000); // Poll every 10 seconds
+            
+        } catch (error) {
+            console.error('Error polling for analysis completion:', error);
+            // Continue polling on error
+            setTimeout(() => this.pollForAnalysisCompletion(propertyId, attempts + 1), 10000);
+        }
+    }
+
+    async showAnalysisPopup(propertyId) {
         if (!this.state.currentUser) return;
         
         let data = this.state.getFavoriteAnalysis(propertyId);
@@ -238,9 +335,126 @@ class FavoritesManager {
             }
         }
         
-        this.analysisData = data; // cache for renderAnalysis
-        await this.renderAnalysis(); // render immediately
-        window.app.router.switchTab('analysis');
+        this.showAnalysisModal(data);
+    }
+    
+    showAnalysisModal(data) {
+        // Create modal overlay
+        const modal = document.createElement('div');
+        modal.className = 'analysis-modal-overlay';
+        modal.onclick = (e) => {
+            if (e.target === modal) {
+                document.body.removeChild(modal);
+            }
+        };
+        
+        // Format property images
+        const images = (data.property_images || []).map(url => 
+            `<img src="${url}" class="analysis-modal-img" alt="Property image">`
+        ).join('');
+        
+        // Format property summary
+        const summary = data.property_summary || {};
+        const price = summary.price ? `¥${(summary.price * 10000).toLocaleString()}` : 'N/A';
+        const size = summary.size_sqm ? `${Math.round(summary.size_sqm)}m²` : 'N/A';
+        
+        modal.innerHTML = `
+            <div class="analysis-modal">
+                <div class="analysis-modal-header">
+                    <h2>Property Analysis</h2>
+                    <button class="analysis-modal-close" onclick="document.body.removeChild(this.closest('.analysis-modal-overlay'))">&times;</button>
+                    <div class="property-basic-info">
+                        <span class="property-ward">${summary.ward || 'Unknown Ward'}</span>
+                        <span class="property-price">${price}</span>
+                        <span class="property-size">${size}</span>
+                    </div>
+                </div>
+                
+                <div class="analysis-modal-content">
+                    <div class="analysis-images">
+                        ${images}
+                    </div>
+                    
+                    <div class="analysis-results">
+                        <h3>Investment Analysis</h3>
+                        ${this.formatAnalysisResults(data.analysis_result || {})}
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        // Animate in
+        setTimeout(() => modal.classList.add('show'), 10);
+    }
+    
+    formatAnalysisResults(analysis) {
+        if (!analysis || typeof analysis !== 'object') {
+            return '<p class="no-analysis">Analysis data not available</p>';
+        }
+        
+        const sections = [];
+        
+        // Key metrics section
+        if (analysis.investment_rating || analysis.final_verdict || analysis.rental_yield_net) {
+            sections.push(`
+                <div class="analysis-metrics">
+                    <h4>Key Metrics</h4>
+                    ${analysis.investment_rating ? `<div class="metric"><strong>Investment Rating:</strong> ${analysis.investment_rating}/10</div>` : ''}
+                    ${analysis.final_verdict ? `<div class="metric"><strong>Verdict:</strong> ${analysis.final_verdict}</div>` : ''}
+                    ${analysis.rental_yield_net ? `<div class="metric"><strong>Net Rental Yield:</strong> ${analysis.rental_yield_net}%</div>` : ''}
+                    ${analysis.rental_yield_gross ? `<div class="metric"><strong>Gross Rental Yield:</strong> ${analysis.rental_yield_gross}%</div>` : ''}
+                </div>
+            `);
+        }
+        
+        // Summary section
+        if (analysis.summary) {
+            sections.push(`
+                <div class="analysis-summary">
+                    <h4>Summary</h4>
+                    <p>${analysis.summary}</p>
+                </div>
+            `);
+        }
+        
+        // Financial projections
+        if (analysis.price_appreciation_5yr || analysis.renovation_cost_estimate) {
+            sections.push(`
+                <div class="analysis-financial">
+                    <h4>Financial Projections</h4>
+                    ${analysis.price_appreciation_5yr ? `<div class="metric"><strong>5-Year Price Appreciation:</strong> ${analysis.price_appreciation_5yr}</div>` : ''}
+                    ${analysis.renovation_cost_estimate ? `<div class="metric"><strong>Renovation Cost Estimate:</strong> ${analysis.renovation_cost_estimate}</div>` : ''}
+                </div>
+            `);
+        }
+        
+        // Risks and considerations
+        if (analysis.key_risks && Array.isArray(analysis.key_risks)) {
+            sections.push(`
+                <div class="analysis-risks">
+                    <h4>Key Risks</h4>
+                    <ul>
+                        ${analysis.key_risks.map(risk => `<li>${risk}</li>`).join('')}
+                    </ul>
+                </div>
+            `);
+        }
+        
+        // Action items
+        if (analysis.action_items && Array.isArray(analysis.action_items)) {
+            sections.push(`
+                <div class="analysis-actions">
+                    <h4>Action Items</h4>
+                    <ul>
+                        ${analysis.action_items.map(item => `<li>${item}</li>`).join('')}
+                    </ul>
+                </div>
+            `);
+        }
+        
+        return sections.length > 0 ? sections.join('') : '<p class="no-analysis">Detailed analysis not available</p>';
     }
     
     async renderAnalysis() {

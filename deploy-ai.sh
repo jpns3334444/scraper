@@ -2,8 +2,9 @@
 # Windows-compatible deployment script that only builds layer when needed
 set -e
 
-# Get the directory of this script
+# Get the directory of this script (should be repo root)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+echo "DEBUG: SCRIPT_DIR detected as: $SCRIPT_DIR"
 
 # Colors and functions first
 G='\033[0;32m' R='\033[0;31m' Y='\033[1;33m' B='\033[0;34m' NC='\033[0m'
@@ -12,24 +13,18 @@ error() { echo -e "${R}ERROR:${NC} $1"; exit 1; }
 warn() { echo -e "${Y}WARNING:${NC} $1"; }
 info() { echo -e "${B}INFO:${NC} $1"; }
 
-# Load .env file if it exists
-if [ -f "$SCRIPT_DIR/.env" ]; then
-    info "Loading configuration from .env file..."
-    export $(grep -v '^#' "$SCRIPT_DIR/.env" | xargs)
-fi
+# Load centralized config
+. "$SCRIPT_DIR/scripts/cfg.sh"
 
-# Configuration from .env with fallbacks
-REGION="${AWS_REGION:-ap-northeast-1}"
-STACK_NAME="${MAIN_STACK_NAME:-tokyo-real-estate-ai}"
-BUCKET_NAME="${DEPLOYMENT_BUCKET_PREFIX:-ai-scraper-artifacts}-$REGION"
-OUTPUT_BUCKET="${OUTPUT_BUCKET:-tokyo-real-estate-ai-data}"
-EMAIL_FROM="${EMAIL_FROM:-jpns3334444@gmail.com}"
-EMAIL_TO="${EMAIL_TO:-jpns3334444@gmail.com}"
+# Configuration from centralized config
+REGION="$AWS_REGION"
+STACK_NAME="$AI_STACK"
+BUCKET_NAME="$DEPLOYMENT_BUCKET"
 LAYER_VERSION_FILE="$SCRIPT_DIR/.layer-version"
 BCRYPT_LAYER_VERSION_FILE="$SCRIPT_DIR/.bcrypt-layer-version"
 TEMPLATE_FILE="$SCRIPT_DIR/ai-stack.yaml"
-CURRENT_OPENAI_VERSION="${OPENAI_VERSION:-1.95.0}"
-CURRENT_BCRYPT_VERSION="${BCRYPT_VERSION:-4.1.2}"
+CURRENT_OPENAI_VERSION="${OPENAI_VERSION:-$(python3 -c "import json; print(json.load(open('config.json'))['layers']['OPENAI_VERSION'])" 2>/dev/null || echo "1.99.3")}"
+CURRENT_BCRYPT_VERSION="${BCRYPT_VERSION:-$(python3 -c "import json; print(json.load(open('config.json'))['layers']['BCRYPT_VERSION'])" 2>/dev/null || echo "4.1.2")}"
 
 
 echo "🚀 AI Stack Smart Deployment (Windows Compatible)"
@@ -131,6 +126,12 @@ EOF
     rm openai-layer.zip
 else
     info "Skipping OpenAI layer build - using cached version"
+    # Get existing layer version ID
+    LAYER_OBJECT_VERSION=$(aws s3api head-object \
+        --bucket $BUCKET_NAME \
+        --key layers/openai-layer.zip \
+        --region $REGION \
+        --query VersionId --output text)
 fi
 
 # Check if we need to build the Bcrypt layer
@@ -203,6 +204,12 @@ EOF
     rm bcrypt-layer.zip
 else
     info "Skipping bcrypt layer build - using cached version"
+    # Get existing layer version ID
+    BCRYPT_LAYER_OBJECT_VERSION=$(aws s3api head-object \
+        --bucket $BUCKET_NAME \
+        --key layers/bcrypt-layer.zip \
+        --region $REGION \
+        --query VersionId --output text)
 fi
 
 # Always package Lambda functions (these change frequently) - Windows compatible ZIP
@@ -218,7 +225,7 @@ FAVORITE_ANALYZER_VERSION="latest"
 REGISTER_USER_VERSION="latest"
 LOGIN_USER_VERSION="latest"
 
-for func in url_collector property_processor property_analyzer dashboard_api favorites_api favorite_analyzer register_user login_user; do
+for func in url_collector property_processor property_analyzer favorite_analyzer; do
     [ -d "lambda/$func" ] || error "Function directory lambda/$func not found"
     
     info "Packaging $func..."
@@ -331,12 +338,6 @@ print('Created $func.zip with shared modules')
         property_analyzer)
             PROPERTY_ANALYZER_VERSION="$OBJECT_VERSION"
             ;;
-        dashboard_api)
-            DASHBOARD_API_VERSION="$OBJECT_VERSION"
-            ;;
-        favorites_api)
-            FAVORITES_API_VERSION="$OBJECT_VERSION"
-            ;;
         favorite_analyzer)
             FAVORITE_ANALYZER_VERSION="$OBJECT_VERSION"
             ;;
@@ -419,6 +420,7 @@ aws cloudformation deploy \
       OutputBucket=$OUTPUT_BUCKET \
       EmailFrom=$EMAIL_FROM \
       EmailTo=$EMAIL_TO \
+      LeanMode=$LEAN_MODE \
       URLCollectorCodeVersion=$URL_COLLECTOR_VERSION \
       PropertyProcessorCodeVersion=$PROPERTY_PROCESSOR_VERSION \
       PropertyAnalyzerCodeVersion=$PROPERTY_ANALYZER_VERSION \
@@ -484,7 +486,7 @@ echo "  Favorites API Function: $FAVORITES_API_FUNCTION_ARN"
 echo ""
 echo "🧪 Test Commands:"
 echo "  # Test Dashboard API function"
-echo "  aws lambda invoke --function-name $STACK_NAME-dashboard-api --payload '{}' dashboard-api-response.json --region $REGION"
+echo "  aws lambda invoke --function-name $STACK_NAME-favorite-analyzer --payload '{}' favorite-analyzer-response.json --region $REGION"
 echo ""
 echo "  # Test URL Collector function"
 echo "  aws lambda invoke --function-name $STACK_NAME-url-collector --payload '{\"areas\":\"chofu-city\"}' url-collector-response.json --region $REGION"

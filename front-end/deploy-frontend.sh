@@ -2,8 +2,10 @@
 # Tokyo Real Estate Frontend Stack deployment script - AI Stack Approach
 set -e
 
-# Get the directory of this script
+# Get the directory of this script  
+FRONTEND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PARENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Colors and functions first
 G='\033[0;32m' R='\033[0;31m' Y='\033[1;33m' B='\033[0;34m' NC='\033[0m'
@@ -12,21 +14,18 @@ error() { echo -e "${R}ERROR:${NC} $1"; cleanup_and_exit 1; }
 warn() { echo -e "${Y}WARNING:${NC} $1"; }
 info() { echo -e "${B}INFO:${NC} $1"; }
 
-# Load .env file from parent directory if it exists
-ENV_FILE="$SCRIPT_DIR/../.env"
-if [ -f "$ENV_FILE" ]; then
-    info "Loading configuration from .env file..."
-    export $(grep -v '^#' "$ENV_FILE" | xargs)
-fi
+# Load centralized config
+. "$PARENT_DIR/scripts/cfg.sh"
 
-# Configuration from .env with fallbacks
-REGION="${AWS_REGION:-ap-northeast-1}"
-STACK_NAME="${FRONTEND_STACK_NAME:-tokyo-real-estate-dashboard}"
-AI_STACK_NAME="${MAIN_STACK_NAME:-tokyo-real-estate-ai}"
-BUCKET_NAME="${DEPLOYMENT_BUCKET_PREFIX:-ai-scraper-artifacts}-$REGION"
+# Configuration from centralized config
+REGION="$AWS_REGION"
+STACK_NAME="$FRONTEND_STACK"
+AI_STACK_NAME="$AI_STACK"
+BUCKET_NAME="$DEPLOYMENT_BUCKET"
 BCRYPT_LAYER_VERSION_FILE="$SCRIPT_DIR/.frontend-bcrypt-layer-version"
-TEMPLATE_FILE="$SCRIPT_DIR/front-end-stack.yaml"
+TEMPLATE_FILE="$FRONTEND_DIR/front-end-stack.yaml"
 CURRENT_BCRYPT_VERSION="${BCRYPT_VERSION:-4.1.2}"
+NEED_BCRYPT_LAYER_BUILD=false
 
 
 # Cleanup function
@@ -65,8 +64,13 @@ trap cleanup_and_exit EXIT
 echo "🚀 Frontend Stack Smart Deployment (Windows Compatible)"
 echo "======================================================="
 
-# Change to the script's directory to resolve relative paths
-cd "$SCRIPT_DIR"
+# Change to the front-end directory to resolve relative paths
+FRONTEND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+echo "DEBUG: FRONTEND_DIR=$FRONTEND_DIR"
+cd "$FRONTEND_DIR"
+echo "DEBUG: Current directory after cd: $(pwd)"
+echo "DEBUG: Files in current directory:"
+ls -la index.html 2>/dev/null || echo "index.html not found"
 
 # Check prerequisites
 command -v docker >/dev/null || { echo "Docker not found"; cleanup_and_exit 1; }
@@ -93,8 +97,7 @@ status "Prerequisites OK"
 info "Checking S3 bucket..."
 aws s3 mb s3://$BUCKET_NAME --region $REGION 2>/dev/null && status "Created bucket $BUCKET_NAME" || info "Bucket $BUCKET_NAME exists"
 
-# Check if we need to build the Bcrypt layer
-NEED_BCRYPT_LAYER_BUILD=false
+# Check if we need to build the Bcrypt layer (already initialized above)
 
 if [ ! -f "$BCRYPT_LAYER_VERSION_FILE" ]; then
     info "No bcrypt layer version file found - will build layer"
@@ -113,6 +116,17 @@ else
             status "✅ Bcrypt layer up to date (v$CURRENT_BCRYPT_VERSION) - skipping build"
         fi
     fi
+fi
+
+# Get Bcrypt layer version
+if [ "$NEED_BCRYPT_LAYER_BUILD" = false ]; then
+    info "Retrieving existing Bcrypt layer version ID..."
+    BCRYPT_LAYER_OBJECT_VERSION=$(aws s3api head-object \
+        --bucket $BUCKET_NAME \
+        --key layers/frontend-bcrypt-layer.zip \
+        --region $REGION \
+        --query VersionId --output text)
+    info "Bcrypt layer version ID: $BCRYPT_LAYER_OBJECT_VERSION"
 fi
 
 # Build Bcrypt layer if needed (Windows-compatible approach)

@@ -6,10 +6,18 @@ WARNING: This will permanently delete all data!
 import boto3
 from boto3.dynamodb.conditions import Key
 import time
+import sys
+from pathlib import Path
 
-def clear_dynamodb_table(table_name, region='ap-northeast-1'):
+# Add scripts directory to path and load config
+sys.path.insert(0, str(Path(__file__).parent / 'scripts'))
+from load_config import load_config
+config = load_config()
+
+def clear_dynamodb_table(table_name, region=None):
     """Delete all items from a DynamoDB table"""
     
+    region = region or config.get('AWS_REGION', 'ap-northeast-1')
     dynamodb = boto3.resource('dynamodb', region_name=region)
     table = dynamodb.Table(table_name)
     
@@ -41,7 +49,7 @@ def clear_dynamodb_table(table_name, region='ap-northeast-1'):
             with table.batch_writer() as batch:
                 for item in items:
                     # Get the key fields for this table
-                    if table_name == 'tokyo-real-estate-ai-urls':
+                    if table_name == config.get('DDB_URL_TRACKING', 'tokyo-real-estate-ai-urls'):
                         # URL tracking table has 'url' as primary key
                         batch.delete_item(Key={'url': item['url']})
                     else:
@@ -78,10 +86,10 @@ def main():
     print("\nDynamoDB Table Cleanup Script")
     print("=============================")
     
-    # Define tables
+    # Define tables from config
     tables = [
-        'tokyo-real-estate-ai-urls',          # URL tracking table
-        'tokyo-real-estate-ai-analysis-db' # Main property table
+        config.get('DDB_URL_TRACKING', 'tokyo-real-estate-ai-urls'),
+        config.get('DDB_PROPERTIES', 'tokyo-real-estate-ai-analysis-db')
     ]
     
     print("\nThis script will delete ALL data from the following tables:")
