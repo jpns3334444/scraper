@@ -35,7 +35,8 @@
       "Bash(aws s3 cp:*)",
       "Bash(aws s3api head-object:*)",
       "Bash(./update-lambda.sh:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(python3:*)"
     ],
     "deny": []
   }

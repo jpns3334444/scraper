@@ -200,7 +200,7 @@ class PropertyAPI {
     }
     
     async fetchFavoriteAnalysis(userEmail, propertyId) {
-        const url = `${this.favoritesApiUrl}/favorites/${encodeURIComponent(userEmail)}/${encodeURIComponent(propertyId)}`;
+        const url = `${this.favoritesApiUrl}/favorites/analysis/${encodeURIComponent(userEmail)}/${encodeURIComponent(propertyId)}`;
         const response = await fetch(url, {
             headers: { 
                 'X-User-Email': userEmail

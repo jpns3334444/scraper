@@ -15,6 +15,7 @@ import time
 import pandas as pd
 import json
 import random
+import hashlib
 from datetime import datetime
 import boto3
 import threading
@@ -181,8 +182,10 @@ from core_scraper import create_session, extract_property_details
 from dynamodb_utils import (
     setup_dynamodb_client, save_complete_properties_to_dynamodb,
     setup_url_tracking_table, scan_unprocessed_urls, mark_url_processed,
-    scan_unprocessed_urls_batch, mark_urls_batch_processed
+    scan_unprocessed_urls_batch, mark_urls_batch_processed,
+    extract_property_id_from_url, create_property_id_key
 )
+from lossless_distiller import distill_lossless
 
 def parse_lambda_event(event):
     """Parse lambda event with environment variable fallbacks"""
@@ -311,6 +314,73 @@ def process_single_url(url_data, session_pool, rate_limiter, url_tracking_table,
         if quality_issues:
             logger.warning(f"Data quality issues for {url}: {', '.join(quality_issues)}")
             result['data_quality_issues'] = quality_issues
+        
+        # Lossless distiller processing
+        try:
+            lossless_enabled = config.get('output_bucket') and os.environ.get('LOSSLESS_ENABLED', 'true').lower() != 'false'
+            
+            if lossless_enabled and 'error' not in result and result.get('raw_html'):
+                # Get property_id - use existing one or create it
+                property_id = result.get('property_id')
+                if not property_id:
+                    raw_property_id = extract_property_id_from_url(url)
+                    if raw_property_id:
+                        property_id = create_property_id_key(raw_property_id)
+                
+                if property_id and config.get('output_bucket'):
+                    # Distill the HTML
+                    distilled_data = distill_lossless(result['raw_html'])
+                    
+                    # Add metadata
+                    source_hash = hashlib.md5(result['raw_html'].encode('utf-8')).hexdigest()
+                    distilled_data.update({
+                        'source_url': url,
+                        'source_hash': source_hash,
+                        'fetched_at': datetime.utcnow().isoformat() + 'Z'
+                    })
+                    
+                    # Ensure title exists (fallback to page title)
+                    if not distilled_data.get('title') and result.get('title'):
+                        distilled_data['title'] = result['title']
+                    
+                    # Serialize to JSON
+                    json_bytes = json.dumps(distilled_data, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+                    
+                    # Log size reduction
+                    original_bytes = len(result['raw_html'].encode('utf-8'))
+                    reduction_pct = ((original_bytes - len(json_bytes)) / original_bytes * 100) if original_bytes > 0 else 0
+                    
+                    logger.info(f"Lossless distill for {property_id}: {original_bytes} -> {len(json_bytes)} bytes ({reduction_pct:.1f}% reduction)")
+                    
+                    # Upload to S3
+                    try:
+                        s3_key = f"lossless/{property_id}/full.json"
+                        s3_client = boto3.client('s3')
+                        s3_client.put_object(
+                            Bucket=config['output_bucket'],
+                            Key=s3_key,
+                            Body=json_bytes,
+                            ContentType='application/json'
+                        )
+                        logger.info(f"Lossless data uploaded to s3://{config['output_bucket']}/{s3_key}")
+                    except Exception as s3_error:
+                        logger.error(f"Failed to upload lossless data for {property_id}: {str(s3_error)}")
+                else:
+                    if not config.get('output_bucket'):
+                        logger.debug("Lossless processing skipped: no output bucket configured")
+                    elif not property_id:
+                        logger.warning(f"Lossless processing skipped: could not determine property_id for {url}")
+            else:
+                if not lossless_enabled:
+                    logger.debug("Lossless processing disabled via LOSSLESS_ENABLED=false")
+                elif 'error' in result:
+                    logger.debug("Lossless processing skipped: property has error")
+                elif not result.get('raw_html'):
+                    logger.warning("Lossless processing skipped: no raw_html in result")
+                    
+        except Exception as lossless_error:
+            logger.error(f"Lossless distiller error for {url}: {str(lossless_error)}")
+            # Continue processing - don't fail the whole property
         
         # URL is already marked as processed before batch processing starts
         

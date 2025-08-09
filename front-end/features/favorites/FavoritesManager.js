@@ -394,6 +394,12 @@ class FavoritesManager {
             return '<p class="no-analysis">Analysis data not available</p>';
         }
         
+        // Handle new format with analysis_text
+        if (analysis.analysis_text) {
+            return this.formatAnalysisText(analysis.analysis_text, analysis.analysis_verdict);
+        }
+        
+        // Backwards compatibility - handle old structured format
         const sections = [];
         
         // Key metrics section
@@ -455,6 +461,93 @@ class FavoritesManager {
         }
         
         return sections.length > 0 ? sections.join('') : '<p class="no-analysis">Detailed analysis not available</p>';
+    }
+
+    formatAnalysisText(analysisText, verdict) {
+        if (!analysisText) {
+            return '<p class="no-analysis">Analysis data not available</p>';
+        }
+        
+        let html = '<div class="analysis-text-format">';
+        
+        // Add verdict badge at the top if available
+        if (verdict) {
+            const verdictClass = verdict.toLowerCase().replace(/\s+/g, '-');
+            html += `<div class="analysis-verdict verdict-${verdictClass}">${verdict}</div>`;
+        }
+        
+        // Split text into paragraphs
+        const paragraphs = analysisText.split('\n\n');
+        
+        paragraphs.forEach(paragraph => {
+            if (!paragraph.trim()) return;
+            
+            // Check for numbered sections (e.g., "1) Overall verdict:")
+            const numberedSectionMatch = paragraph.match(/^(\d+)\)\s*([^:]+):\s*(.*)/s);
+            if (numberedSectionMatch) {
+                const [, number, title, content] = numberedSectionMatch;
+                html += `<div class="analysis-section">
+                    <h4 class="analysis-section-title">${number}) ${title}</h4>
+                    <div class="analysis-section-content">${this.formatParagraphContent(content)}</div>
+                </div>`;
+                return;
+            }
+            
+            // Check for bullet point sections
+            if (paragraph.includes('\n-')) {
+                const lines = paragraph.split('\n');
+                let currentSection = '';
+                let bulletPoints = [];
+                
+                for (const line of lines) {
+                    if (line.trim().startsWith('-')) {
+                        bulletPoints.push(line.trim().substring(1).trim());
+                    } else if (line.trim()) {
+                        if (bulletPoints.length > 0) {
+                            // Output previous section with bullets
+                            html += `<div class="analysis-section">
+                                ${currentSection ? `<h5 class="analysis-subsection-title">${currentSection}</h5>` : ''}
+                                <ul class="analysis-bullets">
+                                    ${bulletPoints.map(point => `<li>${this.formatInlineContent(point)}</li>`).join('')}
+                                </ul>
+                            </div>`;
+                            bulletPoints = [];
+                        }
+                        currentSection = line.trim();
+                    }
+                }
+                
+                // Handle remaining bullets
+                if (bulletPoints.length > 0) {
+                    html += `<div class="analysis-section">
+                        ${currentSection ? `<h5 class="analysis-subsection-title">${currentSection}</h5>` : ''}
+                        <ul class="analysis-bullets">
+                            ${bulletPoints.map(point => `<li>${this.formatInlineContent(point)}</li>`).join('')}
+                        </ul>
+                    </div>`;
+                }
+                return;
+            }
+            
+            // Regular paragraph
+            html += `<div class="analysis-paragraph">${this.formatParagraphContent(paragraph)}</div>`;
+        });
+        
+        html += '</div>';
+        return html;
+    }
+    
+    formatParagraphContent(content) {
+        // Handle key-value pairs like "Shinjuku: 20 min"
+        return content.replace(/([A-Za-z][A-Za-z\s]+):\s*([^,\n]+)/g, 
+            '<span class="analysis-key-value"><strong>$1:</strong> $2</span>')
+            .replace(/\n/g, '<br>');
+    }
+    
+    formatInlineContent(content) {
+        // Handle key-value pairs and emphasis
+        return content.replace(/([A-Za-z][A-Za-z\s]+):\s*([^,\n]+)/g, 
+            '<span class="analysis-key-value"><strong>$1:</strong> $2</span>');
     }
     
     async renderAnalysis() {

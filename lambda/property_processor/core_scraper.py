@@ -932,9 +932,13 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
             # Try getting the page again after the wait
             response = session.get(property_url, timeout=15)
             
+            # Store raw HTML before parsing
+            raw_html = response.text
+            
             soup = BeautifulSoup(response.content, 'html.parser')
             data = {
                 "url": property_url,
+                "raw_html": raw_html,
                 "extraction_timestamp": datetime.now().isoformat()
             }
             

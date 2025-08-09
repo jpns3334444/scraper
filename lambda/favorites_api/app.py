@@ -121,22 +121,33 @@ def lambda_handler(event, context):
         elif method == 'DELETE' and path.startswith('/hidden/'):
             print(f"[DEBUG] Routing to remove_preference for hidden")
             return remove_preference(event, user_id, 'hidden')
-        elif method == 'GET' and '/favorites/user/' in path:
-            # Extract userId from path
+        elif method == 'GET' and '/favorites/' in path:
             path_params = event.get('pathParameters', {})
-            if path_params and 'userId' in path_params:
+            
+            # Check if this is /favorites/user/{userId} for getting user's favorites list
+            if '/favorites/user/' in path and path_params and 'userId' in path_params:
                 return get_user_preferences(event, path_params['userId'], 'favorite')
+            
+            # Check if this is /favorites/analysis/{userEmail}/{propertyId} for analysis
+            elif '/favorites/analysis/' in path and path_params:
+                if 'userEmail' in path_params and 'propertyId' in path_params:
+                    user_email = unquote(path_params['userEmail'])
+                    property_id = unquote(path_params['propertyId'])
+                    print(f"[DEBUG] Analysis route: userEmail={user_email}, propertyId={property_id}")
+                    return get_favorite_analysis(event, user_email, property_id)
+            
+            # Fallback to parsing path manually for backward compatibility
+            elif path_params and not '/user/' in path and not '/analysis/' in path:
+                path_parts = path.strip('/').split('/')
+                if len(path_parts) == 3 and path_parts[0] == 'favorites':
+                    user_id, property_id = unquote(path_parts[1]), unquote(path_parts[2])
+                    return get_favorite_analysis(event, user_id, property_id)
+        
         elif method == 'GET' and '/hidden/user/' in path:
             # Extract userId from path
             path_params = event.get('pathParameters', {})
             if path_params and 'userId' in path_params:
                 return get_user_preferences(event, path_params['userId'], 'hidden')
-        elif method == 'GET' and path.startswith('/favorites/') and '/favorites/user/' not in path:
-            # Handle GET /favorites/{userId}/{propertyId} for analysis
-            path_parts = path.strip('/').split('/')
-            if len(path_parts) == 3 and path_parts[0] == 'favorites':
-                user_id, property_id = path_parts[1], unquote(path_parts[2])
-                return get_favorite_analysis(event, user_id, property_id)
         
         # If no route matched, return 404
         return {

@@ -454,6 +454,69 @@ Resources:
             method.response.header.Access-Control-Allow-Headers: true
             method.response.header.Access-Control-Allow-Methods: true
 
+  # /favorites/analysis for analysis endpoints
+  FavoritesAnalysisBaseResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref FrontendRestApi
+      ParentId: !Ref FavoritesResource
+      PathPart: 'analysis'
+
+  # /favorites/analysis/{userEmail} for analysis endpoint
+  FavoritesUserEmailResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref FrontendRestApi
+      ParentId: !Ref FavoritesAnalysisBaseResource
+      PathPart: '{userEmail}'
+
+  # /favorites/analysis/{userEmail}/{propertyId} for analysis endpoint
+  FavoritesAnalysisResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref FrontendRestApi
+      ParentId: !Ref FavoritesUserEmailResource
+      PathPart: '{propertyId}'
+
+  FavoritesAnalysisGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref FrontendRestApi
+      ResourceId: !Ref FavoritesAnalysisResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.userEmail: true
+        method.request.path.propertyId: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FavoritesAPIFunction.Arn}/invocations'
+
+  FavoritesAnalysisOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref FrontendRestApi
+      ResourceId: !Ref FavoritesAnalysisResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode":200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
   # /hidden resources (same pattern as favorites)
   HiddenResource:
     Type: AWS::ApiGateway::Resource
@@ -701,6 +764,8 @@ Resources:
       - FavoritesUserOptionsMethod
       - FavoritesDeleteMethod
       - FavoritesDeleteOptionsMethod
+      - FavoritesAnalysisGetMethod
+      - FavoritesAnalysisOptionsMethod
       - HiddenPostMethod
       - HiddenOptionsMethod
       - HiddenGetMethod
