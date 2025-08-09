@@ -1,11 +1,8 @@
 /**
  * main.js
- * Application initialization and wiring of all components
+ * SIMPLIFIED: Proper initialization order for hidden functionality
  */
 
-// HiddenStore and getPropertyId will be available globally from HiddenManager.js
-
-// Initialize app
 document.addEventListener('DOMContentLoaded', async function() {
     console.log('[DEBUG] Initializing Tokyo Real Estate App...');
     
@@ -46,7 +43,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     
     propertiesView.init();
     
-    // Make available globally for onclick handlers and debugging
+    // Make available globally
     window.app = {
         auth: authManager,
         properties: propertiesManager,
@@ -55,16 +52,10 @@ document.addEventListener('DOMContentLoaded', async function() {
         router: router,
         filterDropdown: filterDropdown,
         api: api,
-        state: appState,
-        HiddenStore: HiddenStore,
-        getPropertyId: getPropertyId
+        state: appState
     };
     
-    // Also expose directly for easier access
-    window.HiddenStore = HiddenStore;
-    window.getPropertyId = getPropertyId;
-    
-    console.log('[DEBUG] Global app object created:', window.app);
+    console.log('[DEBUG] Global app object created');
     
     // Add global functions for onclick handlers
     window.showAuthModal = () => authModal.show();
@@ -73,12 +64,13 @@ document.addEventListener('DOMContentLoaded', async function() {
         const banner = document.getElementById('errorBanner');
         if (banner) banner.style.display = 'none';
     };
-    // goToPage function now defined in PropertiesManager.js
+    
     window.applyColumnFilter = (column) => {
         const checkboxes = document.querySelectorAll(`#${column}-filter-options input[type="checkbox"]:checked`);
         appState.currentFilters[column] = Array.from(checkboxes).map(cb => cb.value);
         propertiesManager.applyFilters();
     };
+    
     window.clearColumnFilter = (column) => {
         appState.currentFilters[column] = [];
         const checkboxes = document.querySelectorAll(`#${column}-filter-options input[type="checkbox"]`);
@@ -91,43 +83,34 @@ document.addEventListener('DOMContentLoaded', async function() {
         // Check authentication first
         authManager.checkAuth();
         
-        // Initialize router and tabs early
+        // Initialize router
         router.init();
         
-        // Initialize HiddenStore FIRST - critical to prevent flash
-        console.log('[DEBUG] Initializing HiddenStore...');
-        const user = authManager.getCurrentUser();
-        await HiddenStore.init({ user });
-        console.log('[DEBUG] HiddenStore initialized with', HiddenStore.all().length, 'hidden items');
+        // Load user's hidden items FIRST
+        console.log('[DEBUG] Loading hidden items...');
+        if (authManager.getCurrentUser()) {
+            await hiddenManager.loadUserHidden();
+        } else {
+            hiddenManager.loadHiddenFromStorage();
+        }
+        console.log('[DEBUG] Hidden items loaded:', appState.hidden.size, 'items');
         
-        // Subscribe to HiddenStore changes for properties filtering
-        HiddenStore.subscribe(() => {
-            if (window.app && window.app.properties && appState.allProperties.length > 0) {
-                window.app.properties.applyFilters();
-            }
-        });
-        
-        // Load favorites state
-        console.log('[DEBUG] Loading favorites state...');
-        if (user) {
+        // Load favorites
+        console.log('[DEBUG] Loading favorites...');
+        if (authManager.getCurrentUser()) {
             await favoritesManager.loadUserFavorites();
         } else {
             favoritesManager.loadFavoritesFromStorage();
         }
-        console.log('[DEBUG] Favorites state loaded:', appState.favorites.size, 'items');
+        console.log('[DEBUG] Favorites loaded:', appState.favorites.size, 'items');
         
-        // Load properties - they will be filtered during loadAllProperties using HiddenStore
+        // Load properties - they will be filtered automatically
         console.log('[DEBUG] Loading properties...');
         await propertiesManager.loadAllProperties();
         
         // Update counters
         favoritesManager.updateFavoritesCount();
         hiddenManager.updateHiddenCount();
-        
-        // Re-render favorites view if that tab is currently active
-        if (router.getCurrentTab() === TABS.FAVORITES) {
-            await favoritesManager.loadFavorites();
-        }
         
         console.log('[DEBUG] App initialization complete!');
         
@@ -137,80 +120,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     }
 });
 
-// Add some global debug functions for backwards compatibility
-window.debugFavoritesDisplay = function() {
-    console.log('=== FAVORITES DISPLAY DEBUG ===');
-    
-    // Check tab visibility
-    const favTab = document.getElementById('favorites-tab');
-    console.log('Favorites Tab:', {
-        exists: !!favTab,
-        hasActiveClass: favTab?.classList.contains('active'),
-        display: favTab?.style.display,
-        computedDisplay: favTab ? window.getComputedStyle(favTab).display : null,
-        innerHTML: favTab?.innerHTML?.substring(0, 100) + '...'
-    });
-    
-    // Check list element
-    const favList = document.getElementById('favoritesList');
-    console.log('Favorites List:', {
-        exists: !!favList,
-        display: favList?.style.display,
-        computedDisplay: favList ? window.getComputedStyle(favList).display : null,
-        innerHTML: favList?.innerHTML?.substring(0, 100) + '...'
-    });
-    
-    // Check state
-    console.log('App State:', {
-        favorites: window.app.state.favorites,
-        favoriteProperties: window.app.state.getFavoriteProperties()?.length
-    });
-};
-
-window.debugHiddenDisplay = function() {
-    console.log('=== HIDDEN DISPLAY DEBUG ===');
-    
-    // Check tab visibility
-    const hiddenTab = document.getElementById('hidden-tab');
-    console.log('Hidden Tab:', {
-        exists: !!hiddenTab,
-        hasActiveClass: hiddenTab?.classList.contains('active'),
-        display: hiddenTab?.style.display,
-        computedDisplay: hiddenTab ? window.getComputedStyle(hiddenTab).display : null
-    });
-    
-    // Check list element
-    const hiddenList = document.getElementById('hiddenList');
-    console.log('Hidden List:', {
-        exists: !!hiddenList,
-        display: hiddenList?.style.display,
-        computedDisplay: hiddenList ? window.getComputedStyle(hiddenList).display : null,
-        innerHTML: hiddenList?.innerHTML?.substring(0, 100) + '...'
-    });
-    
-    // Check state
-    console.log('App State:', {
-        hidden: window.app.state.hidden,
-        hiddenProperties: window.app.state.getHiddenProperties()?.length
-    });
-};
-
-// Expose state for debugging
-window.debugState = function() {
-    console.log('=== APP STATE DEBUG ===');
-    console.log('Current User:', window.app.state.currentUser);
-    console.log('All Properties Count:', window.app.state.allProperties.length);
-    console.log('Filtered Properties Count:', window.app.state.filteredProperties.length);
-    console.log('Favorites Count:', window.app.state.favorites.size);
-    console.log('Hidden Count:', window.app.state.hidden.size);
-    console.log('Current Sort:', window.app.state.currentSort);
-    console.log('Current Filters:', window.app.state.currentFilters);
-    console.log('Current Page:', window.app.state.currentPage);
-    console.log('Loading:', window.app.state.loading);
-    console.log('Background Loading:', window.app.state.isBackgroundLoading);
-};
-
-// Add error handler for unhandled errors
+// Add error handler
 window.addEventListener('error', (error) => {
     console.error('[GLOBAL ERROR]:', error);
     DOMUtils.showErrorBanner('An unexpected error occurred. Please refresh the page.');

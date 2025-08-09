@@ -1,6 +1,6 @@
 /**
  * PropertiesManager.js
- * Fixed sorting functionality
+ * FIXED: Properly filters out hidden properties
  */
 
 class PropertiesManager {
@@ -19,34 +19,27 @@ class PropertiesManager {
         let cursor = null;
         
         try {
-            // 1️⃣ Fetch the first page
+            // Load first page
             const firstPage = await this.api.fetchPropertiesPage(cursor);
-            
-            // Items are now filtered server-side for price < 3000万円
             const filteredFirstPage = firstPage.items || [];
             
             this.state.addProperties(filteredFirstPage);
-            
-            // Update favorite status
             this.updateFavoriteStatus(this.state.allProperties);
-            
             this.state.filteredProperties = [...this.state.allProperties];
             
-            // Apply filters (including hidden properties filter) BEFORE displaying
+            // Apply filters INCLUDING hidden filter
             this.applyFilters();
             
-            // Hide loading and show table immediately
             DOMUtils.hideElement('loading');
             DOMUtils.showElement('tableContainer');
             
-            // Apply initial sort and render first page
             this.applySort();
             this.renderCurrentPage();
             this.populateColumnFilters();
             
-            cursor = firstPage.nextCursor; // may be null / false
+            cursor = firstPage.nextCursor;
             
-            // 2️⃣ Fire-and-forget the rest with recursive loading
+            // Load remaining pages in background
             this.loadRemainingPages(cursor);
             
         } catch (error) {
@@ -61,60 +54,39 @@ class PropertiesManager {
         if (!cursor) {
             console.log('No more pages to load');
             this.state.setBackgroundLoading(false);
-            
-            // After all background loading is complete, ensure filters are applied
-            // This handles any edge cases where properties weren't properly filtered
             this.applyFilters();
             return;
         }
         
         this.state.setBackgroundLoading(true);
-        console.log('Loading page with cursor:', cursor);
         
         try {
             const page = await this.api.fetchPropertiesPage(cursor);
-            console.log('Loaded page, next cursor:', page.nextCursor);
-            console.log('Page items count:', page.items?.length || 0);
-            
             const filteredItems = page.items || [];
             
-            console.log('Filtered items count:', filteredItems.length);
-            
-            // Update favorite status for new items
             this.updateFavoriteStatus(filteredItems);
-            
             this.state.addProperties(filteredItems);
-            console.log('Total properties loaded so far:', this.state.allProperties.length);
             
-            // Update filtered properties if no filters are active
+            // Re-apply filters to include new items (but exclude hidden)
             if (!this.state.hasActiveFilters()) {
-                // Filter out hidden properties from new items before adding them
+                // Filter out hidden properties from new items
                 const visibleItems = filteredItems.filter(property => 
                     !this.state.hidden.has(property.property_id)
                 );
                 this.state.filteredProperties.push(...visibleItems);
-                // Mark that a resort is needed but don't do it immediately during background loading
                 this.state.needsResort = true;
                 
-                // Only update UI subtly during background loading
                 if (document.getElementById('properties-tab').classList.contains('active')) {
-                    // Just update the count without re-rendering
                     this.updateResultsInfo();
-                    
-                    // If user is on page 1, don't re-render at all to avoid flicker
-                    // If on later pages, only update pagination
                     if (this.state.currentPage > 1) {
                         this.renderPagination();
                     }
                 }
             } else {
-                // Even when filters are active, we need to ensure new properties
-                // will be properly filtered when applyFilters() is eventually called
-                // Mark that filtered properties need to be recalculated
                 this.state.needsResort = true;
             }
             
-            // Continue loading next page recursively
+            // Continue loading
             await this.loadRemainingPages(page.nextCursor);
             
         } catch (error) {
@@ -129,8 +101,47 @@ class PropertiesManager {
         });
     }
     
+    applyFilters() {
+        const filters = this.state.currentFilters;
+        
+        console.log('[DEBUG] Applying filters, hidden count:', this.state.hidden.size);
+        console.log('[DEBUG] Hidden IDs:', Array.from(this.state.hidden));
+        
+        this.state.filteredProperties = this.state.allProperties.filter(property => {
+            // Ward filter
+            if (filters.ward.length > 0 && !filters.ward.includes(property.ward)) {
+                return false;
+            }
+            
+            // Light filter
+            if (filters.primary_light.length > 0 && !filters.primary_light.includes(property.primary_light)) {
+                return false;
+            }
+            
+            // Verdict filter
+            const verdict = property.verdict || property.recommendation;
+            if (filters.verdict.length > 0 && !filters.verdict.includes(verdict)) {
+                return false;
+            }
+            
+            // CRITICAL: Hide hidden properties
+            if (this.state.hidden.has(property.property_id)) {
+                console.log('[DEBUG] Filtering out hidden property:', property.property_id);
+                return false;
+            }
+            
+            return true;
+        });
+        
+        console.log('[DEBUG] Properties after filtering:', this.state.filteredProperties.length, 'visible,', 
+            this.state.allProperties.length - this.state.filteredProperties.length, 'filtered out');
+        
+        this.state.setPage(1);
+        this.applySort();
+        this.renderCurrentPage();
+    }
+    
     sortTable(field) {
-        // Toggle direction if same field, otherwise start with desc
         if (this.state.currentSort.field === field) {
             const newDirection = this.state.currentSort.direction === 'asc' ? 'desc' : 'asc';
             this.state.setSort(field, newDirection);
@@ -138,7 +149,6 @@ class PropertiesManager {
             this.state.setSort(field, 'desc');
         }
         
-        // Apply deferred sort if needed
         if (this.state.needsResort) {
             this.state.needsResort = false;
         }
@@ -155,7 +165,6 @@ class PropertiesManager {
         this.state.filteredProperties.sort((a, b) => {
             let valA, valB;
             
-            // Special handling for year_built field
             if (field === 'year_built') {
                 valA = a.building_age_years !== undefined ? new Date().getFullYear() - a.building_age_years : null;
                 valB = b.building_age_years !== undefined ? new Date().getFullYear() - b.building_age_years : null;
@@ -164,12 +173,10 @@ class PropertiesManager {
                 valB = b[field];
             }
             
-            // Handle null/undefined values
             if (valA == null && valB == null) return 0;
             if (valA == null) return 1;
             if (valB == null) return -1;
             
-            // Convert to numbers for numeric fields
             if (typeof valA === 'string' && !isNaN(valA)) valA = parseFloat(valA);
             if (typeof valB === 'string' && !isNaN(valB)) valB = parseFloat(valB);
             
@@ -182,13 +189,11 @@ class PropertiesManager {
     }
     
     updateSortArrows() {
-        // Reset all arrows to default state
         document.querySelectorAll('.sort-arrows').forEach(arrow => {
             arrow.classList.remove('active');
             arrow.textContent = '▼';
         });
         
-        // Set active arrow with proper direction
         const activeArrow = document.getElementById(`sort-${this.state.currentSort.field}`);
         if (activeArrow) {
             activeArrow.classList.add('active');
@@ -197,7 +202,6 @@ class PropertiesManager {
     }
     
     renderCurrentPage() {
-        // Don't re-render during background loading if user is on first page to avoid flicker
         if (this.state.isBackgroundLoading && this.state.currentPage === 1) {
             return;
         }
@@ -233,10 +237,8 @@ class PropertiesManager {
         
         let html = '';
         
-        // Previous button
         html += `<button onclick="goToPage(${this.state.currentPage - 1})" ${this.state.currentPage === 1 ? 'disabled' : ''}>Previous</button>`;
         
-        // Page numbers
         const maxVisiblePages = 7;
         let startPage = Math.max(1, this.state.currentPage - Math.floor(maxVisiblePages / 2));
         let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
@@ -259,143 +261,24 @@ class PropertiesManager {
             html += `<button onclick="goToPage(${totalPages})">${totalPages}</button>`;
         }
         
-        // Next button
         html += `<button onclick="goToPage(${this.state.currentPage + 1})" ${this.state.currentPage === totalPages ? 'disabled' : ''}>Next</button>`;
         
         paginationDiv.innerHTML = html;
     }
     
     populateColumnFilters() {
-        // Implementation for populating dropdown filters
-        // This would extract unique values from properties for each filterable column
         const wards = [...new Set(this.state.allProperties.map(p => p.ward).filter(Boolean))];
         const lights = [...new Set(this.state.allProperties.map(p => p.primary_light).filter(Boolean))];
         const verdicts = [...new Set(this.state.allProperties.map(p => p.verdict || p.recommendation).filter(Boolean))];
         
-        // Store in state for use by filter components
         this.state.availableFilters = { wards, lights, verdicts };
-    }
-    
-    applyFilters() {
-        const filters = this.state.currentFilters;
-        
-        // Import HiddenStore and getPropertyId if not available globally
-        const HiddenStore = window.HiddenStore || (window.app && window.app.HiddenStore);
-        const getPropertyId = window.getPropertyId || (window.app && window.app.getPropertyId) || ((p) => String(p.listing_id ?? p.property_id ?? p.id));
-        
-        console.log('[DEBUG] Applying filters, hidden count:', HiddenStore?.all()?.length || this.state.hidden?.size || 0);
-        
-        this.state.filteredProperties = this.state.allProperties.filter(property => {
-            // Ward filter
-            if (filters.ward.length > 0 && !filters.ward.includes(property.ward)) {
-                return false;
-            }
-            
-            // Light filter
-            if (filters.primary_light.length > 0 && !filters.primary_light.includes(property.primary_light)) {
-                return false;
-            }
-            
-            // Verdict filter
-            const verdict = property.verdict || property.recommendation;
-            if (filters.verdict.length > 0 && !filters.verdict.includes(verdict)) {
-                return false;
-            }
-            
-            // Hide hidden properties - use HiddenStore if available, fallback to legacy
-            const propertyId = getPropertyId(property);
-            if (HiddenStore && HiddenStore.isLoaded && HiddenStore.isLoaded()) {
-                if (HiddenStore.has(propertyId)) {
-                    console.log('[DEBUG] Filtering out hidden property via HiddenStore:', propertyId);
-                    return false;
-                }
-            } else if (this.state.hidden && this.state.hidden.has(propertyId)) {
-                console.log('[DEBUG] Filtering out hidden property via legacy state:', propertyId);
-                return false;
-            }
-            
-            return true;
-        });
-        
-        console.log('[DEBUG] Properties after filtering:', this.state.filteredProperties.length, 'visible,', 
-            this.state.allProperties.length - this.state.filteredProperties.length, 'filtered out');
-        
-        this.state.setPage(1);
-        this.applySort();
-        this.renderCurrentPage();
-    }
-    
-    async toggleHidden(propertyId, button) {
-        event.stopPropagation();
-        
-        try {
-            // Use HiddenStore for better handling
-            const HiddenStore = window.HiddenStore || (window.app && window.app.HiddenStore);
-            const getPropertyId = window.getPropertyId || (window.app && window.app.getPropertyId) || ((p) => String(p.listing_id ?? p.property_id ?? p.id));
-            
-            const canonicalId = getPropertyId({ property_id: propertyId });
-            
-            if (HiddenStore && HiddenStore.isLoaded && HiddenStore.isLoaded()) {
-                // Use new HiddenStore
-                const isCurrentlyHidden = HiddenStore.has(canonicalId);
-                
-                if (isCurrentlyHidden) {
-                    await HiddenStore.remove(canonicalId);
-                } else {
-                    await HiddenStore.add(canonicalId);
-                }
-            } else {
-                // Fallback to legacy approach
-                const isCurrentlyHidden = this.state.hidden.has(propertyId);
-                
-                if (isCurrentlyHidden) {
-                    // Use HiddenManager to properly remove (handles both API and local storage)
-                    if (window.app && window.app.hidden) {
-                        await window.app.hidden.removeHidden(propertyId);
-                    }
-                } else {
-                    // Add to hidden - handle both logged-in and anonymous users
-                    if (this.state.currentUser) {
-                        await this.api.addHidden(propertyId, this.state.currentUser.email);
-                    }
-                    
-                    // Update local state
-                    this.state.addHidden(propertyId);
-                    
-                    // Save to storage for anonymous users
-                    StorageManager.saveHidden(this.state.hidden);
-                }
-                
-                // Update UI for legacy mode
-                this.updateHiddenCount();
-                // Re-apply filters to hide/show the property
-                this.applyFilters();
-            }
-            
-        } catch (error) {
-            console.error('Error toggling hidden property:', error);
-            alert('Error updating hidden status');
-        }
-    }
-    
-    updateHiddenCount() {
-        const hiddenCount = document.getElementById('hiddenCount');
-        if (hiddenCount) {
-            hiddenCount.textContent = this.state.hidden.size.toString();
-        }
     }
 }
 
-// Global functions for backwards compatibility with onclick handlers
+// Global functions
 function sortTable(field) {
     if (window.app && window.app.properties) {
         window.app.properties.sortTable(field);
-    }
-}
-
-function toggleHidden(propertyId, button) {
-    if (window.app && window.app.properties) {
-        window.app.properties.toggleHidden(propertyId, button);
     }
 }
 
@@ -407,7 +290,6 @@ function goToPage(page) {
 }
 
 function openListing(event, url) {
-    // Don't open if clicking on buttons or other interactive elements
     if (event.target.tagName === 'BUTTON' || event.target.closest('button')) {
         return;
     }
