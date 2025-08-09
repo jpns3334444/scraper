@@ -1,10 +1,12 @@
 /**
  * main.js
- * SIMPLIFIED: Proper initialization order for hidden functionality
+ * FIXED: Proper initialization order to ensure hidden items are loaded before properties
  */
 
 document.addEventListener('DOMContentLoaded', async function() {
+    console.log('[DEBUG] ==========================================');
     console.log('[DEBUG] Initializing Tokyo Real Estate App...');
+    console.log('[DEBUG] ==========================================');
     
     // Create instances
     const api = new PropertyAPI(API_URL, FAVORITES_API_URL);
@@ -35,6 +37,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     
     // Set up event listeners for state changes
     appState.on('hidden', () => {
+        console.log('[DEBUG] Hidden state changed, re-applying filters');
         // Re-apply filters whenever hidden state changes
         if (window.app && window.app.properties) {
             window.app.properties.applyFilters();
@@ -80,39 +83,74 @@ document.addEventListener('DOMContentLoaded', async function() {
     
     // Initialize components
     try {
+        console.log('[DEBUG] ==========================================');
+        console.log('[DEBUG] STEP 1: Checking authentication...');
+        console.log('[DEBUG] ==========================================');
+        
         // Check authentication first
-        authManager.checkAuth();
+        const isAuthenticated = authManager.checkAuth();
+        console.log('[DEBUG] User authenticated:', isAuthenticated);
+        console.log('[DEBUG] Current user:', authManager.getCurrentUser());
         
         // Initialize router
         router.init();
         
-        // Load user's hidden items FIRST
-        console.log('[DEBUG] Loading hidden items...');
-        if (authManager.getCurrentUser()) {
-            await hiddenManager.loadUserHidden();
+        console.log('[DEBUG] ==========================================');
+        console.log('[DEBUG] STEP 2: Loading user preferences...');
+        console.log('[DEBUG] ==========================================');
+        
+        // CRITICAL: Load hidden items FIRST, before properties
+        // This ensures properties are properly filtered from the start
+        if (isAuthenticated && authManager.getCurrentUser()) {
+            console.log('[DEBUG] User is authenticated, loading from API...');
+            
+            // Load both hidden and favorites in parallel
+            const [hiddenResult, favoritesResult] = await Promise.all([
+                hiddenManager.loadUserHidden().catch(err => {
+                    console.error('[ERROR] Failed to load hidden items:', err);
+                    hiddenManager.loadHiddenFromStorage(); // Fallback
+                }),
+                favoritesManager.loadUserFavorites().catch(err => {
+                    console.error('[ERROR] Failed to load favorites:', err);
+                    favoritesManager.loadFavoritesFromStorage(); // Fallback
+                })
+            ]);
+            
+            console.log('[DEBUG] User preferences loaded');
+            console.log('[DEBUG] Hidden count:', appState.hidden.size);
+            console.log('[DEBUG] Favorites count:', appState.favorites.size);
+            
         } else {
+            console.log('[DEBUG] User not authenticated, loading from localStorage...');
+            
+            // Load from localStorage for anonymous users
             hiddenManager.loadHiddenFromStorage();
-        }
-        console.log('[DEBUG] Hidden items loaded:', appState.hidden.size, 'items');
-        
-        // Load favorites
-        console.log('[DEBUG] Loading favorites...');
-        if (authManager.getCurrentUser()) {
-            await favoritesManager.loadUserFavorites();
-        } else {
             favoritesManager.loadFavoritesFromStorage();
+            
+            console.log('[DEBUG] Anonymous preferences loaded');
+            console.log('[DEBUG] Hidden count:', appState.hidden.size);
+            console.log('[DEBUG] Favorites count:', appState.favorites.size);
         }
-        console.log('[DEBUG] Favorites loaded:', appState.favorites.size, 'items');
         
-        // Load properties - they will be filtered automatically
-        console.log('[DEBUG] Loading properties...');
-        await propertiesManager.loadAllProperties();
-        
-        // Update counters
+        // Update counters after loading preferences
         favoritesManager.updateFavoritesCount();
         hiddenManager.updateHiddenCount();
         
+        console.log('[DEBUG] ==========================================');
+        console.log('[DEBUG] STEP 3: Loading properties...');
+        console.log('[DEBUG] ==========================================');
+        console.log('[DEBUG] Hidden items that will be filtered:', Array.from(appState.hidden));
+        
+        // NOW load properties - they will be filtered automatically based on hidden items
+        await propertiesManager.loadAllProperties();
+        
+        console.log('[DEBUG] ==========================================');
         console.log('[DEBUG] App initialization complete!');
+        console.log('[DEBUG] Total properties:', appState.allProperties.length);
+        console.log('[DEBUG] Visible properties:', appState.filteredProperties.length);
+        console.log('[DEBUG] Hidden properties:', appState.hidden.size);
+        console.log('[DEBUG] Favorite properties:', appState.favorites.size);
+        console.log('[DEBUG] ==========================================');
         
     } catch (error) {
         console.error('[ERROR] App initialization failed:', error);

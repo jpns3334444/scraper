@@ -126,7 +126,10 @@ def lambda_handler(event, context):
             
             # Check if this is /favorites/user/{userId} for getting user's favorites list
             if '/favorites/user/' in path and path_params and 'userId' in path_params:
-                return get_user_preferences(event, path_params['userId'], 'favorite')
+                # CRITICAL: Decode the URL-encoded email address
+                decoded_user_id = unquote(path_params['userId'])
+                print(f"[DEBUG] Favorites route: encoded userId={path_params['userId']}, decoded={decoded_user_id}")
+                return get_user_preferences(event, decoded_user_id, 'favorite')
             
             # Check if this is /favorites/analysis/{userEmail}/{propertyId} for analysis
             elif '/favorites/analysis/' in path and path_params:
@@ -147,7 +150,10 @@ def lambda_handler(event, context):
             # Extract userId from path
             path_params = event.get('pathParameters', {})
             if path_params and 'userId' in path_params:
-                return get_user_preferences(event, path_params['userId'], 'hidden')
+                # CRITICAL: Decode the URL-encoded email address
+                decoded_user_id = unquote(path_params['userId'])
+                print(f"[DEBUG] Hidden route: encoded userId={path_params['userId']}, decoded={decoded_user_id}")
+                return get_user_preferences(event, decoded_user_id, 'hidden')
         
         # If no route matched, return 404
         return {
@@ -315,87 +321,6 @@ def add_preference(event, user_id, preference_type):
         }
 
 
-def get_favorite_analysis(event, user_id, property_id):
-    """Get analysis result and property images for a favorite"""
-    # Determine origin_header at runtime
-    origin_header = event.get("headers", {}).get("origin", "*")
-    
-    try:
-        # Get the favorite item with analysis
-        favorite_response = preferences_table.get_item(
-            Key={
-                'user_id': user_id,
-                'property_id': property_id
-            }
-        )
-        
-        if 'Item' not in favorite_response:
-            return {
-                "statusCode": 404,
-                "headers": {
-                    "Content-Type": "application/json",
-                    "Access-Control-Allow-Origin": origin_header,
-                    "Access-Control-Allow-Credentials": "true"
-                },
-                "body": json.dumps({'error': 'Favorite not found'})
-            }
-        
-        favorite_item = favorite_response['Item']
-        
-        # Get property data for images
-        property_response = properties_table.get_item(
-            Key={'property_id': property_id, 'sort_key': 'META'}
-        )
-        property_data = property_response.get('Item', {})
-        
-        # Generate presigned URLs for property images
-        property_images = []
-        if property_data.get('photo_filenames'):
-            for s3_key in property_data['photo_filenames'].split('|')[:5]:
-                if s3_key.strip():
-                    try:
-                        url = s3.generate_presigned_url(
-                            'get_object',
-                            Params={'Bucket': output_bucket, 'Key': s3_key.strip()},
-                            ExpiresIn=3600
-                        )
-                        property_images.append(url)
-                    except Exception as e:
-                        print(f"Warning: Failed to generate presigned URL for {s3_key}: {e}")
-        
-        # Convert Decimals to floats for JSON serialization
-        analysis_result = decimal_to_float(favorite_item.get('analysis_result', {}))
-        property_summary = decimal_to_float(favorite_item.get('property_summary', {}))
-        
-        return {
-            "statusCode": 200,
-            "headers": {
-                "Content-Type": "application/json",
-                "Access-Control-Allow-Origin": origin_header,
-                "Access-Control-Allow-Credentials": "true"
-            },
-            "body": json.dumps({
-                "analysis_result": analysis_result,
-                "property_images": property_images,
-                "property_summary": property_summary
-            })
-        }
-        
-    except Exception as e:
-        print("ERROR:", e)
-        import traceback
-        print(traceback.format_exc())
-        return {
-            "statusCode": 500,
-            "headers": {
-                "Content-Type": "application/json",
-                "Access-Control-Allow-Origin": origin_header,
-                "Access-Control-Allow-Credentials": "true"
-            },
-            "body": json.dumps({'error': str(e)})
-        }
-
-
 def remove_preference(event, user_id, preference_type):
     # Determine origin_header at runtime
     origin_header = event.get("headers", {}).get("origin", "*")
@@ -407,6 +332,7 @@ def remove_preference(event, user_id, preference_type):
         
         # URL decode the property_id in case it contains encoded characters like %23 for #
         property_id = unquote(property_id)
+        print(f"[DEBUG] Remove preference: user_id={user_id}, property_id={property_id}, type={preference_type}")
 
         if not property_id:
             return {
@@ -480,6 +406,13 @@ def get_user_preferences(event, user_id, preference_type):
     origin_header = event.get("headers", {}).get("origin", "*")
     
     try:
+        # Make absolutely sure user_id is decoded
+        user_id = unquote(str(user_id))  # Convert to string first, then decode
+        print(f"[DEBUG] get_user_preferences: Getting {preference_type} preferences for user '{user_id}'")
+        
+        # Log the exact query we're making
+        print(f"[DEBUG] DynamoDB Query: user_id='{user_id}', preference_type='{preference_type}'")
+        
         # Query GSI for user's preferences of specific type
         response = preferences_table.query(
             IndexName='user-type-index',
@@ -492,6 +425,10 @@ def get_user_preferences(event, user_id, preference_type):
         )
         
         preferences = response.get('Items', [])
+        print(f"[DEBUG] Query returned {len(preferences)} {preference_type} items for user {user_id}")
+        
+        if len(preferences) > 0:
+            print(f"[DEBUG] First item: {preferences[0].get('property_id', 'NO_ID')}")
         
         # Convert Decimal to float for JSON serialization (only for response)
         preferences = decimal_to_float(preferences)
@@ -514,7 +451,12 @@ def get_user_preferences(event, user_id, preference_type):
                     property_summary['image_url'] = None
         
         # Return appropriate key name based on preference type
-        result_key = 'favorites' if preference_type == 'favorite' else preference_type + 's'
+        if preference_type == 'favorite':
+            result_key = 'favorites'
+        elif preference_type == 'hidden':
+            result_key = 'hidden'
+        else:
+            result_key = preference_type + 's'
         
         return {
             "statusCode": 200,
@@ -547,6 +489,10 @@ def get_favorite_analysis(event, user_id, property_id):
     origin_header = event.get("headers", {}).get("origin", "*")
     
     try:
+        # Make sure both are decoded
+        user_id = unquote(str(user_id))
+        property_id = unquote(str(property_id))
+        
         # Get the favorite item with analysis
         favorite_response = preferences_table.get_item(
             Key={

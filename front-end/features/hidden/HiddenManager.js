@@ -1,6 +1,6 @@
 /**
  * HiddenManager.js
- * FIXED: Simplified hidden items functionality with proper ID handling
+ * FIXED: Properly loads and persists hidden items from DynamoDB
  */
 
 class HiddenManager {
@@ -62,24 +62,55 @@ class HiddenManager {
     }
     
     async loadUserHidden() {
+        console.log('[DEBUG] Loading user hidden items...');
+        
         if (!this.state.currentUser) {
+            console.log('[DEBUG] No authenticated user, loading from storage');
             this.loadHiddenFromStorage();
             return;
         }
         
         try {
-            const hiddenList = await this.api.loadUserHidden(this.state.currentUser.email);
+            console.log('[DEBUG] Loading hidden items for user:', this.state.currentUser.email);
+            
+            // Call the API to get hidden items from DynamoDB
+            const response = await fetch(`${this.api.favoritesApiUrl}/hidden/user/${encodeURIComponent(this.state.currentUser.email)}`, {
+                headers: { 
+                    'X-User-Email': this.state.currentUser.email
+                }
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Failed to load hidden items: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            console.log('[DEBUG] Hidden API response:', data);
+            
+            // The API returns {hidden: [...]} for hidden items
+            const hiddenList = data.hidden || [];
+            console.log('[DEBUG] Found', hiddenList.length, 'hidden items from API');
+            
+            // Extract property IDs from the hidden list
             const hiddenIds = hiddenList.map(h => h.property_id);
+            console.log('[DEBUG] Hidden property IDs:', hiddenIds);
+            
+            // Update the state with the hidden IDs
             this.state.setHidden(hiddenIds);
             this.updateHiddenCount();
+            
+            console.log('[DEBUG] Hidden state updated, size:', this.state.hidden.size);
+            
         } catch (error) {
-            console.error('Failed to load user hidden:', error);
+            console.error('[ERROR] Failed to load user hidden from API:', error);
+            // Fallback to localStorage on error
             this.loadHiddenFromStorage();
         }
     }
     
     loadHiddenFromStorage() {
         const hidden = StorageManager.loadHidden();
+        console.log('[DEBUG] Loaded', hidden.size, 'hidden items from localStorage');
         this.state.setHidden(hidden);
         this.updateHiddenCount();
     }
@@ -98,6 +129,7 @@ class HiddenManager {
         hiddenList.className = 'hidden-container';
         
         const hiddenProperties = this.state.getHiddenProperties();
+        console.log('[DEBUG] Displaying', hiddenProperties.length, 'hidden properties in tab');
         
         if (hiddenProperties.length === 0) {
             hiddenList.innerHTML = '<div style="padding:40px; text-align:center; color:#999;">No hidden items.</div>';

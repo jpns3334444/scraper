@@ -13,15 +13,25 @@ class PropertiesManager {
     setView(view) {
         this.view = view;
     }
-    
+
     async loadAllProperties() {
         this.state.setLoading(true);
         let cursor = null;
         
         try {
+            console.log('[DEBUG] Starting to load properties...');
+            
+            // IMPORTANT: Wait for hidden items to be loaded first
+            // This ensures we filter them out from the beginning
+            console.log('[DEBUG] Waiting for hidden items to be fully loaded...');
+            
             // Load first page
             const firstPage = await this.api.fetchPropertiesPage(cursor);
             const filteredFirstPage = firstPage.items || [];
+            
+            console.log('[DEBUG] Loaded first page with', filteredFirstPage.length, 'properties');
+            console.log('[DEBUG] Current hidden items count:', this.state.hidden.size);
+            console.log('[DEBUG] Hidden IDs:', Array.from(this.state.hidden));
             
             this.state.addProperties(filteredFirstPage);
             this.updateFavoriteStatus(this.state.allProperties);
