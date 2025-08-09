@@ -13,6 +13,79 @@ from PIL import Image
 import io
 import boto3
 import json
+import unicodedata
+
+# Normalizer helper functions for optional fields
+def _norm_text(s):
+    try:
+        return " ".join(str(s).strip().replace("\u3000"," ").split()) or None
+    except: return None
+
+def _norm_label(label: str) -> str:
+    if not label:
+        return ""
+    s = unicodedata.normalize("NFKC", str(label))
+    # remove full/half colons and all spaces (incl. full-width)
+    s = re.sub(r"[：:\u3000\s]+", "", s)
+    # strip common trailing punctuation/decor
+    s = re.sub(r"[()（）〔〕［］【】]+", "", s)
+    return s.strip()
+
+def _norm_cell_text(el) -> str:
+    try:
+        # Prefer stripped_strings to avoid JS/CSS noise
+        txt = " ".join(el.stripped_strings)
+        # Collapse spaces, normalize width
+        txt = unicodedata.normalize("NFKC", txt)
+        return " ".join(txt.split())
+    except Exception:
+        return None
+
+def _make_soup(html: str):
+    try:
+        return BeautifulSoup(html, "lxml")
+    except Exception:
+        return BeautifulSoup(html, "html.parser")
+
+def _to_bool_from_jp(s, true_words=("有","あり","可","必要","最上階","角部屋","リフォーム","リノベーション"),
+                     false_words=("無","なし","不可","不要")):
+    try:
+        t = str(s)
+        if any(w in t for w in true_words): return True
+        if any(w in t for w in false_words): return False
+    except: pass
+    return None
+
+def _to_int_yen(s):
+    try:
+        t = str(s).replace(",","").replace("円","").replace("／月","").replace("/月","").strip()
+        return int(float(t)) if t else None
+    except: return None
+
+def _to_float_sqm(s):
+    try:
+        t = str(s).replace(",","").replace("m²","").replace("㎡","").strip()
+        return float(t) if t else None
+    except: return None
+
+def _to_iso_date(s):
+    # Accepts YYYY年M月D日[ 時:分[:秒]] or YYYY/MM/DD or YYYY-MM-DD
+    import re, datetime
+    try:
+        t = _norm_text(s)
+        if not t: return None
+        # YYYY年M月D日...
+        m = re.match(r"(\d{4})[年/.-](\d{1,2})[月/.-](\d{1,2})日?(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?", t)
+        if m:
+            y,mn,d,hh,mm,ss = m.groups()
+            hh = int(hh) if hh else 0; mm = int(mm) if mm else 0; ss = int(ss) if ss else 0
+            return datetime.datetime(int(y),int(mn),int(d),hh,mm,ss).isoformat()
+        # Plain YYYY-MM-DD or YYYY/MM/DD
+        for fmt in ("%Y-%m-%d","%Y/%m/%d"):
+            try: return datetime.datetime.strptime(t, fmt).date().isoformat()
+            except: pass
+    except: pass
+    return None
 
 # Overview field mapping for deterministic parsing
 OVERVIEW_FIELD_MAP = {
@@ -38,6 +111,37 @@ OVERVIEW_FIELD_MAP = {
     "駐車場": "parking_text",
     "総戸数": "total_units_text",
 }
+
+# Extended field mapping for optional extras
+FIELD_MAP = [
+    (r"管理会社名",               "management_company",            _norm_text),
+    (r"管理形態|管理の形態",       "management_form",               _norm_text),
+    (r"管理員.*勤務形態",          "manager_workstyle",             _norm_text),
+    (r"管理組合の有無",            "owner_association_present",     _to_bool_from_jp),
+    (r"現況",                    "current_occupancy",             _norm_text),
+    (r"引渡.*(時期|条件)?",        "handover_timing",               _norm_text),
+    (r"取引態様",                 "brokerage_type",                _norm_text),
+    (r"LIFULL物件番号",            "lifull_property_id",            _norm_text),
+    (r"自社管理番号",              "internal_listing_id",           _norm_text),
+    (r"(情報公開日|掲載開始日)",     "info_published_at",            _to_iso_date),
+    (r"(最終更新日|最新情報提供日)", "info_updated_at",              _to_iso_date),
+    (r"(情報有効期限|情報提供日)",   "info_expires_at",              _to_iso_date),
+    (r"建物構造",                 "building_structure",            _norm_text),
+    (r"用途地域",                 "zoning",                        _norm_text),
+    (r"土地権利",                 "land_right",                    _norm_text),
+    (r"国土法届出",               "land_act_notification_required",_to_bool_from_jp),
+    (r"修繕積立(基金|一時金)",      "repair_reserve_fund_initial_yen", _to_int_yen),
+    (r"その他費用",               "other_initial_fees_text",       _norm_text),
+    (r"駐車場",                  "parking_text",                  _norm_text),
+    (r"駐輪場",                  "bicycle_parking_text",          _norm_text),
+    (r"バイク置場",               "motorcycle_parking_text",       _norm_text),
+    (r"ペット",                  "pets_allowed",                  _to_bool_from_jp),
+    (r"総戸数",                  "total_units",                   lambda s: int(str(s).replace(",","").strip()) if str(s).strip().replace(",","").isdigit() else None),
+    (r"敷地面積",                 "site_area_sqm",                 _to_float_sqm),
+]
+
+# Precompile FIELD_MAP patterns
+FIELD_MAP_COMPILED = [(re.compile(p), f, t) for (p, f, t) in FIELD_MAP]
 
 # Orientation mapping from Japanese to English
 ORI_MAP = {
@@ -729,7 +833,7 @@ def extract_listings_with_prices_from_html(html_content):
     """Extract listing URLs with prices from HTML content"""
     from bs4 import BeautifulSoup
     
-    soup = BeautifulSoup(html_content, 'html.parser')
+    soup = _make_soup(html_content)
     listings = []
     
     # Look for listing containers - these may vary, so we'll try multiple selectors
@@ -837,7 +941,7 @@ def collect_area_listings_with_prices(area_name, max_pages=None, session=None, l
             raise Exception(f"Anti-bot protection detected on {area_name}")
         
         # Parse pagination info
-        soup = BeautifulSoup(response.content, 'html.parser')
+        soup = _make_soup(response.text)
         total_element = soup.select_one('.totalNum')
         total_count = int(total_element.text) if total_element else 0
         
@@ -935,7 +1039,7 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
             # Store raw HTML before parsing
             raw_html = response.text
             
-            soup = BeautifulSoup(response.content, 'html.parser')
+            soup = _make_soup(response.text)
             data = {
                 "url": property_url,
                 "raw_html": raw_html,
@@ -1048,36 +1152,89 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
             if logger:
                 logger.debug(f"Found {len(tables)} tables to process for fallback")
             
-            # Debug: Log all extracted fields for floor debugging
+            # Enhanced table walking for extras with normalized labels
             all_extracted_fields = []
-            
-            for table in tables:
-                rows = table.find_all('tr')
-                if len(rows) > 5:  # Reduced threshold for better detection
-                    for row in rows:
-                        cells = row.find_all(['th', 'td'])
+            extras = {}
+            missed_labels = []
+
+            # Walk all detail tables under the main area; be permissive
+            tables = soup.select("table, .mod-table, .mod-mergeTable")
+            for tbl in tables:
+                for tr in tbl.find_all("tr"):
+                    th = tr.find("th")
+                    td = tr.find("td")
+                    if not th or not td:
+                        # fallback: some pages use divs/spans inside rows
+                        cells = tr.find_all(["th","td","div","span"], recursive=True)
                         if len(cells) >= 2:
-                            key = cells[0].text.strip()
-                            value = cells[1].text.strip()
-                            if key and value and len(key) < 30:
-                                # Store raw value only if not already found by overview parser
-                                if key not in data:
-                                    data[key] = value
-                                    all_extracted_fields.append(f"{key}={value}")
-                                
-                                # Store mapped field if exists and not already found
-                                if key in field_mappings and field_mappings[key] not in data:
-                                    data[field_mappings[key]] = value
-                                    if logger:
-                                        logger.debug(f"Fallback mapped field: {key} -> {field_mappings[key]} = {value}")
-                                # Debug: log potential floor-related fields
-                                elif '階' in key and logger:
-                                    logger.debug(f"Fallback unmapped floor-related field: {key} = {value}")
-                                # Handle primary light field
-                                elif key in ['主要採光面', '向き', '方角'] and 'primary_light' not in data:
-                                    data['primary_light'] = value
-                                    if logger:
-                                        logger.debug(f"Found primary light field: {key} = {value}")
+                            th, td = cells[0], cells[1]
+                        else:
+                            continue
+
+                    raw_label = _norm_cell_text(th) or ""
+                    raw_value = _norm_cell_text(td)
+                    if not raw_label:
+                        continue
+
+                    # Guard for oversized raw values
+                    if raw_value and len(raw_value) > 2000:
+                        raw_value = raw_value[:2000]
+
+                    # Store for fallback field mapping (old approach)
+                    key = raw_label
+                    value = raw_value
+                    if key and value and len(key) < 30:
+                        # Store raw value only if not already found by overview parser
+                        if key not in data:
+                            data[key] = value
+                            all_extracted_fields.append(f"{key}={value}")
+                        
+                        # Store mapped field if exists and not already found
+                        if key in field_mappings and field_mappings[key] not in data:
+                            data[field_mappings[key]] = value
+                            if logger:
+                                logger.debug(f"Fallback mapped field: {key} -> {field_mappings[key]} = {value}")
+                        # Handle primary light field
+                        elif key in ['主要採光面', '向き', '方角'] and 'primary_light' not in data:
+                            data['primary_light'] = value
+                            if logger:
+                                logger.debug(f"Found primary light field: {key} = {value}")
+
+                    # New normalized label matching approach
+                    label = _norm_label(raw_label)
+                    matched = False
+                    for pat, field, transform in FIELD_MAP_COMPILED:
+                        if pat.search(label):
+                            val = transform(raw_value)
+                            if val is not None:
+                                extras[field] = val
+                            matched = True
+                            break
+                    if not matched:
+                        missed_labels.append(raw_label)
+            
+            # Marketing badges parsing from chips/list text
+            try:
+                chips_text = ""
+                # Look for marketing text in various containers
+                for selector in ['.point', '.recommend', '.sales-point', '.feature', '.highlight', '.badge', 
+                               '.chip', '.tag', '.label', '[class*="point"]', '[class*="feature"]',
+                               'li', 'span', 'div']:
+                    elements = soup.select(selector)
+                    for elem in elements:
+                        if elem.get_text().strip():
+                            chips_text += elem.get_text().strip() + " "
+                
+                if chips_text:
+                    # Only set if the call returns True; don't set False from missing chips
+                    if "最上階" in chips_text and _to_bool_from_jp("最上階"):
+                        extras["is_top_floor"] = True
+                    if "角部屋" in chips_text and _to_bool_from_jp("角部屋"):
+                        extras["is_corner_unit"] = True
+                    if ("リフォーム" in chips_text or "リノベ" in chips_text) and _to_bool_from_jp("リフォーム"):
+                        extras["is_renovated"] = True
+            except Exception:
+                pass  # Fail silently as required
             
             # Debug: Log all fields that were extracted
             if logger:
@@ -1444,6 +1601,21 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                     import traceback
                     logger.error(f"Traceback: {traceback.format_exc()}")
                 data["image_count"] = 0
+            
+            # Coverage logging for field extraction
+            try:
+                expected = {f for _, f, _ in FIELD_MAP}
+                found = set(extras.keys())
+                missing = sorted(expected - found)
+                if logger:
+                    # Only log the first few misses to avoid spam
+                    miss_preview = missing[:8]
+                    logger.info(f"[extras] set={sorted(found)} missing~{len(missing)} sample={miss_preview}")
+            except Exception:
+                pass
+            
+            # Add extras to data for DynamoDB
+            data['_extras'] = extras
             
             # Success! Return the data
             return data
@@ -1881,7 +2053,7 @@ def discover_tokyo_areas(logger=None):
         if response.status_code != 200:
             raise Exception(f"Failed to access city listing: HTTP {response.status_code}")
         
-        soup = BeautifulSoup(response.content, 'html.parser')
+        soup = _make_soup(response.text)
         area_links = []
         
         # Find area links

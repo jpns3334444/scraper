@@ -172,7 +172,8 @@ def save_complete_properties_to_dynamodb(properties_data, config, logger=None):
         with table.batch_writer() as batch:
             for property_data in successful_properties:
                 try:
-                    record = create_complete_property_record(property_data, config, logger, existing_properties)
+                    extras = property_data.pop('_extras', None)
+                    record = create_complete_property_record(property_data, config, logger, existing_properties, extras)
                     
                     if record and record.get('property_id') and record.get('sort_key'):
                         # Ensure all values are DynamoDB-compatible
@@ -206,7 +207,7 @@ def save_complete_properties_to_dynamodb(properties_data, config, logger=None):
             logger.error(f"Fatal DynamoDB error: {str(e)}")
         return 0
 
-def create_complete_property_record(property_data, config, logger=None, existing_properties=None):
+def create_complete_property_record(property_data, config, logger=None, existing_properties=None, extras=None):
     """Create a complete property record with all enriched fields and price tracking"""
     try:
         # Extract property ID - use existing if available
@@ -318,6 +319,16 @@ def create_complete_property_record(property_data, config, logger=None, existing
         # Add previous_price if there was a price change
         if previous_price is not None:
             record['previous_price'] = previous_price
+        
+        # Merge extras into the META dict
+        if extras:
+            for k, v in extras.items():
+                if v is None: 
+                    continue
+                # Don't overwrite existing non-null values
+                if k in record and record[k] not in (None, "", [], {}):
+                    continue
+                record[k] = v
         
         # Improved filtering to preserve important fields
         filtered_record = {}
