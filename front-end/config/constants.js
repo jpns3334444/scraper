@@ -12,7 +12,7 @@ const API_URL = 'https://whxu6x5b08.execute-api.ap-northeast-1.amazonaws.com/pro
 const FAVORITES_API_URL = API_URL; // Same API endpoint now
 
 // Pagination Configuration
-const ITEMS_PER_PAGE = 100;
+const ITEMS_PER_PAGE = 300;
 const PROPERTIES_LIMIT = 300;
 const DEFAULT_LIMIT = 300;
 

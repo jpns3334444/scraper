@@ -180,11 +180,13 @@ class AppState {
     }
     
     getHiddenProperties() {
-        return this.allProperties.filter(p => this.hidden.has(p.property_id));
+        const getPropertyId = window.getPropertyId || ((p) => String(p.listing_id ?? p.property_id ?? p.id));
+        return this.allProperties.filter(p => this.hidden.has(getPropertyId(p)));
     }
     
     getVisibleProperties() {
-        return this.allProperties.filter(p => !this.hidden.has(p.property_id));
+        const getPropertyId = window.getPropertyId || ((p) => String(p.listing_id ?? p.property_id ?? p.id));
+        return this.allProperties.filter(p => !this.hidden.has(getPropertyId(p)));
     }
     
     // Favorite analyses management

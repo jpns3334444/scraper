@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hidden Properties Fix Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+    </style>
+</head>
+<body>
+    <h1>Hidden Properties Fix Test</h1>
+    
+    <div class="test-section">
+        <h2>Test Results</h2>
+        <div id="test-results"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Manual Testing Steps</h2>
+        <ol>
+            <li><strong>Access the application:</strong> 
+                <a href="http://tokyo-real-estate-frontend-static-901472985889.s3-website-ap-northeast-1.amazonaws.com" target="_blank">
+                    Open Application
+                </a>
+            </li>
+            <li><strong>Test Anonymous User Hidden Properties:</strong>
+                <ul>
+                    <li>Hide a property by clicking the hide button</li>
+                    <li>Reload the page</li>
+                    <li>Verify the property stays hidden</li>
+                </ul>
+            </li>
+            <li><strong>Test Logged-in User Hidden Properties:</strong>
+                <ul>
+                    <li>Sign in to your account</li>
+                    <li>Hide a property</li>
+                    <li>Logout and login again</li>
+                    <li>Verify the property stays hidden</li>
+                </ul>
+            </li>
+            <li><strong>Test Login State Change:</strong>
+                <ul>
+                    <li>As anonymous user, hide some properties</li>
+                    <li>Login to an account</li>
+                    <li>Verify that anonymous hidden properties are cleared (this is expected behavior)</li>
+                    <li>Verify that any existing account hidden properties are loaded</li>
+                </ul>
+            </li>
+        </ol>
+    </div>
+    
+    <div class="test-section">
+        <h2>Expected Behavior After Fix</h2>
+        <div class="success">✓ Hidden properties should persist across page reloads</div>
+        <div class="success">✓ Hidden properties should be filtered from main table consistently</div>
+        <div class="success">✓ Login/logout should properly manage hidden state</div>
+        <div class="success">✓ Background loading should respect hidden state</div>
+    </div>
+    
+    <script>
+        // Simple test to verify the deployment was successful
+        document.addEventListener('DOMContentLoaded', function() {
+            const results = document.getElementById('test-results');
+            
+            results.innerHTML = `
+                <div class="success">✓ Test page loaded successfully</div>
+                <div class="info">📅 Test created: ${new Date().toLocaleString()}</div>
+                <div class="info">🔗 Application URL: <a href="http://tokyo-real-estate-frontend-static-901472985889.s3-website-ap-northeast-1.amazonaws.com" target="_blank">Click to test</a></div>
+            `;
+        });
+    </script>
+</body>
+</html>

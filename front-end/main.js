@@ -3,6 +3,8 @@
  * Application initialization and wiring of all components
  */
 
+// HiddenStore and getPropertyId will be available globally from HiddenManager.js
+
 // Initialize app
 document.addEventListener('DOMContentLoaded', async function() {
     console.log('[DEBUG] Initializing Tokyo Real Estate App...');
@@ -34,6 +36,14 @@ document.addEventListener('DOMContentLoaded', async function() {
     favoritesManager.setViews(favoritesView, analysisView);
     hiddenManager.setView(hiddenView);
     
+    // Set up event listeners for state changes
+    appState.on('hidden', () => {
+        // Re-apply filters whenever hidden state changes
+        if (window.app && window.app.properties) {
+            window.app.properties.applyFilters();
+        }
+    });
+    
     propertiesView.init();
     
     // Make available globally for onclick handlers and debugging
@@ -45,8 +55,14 @@ document.addEventListener('DOMContentLoaded', async function() {
         router: router,
         filterDropdown: filterDropdown,
         api: api,
-        state: appState
+        state: appState,
+        HiddenStore: HiddenStore,
+        getPropertyId: getPropertyId
     };
+    
+    // Also expose directly for easier access
+    window.HiddenStore = HiddenStore;
+    window.getPropertyId = getPropertyId;
     
     console.log('[DEBUG] Global app object created:', window.app);
     
@@ -72,27 +88,37 @@ document.addEventListener('DOMContentLoaded', async function() {
     
     // Initialize components
     try {
-        // Check authentication
+        // Check authentication first
         authManager.checkAuth();
         
-        // Load hidden items (from API for logged-in users, storage for anonymous)
-        if (authManager.getCurrentUser()) {
-            await hiddenManager.loadUserHidden();
-        } else {
-            hiddenManager.loadFromStorage();
-        }
-        
-        // Initialize router and tabs
+        // Initialize router and tabs early
         router.init();
         
-        // Load properties first, then favorites to avoid race condition
-        await propertiesManager.loadAllProperties();
+        // Initialize HiddenStore FIRST - critical to prevent flash
+        console.log('[DEBUG] Initializing HiddenStore...');
+        const user = authManager.getCurrentUser();
+        await HiddenStore.init({ user });
+        console.log('[DEBUG] HiddenStore initialized with', HiddenStore.all().length, 'hidden items');
         
-        if (authManager.getCurrentUser()) {
+        // Subscribe to HiddenStore changes for properties filtering
+        HiddenStore.subscribe(() => {
+            if (window.app && window.app.properties && appState.allProperties.length > 0) {
+                window.app.properties.applyFilters();
+            }
+        });
+        
+        // Load favorites state
+        console.log('[DEBUG] Loading favorites state...');
+        if (user) {
             await favoritesManager.loadUserFavorites();
         } else {
             favoritesManager.loadFavoritesFromStorage();
         }
+        console.log('[DEBUG] Favorites state loaded:', appState.favorites.size, 'items');
+        
+        // Load properties - they will be filtered during loadAllProperties using HiddenStore
+        console.log('[DEBUG] Loading properties...');
+        await propertiesManager.loadAllProperties();
         
         // Update counters
         favoritesManager.updateFavoritesCount();

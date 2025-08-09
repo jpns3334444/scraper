@@ -1,6 +1,6 @@
 /**
  * base.css
- * Minimal Sumi-e aesthetic - Traditional Japanese ink painting inspired design
+ * Clean minimal design
  */
 
  @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@200;300;400&display=swap');
@@ -47,109 +47,9 @@
      overflow-x: hidden;
  }
  
- /* Subtle paper texture background */
- body::before {
-     content: '';
-     position: fixed;
-     top: 0;
-     left: 0;
-     right: 0;
-     bottom: 0;
-     background: 
-         repeating-linear-gradient(
-             0deg,
-             transparent,
-             transparent 100px,
-             rgba(0,0,0,0.01) 100px,
-             rgba(0,0,0,0.01) 101px
-         ),
-         repeating-linear-gradient(
-             90deg,
-             transparent,
-             transparent 100px,
-             rgba(0,0,0,0.01) 100px,
-             rgba(0,0,0,0.01) 101px
-         );
-     pointer-events: none;
-     z-index: 0;
- }
  
- /* Bamboo/Reed decorations */
- .bamboo-decoration {
-     position: fixed;
-     width: 60px;
-     height: 100vh;
-     opacity: 0.03;
-     pointer-events: none;
-     z-index: 1;
-     background-repeat: repeat-y;
-     background-size: contain;
- }
  
- .bamboo-left {
-     left: 20px;
-     background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 400"><path d="M30 0 Q25 100 30 200 T30 400" stroke="%23000" stroke-width="2" fill="none"/><path d="M30 50 L35 45 L30 55 L25 50" stroke="%23000" stroke-width="1" fill="none"/><path d="M30 150 L35 145 L30 155 L25 150" stroke="%23000" stroke-width="1" fill="none"/><path d="M30 250 L35 245 L30 255 L25 250" stroke="%23000" stroke-width="1" fill="none"/></svg>');
- }
  
- .bamboo-right {
-     right: 20px;
-     background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 400"><path d="M30 0 Q35 100 30 200 T30 400" stroke="%23000" stroke-width="2" fill="none"/><path d="M30 80 L25 75 L30 85 L35 80" stroke="%23000" stroke-width="1" fill="none"/><path d="M30 180 L25 175 L30 185 L35 180" stroke="%23000" stroke-width="1" fill="none"/><path d="M30 280 L25 275 L30 285 L35 280" stroke="%23000" stroke-width="1" fill="none"/></svg>');
- }
- 
- /* Floating ink drops */
- @keyframes inkDrop {
-     0% {
-         transform: translateY(-10px) scale(0);
-         opacity: 0;
-     }
-     20% {
-         transform: translateY(0) scale(1);
-         opacity: 0.1;
-     }
-     80% {
-         transform: translateY(30vh) scale(0.8);
-         opacity: 0.05;
-     }
-     100% {
-         transform: translateY(50vh) scale(0.5);
-         opacity: 0;
-     }
- }
- 
- .ink-drop {
-     position: fixed;
-     width: 6px;
-     height: 6px;
-     background: radial-gradient(circle, var(--ink-black) 0%, transparent 70%);
-     border-radius: 50%;
-     pointer-events: none;
-     animation: inkDrop 12s ease-in-out infinite;
-     z-index: 2;
- }
- 
- /* Ink ripple effect */
- @keyframes inkRipple {
-     0% {
-         width: 0;
-         height: 0;
-         opacity: 0.3;
-     }
-     100% {
-         width: 100px;
-         height: 100px;
-         opacity: 0;
-     }
- }
- 
- .ink-ripple {
-     position: fixed;
-     border-radius: 50%;
-     background: radial-gradient(circle, transparent 30%, var(--ink-faint) 70%, transparent 100%);
-     pointer-events: none;
-     transform: translate(-50%, -50%);
-     animation: inkRipple 1s ease-out;
-     z-index: 100;
- }
  
  /* Typography */
  h1, h2, h3, h4, h5, h6 {

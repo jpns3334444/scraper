@@ -1,6 +1,6 @@
 /**
  * layout.css
- * Minimal Sumi-e layout with proper spacing and alignment
+ * Clean layout with proper spacing and alignment
  */
 
  .container {
@@ -28,40 +28,7 @@ h1 {
     display: inline-block;
 }
 
-/* Brush stroke underline */
-h1::after {
-    content: '';
-    position: absolute;
-    bottom: -10px;
-    left: 0;
-    right: 0;
-    height: 1px;
-    background: linear-gradient(
-        to right,
-        transparent 0%,
-        var(--ink-black) 20%,
-        var(--ink-black) 80%,
-        transparent 100%
-    );
-    opacity: 0.3;
-}
 
-/* Red seal stamp */
-.red-seal {
-    position: absolute;
-    top: -10px;
-    right: -60px;
-    width: 50px;
-    height: 50px;
-    color: var(--seal-red);
-    opacity: 0.7;
-    transform: rotate(-15deg);
-}
-
-.red-seal svg {
-    width: 100%;
-    height: 100%;
-}
 
 /* Tab Navigation - aligned left with proper underline */
 .tab-navigation {
@@ -120,21 +87,6 @@ h1::after {
     overflow: visible;
 }
 
-/* Subtle shadow for depth */
-.properties-table-wrapper::after {
-    content: '';
-    position: absolute;
-    bottom: -5px;
-    left: 10px;
-    right: 10px;
-    height: 3px;
-    background: linear-gradient(
-        to bottom,
-        rgba(0,0,0,0.03) 0%,
-        transparent 100%
-    );
-    pointer-events: none;
-}
 
 /* Loading state */
 .loading {
@@ -191,11 +143,6 @@ h1::after {
         letter-spacing: 0.2em;
     }
     
-    .red-seal {
-        right: -40px;
-        width: 35px;
-        height: 35px;
-    }
     
     .tab-navigation {
         gap: var(--space-lg);

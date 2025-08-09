@@ -1,6 +1,7 @@
 /**
  * FavoritesManager.js
  * Handles favorites functionality including loading, adding, removing, and syncing with API
+ * FIXED: Proper markdown rendering for analysis
  */
 
 class FavoritesManager {
@@ -8,6 +9,7 @@ class FavoritesManager {
         this.api = api;
         this.state = state;
         this.view = null;
+        this.markdownLoaded = false;
     }
     
     setView(view) {
@@ -17,6 +19,38 @@ class FavoritesManager {
     setViews(favoritesView, analysisView) {
         this.view = favoritesView;
         this.analysisView = analysisView;
+    }
+    
+    // Load markdown library if not already loaded
+    async ensureMarkdownLibrary() {
+        if (this.markdownLoaded && window.marked) return;
+        
+        return new Promise((resolve, reject) => {
+            if (window.marked) {
+                this.markdownLoaded = true;
+                resolve();
+                return;
+            }
+            
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/marked/marked.min.js';
+            script.onload = () => {
+                this.markdownLoaded = true;
+                // Configure marked for better rendering
+                window.marked.setOptions({
+                    breaks: true,
+                    gfm: true,
+                    tables: true,
+                    sanitize: false,
+                    pedantic: false,
+                    smartLists: true,
+                    smartypants: false
+                });
+                resolve();
+            };
+            script.onerror = reject;
+            document.head.appendChild(script);
+        });
     }
     
     async toggleFavorite(propertyId, button) {
@@ -79,7 +113,6 @@ class FavoritesManager {
     }
     
     async removeFavorite(propertyId) {
-        
         try {
             // Call the same toggle function
             const heartBtn = document.querySelector(`button[data-property-id="${propertyId}"]`);
@@ -335,10 +368,13 @@ class FavoritesManager {
             }
         }
         
-        this.showAnalysisModal(data);
+        await this.showAnalysisModal(data);
     }
     
-    showAnalysisModal(data) {
+    async showAnalysisModal(data) {
+        // Ensure markdown library is loaded
+        await this.ensureMarkdownLibrary();
+        
         // Create modal overlay
         const modal = document.createElement('div');
         modal.className = 'analysis-modal-overlay';
@@ -358,6 +394,51 @@ class FavoritesManager {
         const price = summary.price ? `¥${(summary.price * 10000).toLocaleString()}` : 'N/A';
         const size = summary.size_sqm ? `${Math.round(summary.size_sqm)}m²` : 'N/A';
         
+        // Get the markdown content
+        const analysis = data.analysis_result || {};
+        const markdownContent = analysis.analysis_markdown || analysis.analysis_text || '';
+        
+        // Render markdown to HTML
+        let renderedContent = '';
+        if (markdownContent && window.marked) {
+            try {
+                // Clean up the markdown content first
+                let cleanedMarkdown = markdownContent;
+                
+                // Fix common markdown issues
+                // 1. Ensure proper spacing around headers
+                cleanedMarkdown = cleanedMarkdown.replace(/^(#{1,6})\s*/gm, '$1 ');
+                
+                // 2. Fix table formatting issues (ensure pipes are properly spaced)
+                cleanedMarkdown = cleanedMarkdown.replace(/\|([^|]+)\|/g, (match, content) => {
+                    return '| ' + content.trim() + ' |';
+                });
+                
+                // 3. Ensure blank lines around tables for proper parsing
+                cleanedMarkdown = cleanedMarkdown.replace(/(\n)(\|[^\n]+\|)/g, '$1\n$2');
+                cleanedMarkdown = cleanedMarkdown.replace(/(\|[^\n]+\|)(\n)/g, '$1\n$2');
+                
+                // Parse markdown to HTML
+                renderedContent = marked.parse(cleanedMarkdown);
+                
+                // Post-process the HTML to add styling classes
+                renderedContent = renderedContent
+                    .replace(/<table>/g, '<table class="analysis-table">')
+                    .replace(/<h2>/g, '<h2 class="analysis-section-header">')
+                    .replace(/<h3>/g, '<h3 class="analysis-subsection-header">')
+                    .replace(/<ul>/g, '<ul class="analysis-list">')
+                    .replace(/<strong>/g, '<strong class="analysis-emphasis">');
+                    
+            } catch (error) {
+                console.error('Markdown parsing error:', error);
+                // Fallback to displaying raw markdown
+                renderedContent = `<pre style="white-space: pre-wrap; font-family: inherit;">${markdownContent}</pre>`;
+            }
+        } else {
+            // Fallback if no markdown library or content
+            renderedContent = this.formatAnalysisResults(analysis);
+        }
+        
         modal.innerHTML = `
             <div class="analysis-modal">
                 <div class="analysis-modal-header">
@@ -375,9 +456,8 @@ class FavoritesManager {
                         ${images}
                     </div>
                     
-                    <div class="analysis-results">
-                        <h3>Investment Analysis</h3>
-                        ${this.formatAnalysisResults(data.analysis_result || {})}
+                    <div class="analysis-results analysis-markdown-content">
+                        ${renderedContent}
                     </div>
                 </div>
             </div>
@@ -390,19 +470,21 @@ class FavoritesManager {
     }
     
     formatAnalysisResults(analysis) {
+        // Fallback formatting when markdown is not available
         if (!analysis || typeof analysis !== 'object') {
             return '<p class="no-analysis">Analysis data not available</p>';
         }
         
-        // Handle new format with analysis_text
-        if (analysis.analysis_text) {
-            return this.formatAnalysisText(analysis.analysis_text, analysis.analysis_verdict);
+        // Handle both markdown and structured format
+        if (analysis.analysis_markdown || analysis.analysis_text) {
+            const text = analysis.analysis_markdown || analysis.analysis_text;
+            // Basic text to HTML conversion
+            return `<div class="analysis-text-fallback">${text.replace(/\n/g, '<br>')}</div>`;
         }
         
-        // Backwards compatibility - handle old structured format
+        // Legacy structured format handling
         const sections = [];
         
-        // Key metrics section
         if (analysis.investment_rating || analysis.final_verdict || analysis.rental_yield_net) {
             sections.push(`
                 <div class="analysis-metrics">
@@ -410,144 +492,11 @@ class FavoritesManager {
                     ${analysis.investment_rating ? `<div class="metric"><strong>Investment Rating:</strong> ${analysis.investment_rating}/10</div>` : ''}
                     ${analysis.final_verdict ? `<div class="metric"><strong>Verdict:</strong> ${analysis.final_verdict}</div>` : ''}
                     ${analysis.rental_yield_net ? `<div class="metric"><strong>Net Rental Yield:</strong> ${analysis.rental_yield_net}%</div>` : ''}
-                    ${analysis.rental_yield_gross ? `<div class="metric"><strong>Gross Rental Yield:</strong> ${analysis.rental_yield_gross}%</div>` : ''}
-                </div>
-            `);
-        }
-        
-        // Summary section
-        if (analysis.summary) {
-            sections.push(`
-                <div class="analysis-summary">
-                    <h4>Summary</h4>
-                    <p>${analysis.summary}</p>
-                </div>
-            `);
-        }
-        
-        // Financial projections
-        if (analysis.price_appreciation_5yr || analysis.renovation_cost_estimate) {
-            sections.push(`
-                <div class="analysis-financial">
-                    <h4>Financial Projections</h4>
-                    ${analysis.price_appreciation_5yr ? `<div class="metric"><strong>5-Year Price Appreciation:</strong> ${analysis.price_appreciation_5yr}</div>` : ''}
-                    ${analysis.renovation_cost_estimate ? `<div class="metric"><strong>Renovation Cost Estimate:</strong> ${analysis.renovation_cost_estimate}</div>` : ''}
-                </div>
-            `);
-        }
-        
-        // Risks and considerations
-        if (analysis.key_risks && Array.isArray(analysis.key_risks)) {
-            sections.push(`
-                <div class="analysis-risks">
-                    <h4>Key Risks</h4>
-                    <ul>
-                        ${analysis.key_risks.map(risk => `<li>${risk}</li>`).join('')}
-                    </ul>
-                </div>
-            `);
-        }
-        
-        // Action items
-        if (analysis.action_items && Array.isArray(analysis.action_items)) {
-            sections.push(`
-                <div class="analysis-actions">
-                    <h4>Action Items</h4>
-                    <ul>
-                        ${analysis.action_items.map(item => `<li>${item}</li>`).join('')}
-                    </ul>
                 </div>
             `);
         }
         
         return sections.length > 0 ? sections.join('') : '<p class="no-analysis">Detailed analysis not available</p>';
-    }
-
-    formatAnalysisText(analysisText, verdict) {
-        if (!analysisText) {
-            return '<p class="no-analysis">Analysis data not available</p>';
-        }
-        
-        let html = '<div class="analysis-text-format">';
-        
-        // Add verdict badge at the top if available
-        if (verdict) {
-            const verdictClass = verdict.toLowerCase().replace(/\s+/g, '-');
-            html += `<div class="analysis-verdict verdict-${verdictClass}">${verdict}</div>`;
-        }
-        
-        // Split text into paragraphs
-        const paragraphs = analysisText.split('\n\n');
-        
-        paragraphs.forEach(paragraph => {
-            if (!paragraph.trim()) return;
-            
-            // Check for numbered sections (e.g., "1) Overall verdict:")
-            const numberedSectionMatch = paragraph.match(/^(\d+)\)\s*([^:]+):\s*(.*)/s);
-            if (numberedSectionMatch) {
-                const [, number, title, content] = numberedSectionMatch;
-                html += `<div class="analysis-section">
-                    <h4 class="analysis-section-title">${number}) ${title}</h4>
-                    <div class="analysis-section-content">${this.formatParagraphContent(content)}</div>
-                </div>`;
-                return;
-            }
-            
-            // Check for bullet point sections
-            if (paragraph.includes('\n-')) {
-                const lines = paragraph.split('\n');
-                let currentSection = '';
-                let bulletPoints = [];
-                
-                for (const line of lines) {
-                    if (line.trim().startsWith('-')) {
-                        bulletPoints.push(line.trim().substring(1).trim());
-                    } else if (line.trim()) {
-                        if (bulletPoints.length > 0) {
-                            // Output previous section with bullets
-                            html += `<div class="analysis-section">
-                                ${currentSection ? `<h5 class="analysis-subsection-title">${currentSection}</h5>` : ''}
-                                <ul class="analysis-bullets">
-                                    ${bulletPoints.map(point => `<li>${this.formatInlineContent(point)}</li>`).join('')}
-                                </ul>
-                            </div>`;
-                            bulletPoints = [];
-                        }
-                        currentSection = line.trim();
-                    }
-                }
-                
-                // Handle remaining bullets
-                if (bulletPoints.length > 0) {
-                    html += `<div class="analysis-section">
-                        ${currentSection ? `<h5 class="analysis-subsection-title">${currentSection}</h5>` : ''}
-                        <ul class="analysis-bullets">
-                            ${bulletPoints.map(point => `<li>${this.formatInlineContent(point)}</li>`).join('')}
-                        </ul>
-                    </div>`;
-                }
-                return;
-            }
-            
-            // Regular paragraph
-            html += `<div class="analysis-paragraph">${this.formatParagraphContent(paragraph)}</div>`;
-        });
-        
-        html += '</div>';
-        return html;
-    }
-    
-    formatParagraphContent(content) {
-        // Handle key-value pairs like "Shinjuku: 20 min"
-        return content.replace(/([A-Za-z][A-Za-z\s]+):\s*([^,\n]+)/g, 
-            '<span class="analysis-key-value"><strong>$1:</strong> $2</span>')
-            .replace(/\n/g, '<br>');
-    }
-    
-    formatInlineContent(content) {
-        // Handle key-value pairs and emphasis
-        return content.replace(/([A-Za-z][A-Za-z\s]+):\s*([^,\n]+)/g, 
-            '<span class="analysis-key-value"><strong>$1:</strong> $2</span>');
     }
     
     async renderAnalysis() {

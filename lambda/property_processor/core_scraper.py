@@ -1563,7 +1563,7 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                     if logger:
                         logger.warning(f"No valid price found for {property_url}. Available price fields: {[k for k in data.keys() if 'price' in k.lower() or '価格' in k]}")
             
-            # Extract images with enhanced debugging
+            # Extract images with enhanced debugging and interior photo detection
             try:
                 # Debug: Check if bucket is configured
                 if logger:
@@ -1572,28 +1572,125 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                     logger.info(f"Config object: {config}")
                     logger.info(f"Session pool available: {session_pool is not None}")
                     logger.info(f"Image rate limiter available: {image_rate_limiter is not None}")
+                    logger.info(f"About to start classification analysis...")
                 
-                s3_keys = extract_property_images(
-                    soup, session, "https://www.homes.co.jp", 
-                    bucket=output_bucket, property_id=property_id,
-                    config=config, logger=logger,
-                    session_pool=session_pool, image_rate_limiter=image_rate_limiter
-                )
+                # First, classify all images to determine interior photo count
+                if logger:
+                    logger.info(f"Starting interior photo analysis for {property_id}")
+                
+                all_imgs = soup.find_all('img')
+                total_interior_photos = 0
+                total_exterior_photos = 0  
+                total_floorplan_photos = 0
+                total_unknown_photos = 0
                 
                 if logger:
-                    logger.info(f"Image extraction returned {len(s3_keys) if s3_keys else 0} S3 keys")
-                    if s3_keys:
-                        logger.info(f"S3 keys: {s3_keys[:3]}...")  # Show first 3
+                    logger.info(f"Found {len(all_imgs)} total img tags on page")
                 
-                if s3_keys:
-                    data["photo_filenames"] = "|".join(s3_keys)
-                    data["image_count"] = len(s3_keys)
+                for img in all_imgs:
+                    try:
+                        src = (img.get('src') or 
+                              img.get('data-src') or 
+                              img.get('data-original') or 
+                              img.get('data-lazy-src'))
+                        
+                        if not src:
+                            continue
+                        
+                        # Skip obvious non-property images
+                        skip_patterns = ['icon', 'logo', 'btn', 'button', 'arrow', 'banner', 
+                                        'lifull.com/lh/', 'header-footer', 'temprano/assets', 
+                                        'qr-code']
+                        
+                        if any(pattern in src.lower() for pattern in skip_patterns):
+                            continue
+                        
+                        # Check if it's a valid property image URL
+                        is_valid_image = False
+                        if any(domain in src for domain in ['image.homes.jp', 'image1.homes.jp', 
+                                                            'image2.homes.jp', 'image3.homes.jp', 
+                                                            'image4.homes.jp', 'img.homes.jp']):
+                            is_valid_image = True
+                        elif (any(pattern in src.lower() for pattern in ['photo', 'image', 'pic', 'img', 
+                                                                         'mansion', 'bukken', 'property']) or
+                              any(src.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp'])):
+                            is_valid_image = True
+                        
+                        if is_valid_image:
+                            # Convert to absolute URL first
+                            if src.startswith('//'):
+                                src = 'https:' + src
+                            elif src.startswith('/'):
+                                src = 'https://www.homes.co.jp' + src
+                            elif not src.startswith('http'):
+                                src = 'https://www.homes.co.jp/' + src.lstrip('/')
+                            
+                            # Classify the image - with error handling
+                            try:
+                                image_type = classify_image(img, src, logger)
+                                
+                                if image_type == 'interior':
+                                    total_interior_photos += 1
+                                elif image_type == 'exterior':
+                                    total_exterior_photos += 1
+                                elif image_type == 'floorplan':
+                                    total_floorplan_photos += 1
+                                else:
+                                    total_unknown_photos += 1
+                            except Exception as e:
+                                if logger:
+                                    logger.warning(f"Error classifying image {src[:50]}: {str(e)}")
+                                total_unknown_photos += 1
+                    
+                    except Exception as e:
+                        if logger:
+                            logger.warning(f"Error processing image element: {str(e)}")
+                        continue
+                
+                # Determine if property has interior photos (excluding floor plans)
+                has_interior_photos = total_interior_photos > 0
+                
+                # Store classification counts
+                data['interior_photo_count'] = total_interior_photos
+                data['exterior_photo_count'] = total_exterior_photos
+                data['floorplan_photo_count'] = total_floorplan_photos
+                data['has_interior_photos'] = has_interior_photos
+                
+                if logger:
+                    logger.info(f"Interior photo analysis for {property_id}: "
+                               f"{total_interior_photos} interior, {total_exterior_photos} exterior, "
+                               f"{total_floorplan_photos} floor plans, {total_unknown_photos} unknown")
+                    logger.info(f"Has interior photos: {has_interior_photos}")
+                
+                # Only proceed with image download if we have interior photos OR floor plans
+                if has_interior_photos or total_floorplan_photos > 0:
+                    s3_keys = extract_property_images(
+                        soup, session, "https://www.homes.co.jp", 
+                        bucket=output_bucket, property_id=property_id,
+                        config=config, logger=logger,
+                        session_pool=session_pool, image_rate_limiter=image_rate_limiter
+                    )
+                    
                     if logger:
-                        logger.info(f"Successfully stored {len(s3_keys)} images for property {property_id}")
+                        logger.info(f"Image extraction returned {len(s3_keys) if s3_keys else 0} S3 keys")
+                        if s3_keys:
+                            logger.info(f"S3 keys: {s3_keys[:3]}...")  # Show first 3
+                    
+                    if s3_keys:
+                        data["photo_filenames"] = "|".join(s3_keys)
+                        data["image_count"] = len(s3_keys)
+                        if logger:
+                            logger.info(f"Successfully stored {len(s3_keys)} images for property {property_id}")
+                    else:
+                        if logger:
+                            logger.warning(f"No images processed for property {property_id}")
+                        data["image_count"] = 0
                 else:
-                    if logger:
-                        logger.warning(f"No images processed for property {property_id}")
+                    # Skip image download for properties without interior photos
                     data["image_count"] = 0
+                    data["photo_filenames"] = ""
+                    if logger:
+                        logger.info(f"Skipping image download for {property_id}: no interior photos or floor plans")
                     
             except Exception as e:
                 if logger:
@@ -1601,6 +1698,11 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                     import traceback
                     logger.error(f"Traceback: {traceback.format_exc()}")
                 data["image_count"] = 0
+                # Set default values for interior photo detection on error
+                data['has_interior_photos'] = False
+                data['interior_photo_count'] = 0
+                data['exterior_photo_count'] = 0
+                data['floorplan_photo_count'] = 0
             
             # Coverage logging for field extraction
             try:
@@ -1637,11 +1739,154 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
     else:
         raise Exception("Max retries exceeded")
 
+def classify_image(img_element, src_url, logger=None):
+    """Classify image as interior, exterior, floorplan, or unknown"""
+    # Get alt text and other attributes
+    alt_text = (img_element.get('alt') or '').lower()
+    title_text = (img_element.get('title') or '').lower()
+    data_desc = (img_element.get('data-description') or img_element.get('data-title') or '').lower()
+    
+    # Check URL patterns
+    url_lower = src_url.lower()
+    
+    # Look for nearby text (parent container, captions)
+    nearby_text = ''
+    try:
+        parent = img_element.parent
+        if parent:
+            # Get text from parent and siblings
+            nearby_text = parent.get_text(strip=True).lower()[:200]  # Limit to prevent noise
+    except:
+        pass
+    
+    # Combine all text sources for analysis
+    all_text = f"{alt_text} {title_text} {data_desc} {nearby_text} {url_lower}"
+    
+    if logger:
+        logger.debug(f"Classifying image: alt='{alt_text[:50]}', url='{url_lower[:50]}', nearby='{nearby_text[:50]}'")
+        logger.debug(f"Combined text for analysis: '{all_text[:100]}...'")
+    
+    # Floor plan keywords (highest priority)
+    floorplan_keywords = [
+        # Japanese
+        '間取り', '間取図', '図面', '平面図', 'フロアプラン',
+        # English
+        'floor plan', 'floorplan', 'layout', 'madori', 'zumen'
+    ]
+    
+    matched_floorplan = [kw for kw in floorplan_keywords if kw in all_text]
+    if matched_floorplan:
+        if logger:
+            logger.debug(f"Classified as floorplan - matched keywords: {matched_floorplan}")
+        return 'floorplan'
+    
+    # Interior keywords
+    interior_keywords = [
+        # Rooms
+        '内装', '室内', 'リビング', 'キッチン', '浴室', '洗面', 'トイレ', 
+        '寝室', '居室', 'ダイニング', '和室', '洋室', '玄関', '収納', 
+        'クローゼット', 'バルコニー内側',
+        # English
+        'interior', 'room', 'living', 'kitchen', 'bedroom', 'bathroom', 'toilet',
+        'dining', 'closet', 'storage', 'entrance'
+    ]
+    
+    matched_interior = [kw for kw in interior_keywords if kw in all_text]
+    if matched_interior:
+        if logger:
+            logger.debug(f"Classified as interior - matched keywords: {matched_interior}")
+        return 'interior'
+    
+    # Exterior keywords
+    exterior_keywords = [
+        '外観', 'エントランス', '建物', '外装', '周辺', '環境', '街並み', 
+        'ファサード', '敷地', '駐車場', '共用部',
+        # English
+        'exterior', 'building', 'facade', 'entrance', 'environment', 'parking'
+    ]
+    
+    matched_exterior = [kw for kw in exterior_keywords if kw in all_text]
+    if matched_exterior:
+        if logger:
+            logger.debug(f"Classified as exterior - matched keywords: {matched_exterior}")
+        return 'exterior'
+    
+    # URL pattern analysis
+    if any(pattern in url_lower for pattern in ['interior', 'room', 'living', 'kitchen', 'bedroom']):
+        return 'interior'
+    elif any(pattern in url_lower for pattern in ['exterior', 'building', 'facade', 'entrance']):
+        return 'exterior'
+    elif any(pattern in url_lower for pattern in ['madori', 'zumen', 'floorplan', 'layout']):
+        return 'floorplan'
+    
+    # Default to unknown (treat as potential interior in selection)
+    if logger:
+        logger.debug("Classified as unknown")
+    return 'unknown'
+
+def select_images_for_download(classified_images, max_total=10, max_exterior=2, logger=None):
+    """Select images based on priority: floor plans first, limited exterior, then interior"""
+    selected = []
+    exterior_count = 0
+    
+    if logger:
+        logger.debug(f"Selecting from {len(classified_images)} classified images")
+        counts = {}
+        for img in classified_images:
+            img_type = img['type']
+            counts[img_type] = counts.get(img_type, 0) + 1
+        logger.debug(f"Image type counts: {counts}")
+    
+    # First pass: add floor plans (high priority)
+    for img in classified_images:
+        if img['type'] == 'floorplan' and len(selected) < max_total:
+            selected.append(img)
+            if logger:
+                logger.debug(f"Selected floor plan: {img['url'][:50]}...")
+    
+    # Second pass: add up to max_exterior exterior photos
+    for img in classified_images:
+        if img['type'] == 'exterior' and exterior_count < max_exterior and len(selected) < max_total:
+            # Skip if already selected
+            if not any(existing['url'] == img['url'] for existing in selected):
+                selected.append(img)
+                exterior_count += 1
+                if logger:
+                    logger.debug(f"Selected exterior {exterior_count}/{max_exterior}: {img['url'][:50]}...")
+    
+    # Third pass: fill remaining slots with interior photos (including unknown)
+    for img in classified_images:
+        if img['type'] in ['interior', 'unknown'] and len(selected) < max_total:
+            # Skip if already selected
+            if not any(existing['url'] == img['url'] for existing in selected):
+                selected.append(img)
+                if logger:
+                    logger.debug(f"Selected interior/unknown: {img['url'][:50]}...")
+    
+    if logger:
+        final_counts = {}
+        for img in selected:
+            img_type = img['type']
+            final_counts[img_type] = final_counts.get(img_type, 0) + 1
+        logger.info(f"Selected {len(selected)}/{max_total} images: {final_counts}")
+        
+        # Debug: Show which specific images were selected
+        for i, img in enumerate(selected):
+            logger.debug(f"Selected image {i+1}: {img['type']} - {img['url'][:70]}...")
+    
+    return selected
+
 # Enhanced extract_property_images function in core_scraper.py:
 def extract_property_images(soup, session, base_url, bucket=None, property_id=None, config=None, logger=None, session_pool=None, image_rate_limiter=None):
-    """Extract property images - fixed to handle homes.jp image URLs correctly"""
+    """Extract and classify property images with interior photo detection"""
     s3_keys = []
-    image_urls = set()
+    classified_images = []
+    
+    # Statistics for interior photo detection
+    interior_count = 0
+    exterior_count = 0
+    floorplan_count = 0
+    unknown_count = 0
     
     if logger:
         logger.debug(f"=== Starting image extraction for property {property_id} ===")
@@ -1653,7 +1898,7 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
         if logger:
             logger.debug(f"Total img tags found in page: {len(all_imgs)}")
         
-        # Process all images
+        # Process and classify all images
         for img in all_imgs:
             # Get image source (try multiple attributes)
             src = (img.get('src') or 
@@ -1667,13 +1912,12 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
             # Skip obvious non-property images
             skip_patterns = ['icon', 'logo', 'btn', 'button', 'arrow', 'banner', 
                             'lifull.com/lh/', 'header-footer', 'temprano/assets', 
-                            'qr-code']  # Added qr-code to skip list
+                            'qr-code']
             
             if any(pattern in src.lower() for pattern in skip_patterns):
                 continue
             
-            # IMPORTANT: Accept homes.jp image URLs
-            # These are valid property images even though they go through image.php
+            # Convert to absolute URL
             if any(domain in src for domain in ['image.homes.jp', 'image1.homes.jp', 
                                                 'image2.homes.jp', 'image3.homes.jp', 
                                                 'image4.homes.jp', 'img.homes.jp']):
@@ -1682,12 +1926,6 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
                     src = 'https:' + src
                 elif not src.startswith('http'):
                     src = 'https:' + src
-                
-                image_urls.add(src)
-                if logger:
-                    logger.debug(f"Added homes.jp image: {src[:100]}...")
-            
-            # Also check for other image patterns
             elif (any(pattern in src.lower() for pattern in ['photo', 'image', 'pic', 'img', 
                                                              'mansion', 'bukken', 'property']) or
                   any(src.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp'])):
@@ -1698,26 +1936,44 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
                     src = base_url + src
                 elif not src.startswith('http'):
                     src = base_url + '/' + src.lstrip('/')
-                
-                image_urls.add(src)
-                if logger:
-                    logger.debug(f"Added other image: {src[:100]}...")
-        
-        # Log what we found
-        if logger:
-            logger.info(f"Found {len(image_urls)} valid image URLs for property {property_id}")
-            if image_urls:
-                for i, url in enumerate(list(image_urls)[:3]):
-                    logger.info(f"  Image {i}: {url[:100]}...")
             else:
-                logger.warning(f"No valid images found for property {property_id}")
-                # Log some sample images that were skipped
-                sample_count = 0
-                for img in all_imgs[:10]:
-                    src = img.get('src', '')
-                    if src and sample_count < 3:
-                        logger.debug(f"  Skipped: {src[:100]}...")
-                        sample_count += 1
+                continue
+            
+            # Classify the image
+            image_type = classify_image(img, src, logger)
+            
+            # Count classifications
+            if image_type == 'interior':
+                interior_count += 1
+            elif image_type == 'exterior':
+                exterior_count += 1
+            elif image_type == 'floorplan':
+                floorplan_count += 1
+            else:
+                unknown_count += 1
+            
+            classified_images.append({
+                'url': src,
+                'type': image_type,
+                'element': img
+            })
+        
+        # Log classification results
+        if logger:
+            logger.info(f"Image classification for {property_id}: "
+                       f"{interior_count} interior, {exterior_count} exterior, "
+                       f"{floorplan_count} floor plans, {unknown_count} unknown")
+            
+            # Show examples of classifications (first 5 for debugging)
+            for i, img in enumerate(classified_images[:5]):
+                logger.info(f"Classification example {i+1}: {img['type']} - {img['url'][:80]}...")
+            
+            # Show detailed breakdown in debug mode
+            logger.debug(f"Detailed classification breakdown:")
+            logger.debug(f"  Interior images: {[img['url'][:60] for img in classified_images if img['type'] == 'interior'][:3]}")
+            logger.debug(f"  Exterior images: {[img['url'][:60] for img in classified_images if img['type'] == 'exterior'][:3]}")
+            logger.debug(f"  Floor plan images: {[img['url'][:60] for img in classified_images if img['type'] == 'floorplan'][:3]}")
+            logger.debug(f"  Unknown images: {[img['url'][:60] for img in classified_images if img['type'] == 'unknown'][:3]}")
         
         # Check if bucket is configured
         if not bucket:
@@ -1725,17 +1981,27 @@ def extract_property_images(soup, session, base_url, bucket=None, property_id=No
                 logger.warning(f"No S3 bucket configured! Cannot save images.")
             return []
         
-        # Limit to 5 images per property
-        urls = list(image_urls)[:5]
-        
-        if not urls:
+        if not classified_images:
             if logger:
-                logger.info("No images to process")
+                logger.warning(f"No valid images found for property {property_id}")
             return []
+        
+        # Select images based on priority (10 max, 2 exterior max)
+        selected_images = select_images_for_download(
+            classified_images, max_total=10, max_exterior=2, logger=logger
+        )
+        
+        if not selected_images:
+            if logger:
+                logger.info("No images selected for download")
+            return []
+        
+        # Extract URLs for download
+        urls = [img['url'] for img in selected_images]
         
         # Download and process images
         if logger:
-            logger.info(f"Processing {len(urls)} images for upload to S3")
+            logger.info(f"Processing {len(urls)} selected images for upload to S3")
         
         if session_pool and image_rate_limiter:
             s3_keys = download_images_parallel(urls, session_pool, bucket, property_id, logger, image_rate_limiter)

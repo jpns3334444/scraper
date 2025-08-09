@@ -299,6 +299,13 @@ def process_single_url(url_data, session_pool, rate_limiter, url_tracking_table,
             # URL is already marked as processed before batch processing starts
             return result
         
+        # Check for interior photos (excluding floor plans)
+        has_interior_photos = result.get('has_interior_photos', False)
+        if not has_interior_photos:
+            result['skip_reason'] = 'no_interior_photos'
+            logger.warning(f"Skipping property {url}: No interior photos found")
+            return result
+        
         # Additional data quality checks
         quality_issues = []
         if not result.get('price') or result.get('price') == 0:
@@ -439,7 +446,7 @@ def process_urls_in_batches(urls, config, logger, job_start_time, max_runtime_se
     failed_saves = []  # Track failed DynamoDB saves for retries
     total_saved = 0
     
-    # Add error tracking at the beginning of the function
+    # Add error and skip tracking at the beginning of the function
     error_stats = {
         'http_404': 0,
         'http_other': 0,
@@ -447,6 +454,11 @@ def process_urls_in_batches(urls, config, logger, job_start_time, max_runtime_se
         'parse_errors': 0,
         'timeout_errors': 0,
         'total_errors': 0
+    }
+    
+    skip_stats = {
+        'no_interior_photos': 0,
+        'total_skipped': 0
     }
     
     logger.info(f"Processing {len(urls)} URLs in batches of {batch_size} (scraping only)")
@@ -491,9 +503,11 @@ def process_urls_in_batches(urls, config, logger, job_start_time, max_runtime_se
                    f"{batch_quality_summary['properties_with_size']}/{batch_quality_summary['total_properties']} with size, "
                    f"{batch_quality_summary['properties_with_ward']}/{batch_quality_summary['total_properties']} with ward")
         
-        # Track results with enhanced error categorization
+        # Track results with enhanced error and skip categorization
         success_count = 0
         error_count = 0
+        skip_count = 0
+        
         for result in batch_results:
             if 'error' in result:
                 error_msg = str(result.get('error', '')).lower()
@@ -509,6 +523,14 @@ def process_urls_in_batches(urls, config, logger, job_start_time, max_runtime_se
                     error_stats['parse_errors'] += 1
                     
                 error_count += 1
+            elif 'skip_reason' in result:
+                skip_reason = result.get('skip_reason', '')
+                skip_stats['total_skipped'] += 1
+                
+                if skip_reason == 'no_interior_photos':
+                    skip_stats['no_interior_photos'] += 1
+                
+                skip_count += 1
             else:
                 success_count += 1
         
@@ -517,7 +539,7 @@ def process_urls_in_batches(urls, config, logger, job_start_time, max_runtime_se
         # Save batch results to DynamoDB immediately with error tracking
         if config.get('enable_deduplication') and batch_results:
             try:
-                successful_properties = [p for p in batch_results if 'error' not in p]
+                successful_properties = [p for p in batch_results if 'error' not in p and 'skip_reason' not in p]
                 if successful_properties:
                     batch_saved = save_complete_properties_to_dynamodb(successful_properties, config, logger)
                     total_saved += batch_saved
@@ -529,21 +551,23 @@ def process_urls_in_batches(urls, config, logger, job_start_time, max_runtime_se
                         failed_saves.extend(successful_properties[batch_saved:])  # Add unsaved items to retry list
                     
                     logger.info(f"Batch {batch_num} complete: "
-                               f"{success_count} success, {error_count} errors "
+                               f"{success_count} success, {error_count} errors, {skip_count} skipped "
                                f"(404: {error_stats['http_404']}, HTTP: {error_stats['http_other']}, "
-                               f"Timeout: {error_stats['timeout_errors']}, Parse: {error_stats['parse_errors']}) - "
+                               f"Timeout: {error_stats['timeout_errors']}, Parse: {error_stats['parse_errors']}, "
+                               f"No interior photos: {skip_stats['no_interior_photos']}) - "
                                f"{batch_saved}/{len(successful_properties)} saved to DynamoDB (total: {total_saved})")
                 else:
                     logger.info(f"Batch {batch_num} complete: "
-                               f"{success_count} success, {error_count} errors "
+                               f"{success_count} success, {error_count} errors, {skip_count} skipped "
                                f"(404: {error_stats['http_404']}, HTTP: {error_stats['http_other']}, "
-                               f"Timeout: {error_stats['timeout_errors']}, Parse: {error_stats['parse_errors']}) - "
+                               f"Timeout: {error_stats['timeout_errors']}, Parse: {error_stats['parse_errors']}, "
+                               f"No interior photos: {skip_stats['no_interior_photos']}) - "
                                f"No successful properties to save")
                     
             except Exception as e:
                 logger.error(f"Batch {batch_num}: DynamoDB save failed completely: {str(e)}")
-                # Add all successful properties to retry list
-                successful_properties = [p for p in batch_results if 'error' not in p]
+                # Add all successful properties to retry list (excluding skipped)
+                successful_properties = [p for p in batch_results if 'error' not in p and 'skip_reason' not in p]
                 failed_saves.extend(successful_properties)
         
         # Check runtime limit
@@ -589,7 +613,9 @@ def main(event=None):
         event = {}
     
     args = parse_lambda_event(event)
-    logger = SessionLogger(args['session_id'], log_level=args['log_level'])
+    # Force DEBUG log level for testing
+    actual_log_level = 'DEBUG' if args.get('log_level') == 'DEBUG' else args['log_level']
+    logger = SessionLogger(args['session_id'], log_level=actual_log_level)
     
     job_start_time = datetime.now()
     config = get_processor_config(args)
@@ -697,13 +723,19 @@ def main(event=None):
         logger.info(f"Completed parallel batch processing: {len(listings_data)} URLs processed across {batch_number-1} batches")
         
         # Calculate statistics from results
-        success_count = len([r for r in listings_data if 'error' not in r and 'validation_error' not in r])
+        success_count = len([r for r in listings_data if 'error' not in r and 'validation_error' not in r and 'skip_reason' not in r])
         error_count = len([r for r in listings_data if 'error' in r or 'validation_error' in r])
+        skipped_count = len([r for r in listings_data if 'skip_reason' in r])
         processed_urls = len(listings_data)
         
-        # Count total DynamoDB saves (batch processing handles saves internally)
-        dynamodb_saved = len([r for r in listings_data if 'error' not in r and 'validation_error' not in r])
+        # Count total DynamoDB saves (batch processing handles saves internally, excluding skipped)
+        dynamodb_saved = len([r for r in listings_data if 'error' not in r and 'validation_error' not in r and 'skip_reason' not in r])
+        
+        # Final skip statistics
+        interior_photo_skipped = len([r for r in listings_data if r.get('skip_reason') == 'no_interior_photos'])
+        
         logger.info(f"DynamoDB processing completed during batch execution")
+        logger.info(f"Final statistics: {success_count} processed, {skipped_count} skipped ({interior_photo_skipped} due to no interior photos)")
         
         # Calculate and log overall data quality metrics
         properties_with_valid_price = len([r for r in listings_data if r.get('price', 0) > 0])
@@ -763,7 +795,7 @@ def main(event=None):
         write_job_summary(summary_data)
         
         logger.info(f"Property processing completed!")
-        logger.info(f"Results: {success_count} successful, {error_count} failed, {processed_urls} URLs marked processed")
+        logger.info(f"Results: {success_count} successful, {error_count} failed, {skipped_count} skipped ({interior_photo_skipped} no interior photos), {processed_urls} URLs marked processed")
         logger.info(f"Duration: {duration:.1f} seconds")
         
         return summary_data

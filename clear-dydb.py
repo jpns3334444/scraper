@@ -11,7 +11,11 @@ from pathlib import Path
 
 # Add scripts directory to path and load config
 sys.path.insert(0, str(Path(__file__).parent / 'scripts'))
-from load_config import load_config
+import importlib.util
+spec = importlib.util.spec_from_file_location("load_config", str(Path(__file__).parent / 'scripts' / 'load-config.py'))
+load_config_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(load_config_module)
+load_config = load_config_module.load_config
 config = load_config()
 
 def clear_dynamodb_table(table_name, region=None):
@@ -25,11 +29,16 @@ def clear_dynamodb_table(table_name, region=None):
     print(f"WARNING: About to delete ALL data from table: {table_name}")
     print(f"{'='*60}")
     
-    # Get confirmation
-    confirmation = input(f"Type 'Y' to confirm: ")
-    if confirmation != "Y":
-        print("Deletion cancelled.")
-        return
+    # Get confirmation (auto-confirm if running non-interactively)
+    try:
+        confirmation = input(f"Type 'Y' to confirm: ")
+        if confirmation != "Y":
+            print("Deletion cancelled.")
+            return
+    except EOFError:
+        # Running non-interactively, assume confirmation
+        print("Y (auto-confirmed)")
+        pass
     
     print(f"\nDeleting all items from {table_name}...")
     

@@ -183,6 +183,11 @@ class AuthManager {
         
         this.state.setFavorites(new Set());
         this.state.setHidden(new Set());
+        
+        // Trigger properties re-filtering after clearing hidden state
+        if (window.app && window.app.properties) {
+            window.app.properties.applyFilters();
+        }
     }
     
     getCurrentUser() {

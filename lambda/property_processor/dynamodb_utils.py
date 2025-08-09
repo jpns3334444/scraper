@@ -136,8 +136,8 @@ def save_complete_properties_to_dynamodb(properties_data, config, logger=None):
         saved_count = 0
         error_count = 0
         
-        # Filter out properties with errors
-        successful_properties = [p for p in properties_data if 'error' not in p]
+        # Filter out properties with errors or skip reasons
+        successful_properties = [p for p in properties_data if 'error' not in p and 'skip_reason' not in p]
         
         if logger:
             logger.info(f"Saving {len(successful_properties)} properties to DynamoDB...")

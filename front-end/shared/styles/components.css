@@ -1,6 +1,6 @@
 /**
  * components.css
- * Minimal Sumi-e components with ink effects - Fixed table alignment
+ * Clean components - Fixed table alignment
  */
 
 /* =============== General Table Styles (for Favorites/Hidden only) =============== */
@@ -57,25 +57,10 @@ button {
     overflow: hidden;
 }
 
-.ink-btn::before {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    width: 0;
-    height: 100%;
-    background: var(--ink-faint);
-    transition: width 0.4s ease;
-    z-index: -1;
-}
-
 .ink-btn:hover {
     color: var(--ink-black);
     border-color: var(--ink-gray);
-}
-
-.ink-btn:hover::before {
-    width: 100%;
+    background: var(--ink-faint);
 }
 
 /* Heart and hide buttons for favorites/hidden tables only */
@@ -191,24 +176,6 @@ button {
     width: 100%;
 }
 
-/* Add a fluid animation when switching tabs */
-@keyframes inkFlow {
-    0% {
-        transform: scaleX(0);
-        transform-origin: left center;
-    }
-    50% {
-        transform: scaleX(1.1);
-    }
-    100% {
-        transform: scaleX(1);
-        transform-origin: right center;
-    }
-}
-
-.tab-button.active::after {
-    animation: inkFlow 0.6s cubic-bezier(0.4, 0, 0.2, 1);
-}
 
 .favorites-count,
 .tab-button span[style*="background: #999"] {

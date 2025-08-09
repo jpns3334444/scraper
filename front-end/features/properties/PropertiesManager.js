@@ -61,6 +61,10 @@ class PropertiesManager {
         if (!cursor) {
             console.log('No more pages to load');
             this.state.setBackgroundLoading(false);
+            
+            // After all background loading is complete, ensure filters are applied
+            // This handles any edge cases where properties weren't properly filtered
+            this.applyFilters();
             return;
         }
         
@@ -103,6 +107,11 @@ class PropertiesManager {
                         this.renderPagination();
                     }
                 }
+            } else {
+                // Even when filters are active, we need to ensure new properties
+                // will be properly filtered when applyFilters() is eventually called
+                // Mark that filtered properties need to be recalculated
+                this.state.needsResort = true;
             }
             
             // Continue loading next page recursively
@@ -270,6 +279,12 @@ class PropertiesManager {
     applyFilters() {
         const filters = this.state.currentFilters;
         
+        // Import HiddenStore and getPropertyId if not available globally
+        const HiddenStore = window.HiddenStore || (window.app && window.app.HiddenStore);
+        const getPropertyId = window.getPropertyId || (window.app && window.app.getPropertyId) || ((p) => String(p.listing_id ?? p.property_id ?? p.id));
+        
+        console.log('[DEBUG] Applying filters, hidden count:', HiddenStore?.all()?.length || this.state.hidden?.size || 0);
+        
         this.state.filteredProperties = this.state.allProperties.filter(property => {
             // Ward filter
             if (filters.ward.length > 0 && !filters.ward.includes(property.ward)) {
@@ -287,13 +302,23 @@ class PropertiesManager {
                 return false;
             }
             
-            // Hide hidden properties
-            if (this.state.hidden.has(property.property_id)) {
+            // Hide hidden properties - use HiddenStore if available, fallback to legacy
+            const propertyId = getPropertyId(property);
+            if (HiddenStore && HiddenStore.isLoaded && HiddenStore.isLoaded()) {
+                if (HiddenStore.has(propertyId)) {
+                    console.log('[DEBUG] Filtering out hidden property via HiddenStore:', propertyId);
+                    return false;
+                }
+            } else if (this.state.hidden && this.state.hidden.has(propertyId)) {
+                console.log('[DEBUG] Filtering out hidden property via legacy state:', propertyId);
                 return false;
             }
             
             return true;
         });
+        
+        console.log('[DEBUG] Properties after filtering:', this.state.filteredProperties.length, 'visible,', 
+            this.state.allProperties.length - this.state.filteredProperties.length, 'filtered out');
         
         this.state.setPage(1);
         this.applySort();
@@ -304,32 +329,48 @@ class PropertiesManager {
         event.stopPropagation();
         
         try {
-            // Check if property is currently hidden
-            const isCurrentlyHidden = this.state.hidden.has(propertyId);
+            // Use HiddenStore for better handling
+            const HiddenStore = window.HiddenStore || (window.app && window.app.HiddenStore);
+            const getPropertyId = window.getPropertyId || (window.app && window.app.getPropertyId) || ((p) => String(p.listing_id ?? p.property_id ?? p.id));
             
-            if (isCurrentlyHidden) {
-                // Use HiddenManager to properly remove (handles both API and local storage)
-                if (window.app && window.app.hidden) {
-                    await window.app.hidden.removeHidden(propertyId);
+            const canonicalId = getPropertyId({ property_id: propertyId });
+            
+            if (HiddenStore && HiddenStore.isLoaded && HiddenStore.isLoaded()) {
+                // Use new HiddenStore
+                const isCurrentlyHidden = HiddenStore.has(canonicalId);
+                
+                if (isCurrentlyHidden) {
+                    await HiddenStore.remove(canonicalId);
+                } else {
+                    await HiddenStore.add(canonicalId);
                 }
             } else {
-                // Add to hidden - handle both logged-in and anonymous users
-                if (this.state.currentUser) {
-                    await this.api.addHidden(propertyId, this.state.currentUser.email);
+                // Fallback to legacy approach
+                const isCurrentlyHidden = this.state.hidden.has(propertyId);
+                
+                if (isCurrentlyHidden) {
+                    // Use HiddenManager to properly remove (handles both API and local storage)
+                    if (window.app && window.app.hidden) {
+                        await window.app.hidden.removeHidden(propertyId);
+                    }
+                } else {
+                    // Add to hidden - handle both logged-in and anonymous users
+                    if (this.state.currentUser) {
+                        await this.api.addHidden(propertyId, this.state.currentUser.email);
+                    }
+                    
+                    // Update local state
+                    this.state.addHidden(propertyId);
+                    
+                    // Save to storage for anonymous users
+                    StorageManager.saveHidden(this.state.hidden);
                 }
                 
-                // Update local state
-                this.state.addHidden(propertyId);
-                
-                // Save to storage for anonymous users
-                StorageManager.saveHidden(this.state.hidden);
+                // Update UI for legacy mode
+                this.updateHiddenCount();
+                // Re-apply filters to hide/show the property
+                this.applyFilters();
             }
-            
-            // Update UI
-            this.updateHiddenCount();
-            
-            // Re-apply filters to hide/show the property
-            this.applyFilters();
             
         } catch (error) {
             console.error('Error toggling hidden property:', error);
