@@ -72,71 +72,32 @@ def analyze(user_id, property_id):
         
         # If the full analysis is too large, create a trimmed version
         if analysis_size > 300000:  # Leave buffer for other fields
-            print(f"[WARNING] Analysis too large ({analysis_size} bytes), trimming raw_text")
-            # Keep everything except the full raw text
-            analysis_trimmed = {k: v for k, v in analysis.items() if k != 'raw_text'}
-            analysis_trimmed['raw_text'] = analysis.get('raw_text', '')[:5000] + '... [truncated]'
+            print(f"[WARNING] Analysis too large ({analysis_size} bytes), trimming")
+            # Keep everything except very long fields
+            analysis_trimmed = {k: v for k, v in analysis.items()}
+            if len(analysis_trimmed.get('analysis_markdown', '')) > 10000:
+                analysis_trimmed['analysis_markdown'] = analysis_trimmed['analysis_markdown'][:10000] + '\n\n... [truncated]'
             analysis_for_dynamo = convert_to_dynamo_format(analysis_trimmed)
-        
-        # Create a simple summary for quick display
-        summary = {
-            'verdict': analysis.get('verdict', 'CONSIDER'),
-            'value_for_money': analysis.get('value_for_money', 'Fair'),
-            'summary': analysis.get('summary', 'Analysis pending'),
-            'strengths': analysis.get('strengths', [])[:3],  # Top 3 strengths
-            'weaknesses': analysis.get('weaknesses', [])[:3],  # Top 3 weaknesses
-            'commute_times': analysis.get('commute_times_minutes', {}),
-            'price_negotiation_advice': analysis.get('price_negotiation_advice', ''),
-            'renovation_ideas': analysis.get('renovation_or_improvement_ideas', [])[:2]
-        }
-        summary_for_dynamo = convert_to_dynamo_format(summary)
         
         # Debug what we're actually storing
         print(f"[DEBUG] Storing analysis_result with keys: {list(analysis_for_dynamo.keys())}")
         print(f"[DEBUG] Analysis verdict: {analysis.get('verdict')}")
-        print(f"[DEBUG] Summary keys: {list(summary.keys())}")
         
-        # Store in DynamoDB - try both fields, but handle if one fails
-        try:
-            update_result = preferences_table.update_item(
-                Key={'user_id': user_id, 'property_id': property_id},
-                UpdateExpression='''
-                    SET analysis_status = :status,
-                        analysis_completed_at = :completed,
-                        analysis_result = :result,
-                        analysis_summary = :summary
-                ''',
-                ExpressionAttributeValues={
-                    ':status': 'completed',
-                    ':completed': datetime.utcnow().isoformat(),
-                    ':result': analysis_for_dynamo,
-                    ':summary': summary_for_dynamo
-                },
-                ReturnValues='ALL_NEW'
-            )
-            print(f"[DEBUG] Both analysis_result and analysis_summary stored successfully")
-            
-        except Exception as e:
-            print(f"[WARNING] Failed to store full analysis_result: {e}")
-            print(f"[WARNING] Attempting to store summary only")
-            
-            # If storing both fails, at least save the summary
-            update_result = preferences_table.update_item(
-                Key={'user_id': user_id, 'property_id': property_id},
-                UpdateExpression='''
-                    SET analysis_status = :status,
-                        analysis_completed_at = :completed,
-                        analysis_summary = :summary,
-                        analysis_error = :error
-                ''',
-                ExpressionAttributeValues={
-                    ':status': 'completed',
-                    ':completed': datetime.utcnow().isoformat(),
-                    ':summary': summary_for_dynamo,
-                    ':error': 'Full analysis too large for storage'
-                }
-            )
-            print(f"[DEBUG] Stored analysis_summary only due to size constraints")
+        # Store in DynamoDB
+        update_result = preferences_table.update_item(
+            Key={'user_id': user_id, 'property_id': property_id},
+            UpdateExpression='''
+                SET analysis_status = :status,
+                    analysis_completed_at = :completed,
+                    analysis_result = :result
+            ''',
+            ExpressionAttributeValues={
+                ':status': 'completed',
+                ':completed': datetime.utcnow().isoformat(),
+                ':result': analysis_for_dynamo
+            },
+            ReturnValues='ALL_NEW'
+        )
         print(f"[DEBUG] Analysis stored successfully")
         
     except Exception as e:
@@ -154,7 +115,7 @@ def analyze(user_id, property_id):
             ''',
             ExpressionAttributeValues={
                 ':status': 'failed',
-                ':error': str(e)[:500],  # Limit error message size
+                ':error': str(e)[:500],
                 ':zero': 0,
                 ':inc': 1
             }
@@ -279,11 +240,9 @@ PROPERTY DETAILS:
 - Investment Score: {final_score}/100
 - Negotiability Score: {negotiability:.3f}
 
-RAW DATA FROM LISTING:
-{json.dumps(r, ensure_ascii=False, indent=2)[:2000]}  
-
 ENRICHED ANALYTICS:
-{json.dumps({k: v for k, v in e.items() if k not in ['photo_filenames', 'property_id', 'sort_key']}, ensure_ascii=False, indent=2)[:2000]}
+{json.dumps({k: v for k, v in e.items() if k not in ['photo_filenames', 'property_id', 'sort_key', 'verdict']}, ensure_ascii=False, indent=2)}
+
 
 BUYER PRIORITIES:
 - Wants a good deal (fair or below-market price)
@@ -291,22 +250,59 @@ BUYER PRIORITIES:
 - Needs structurally sound building (post-1981 preferred)
 - Commute time to major hubs is important
 
-Please analyze this property and provide:
-1. Overall verdict (STRONG BUY / BUY / CONSIDER / PASS)
-2. Value for money assessment
-3. Top 3-5 strengths
-4. Top 3-5 weaknesses  
-5. Renovation/improvement potential
-6. Price negotiation advice
-7. Estimated commute times to: Shinjuku, Tokyo, Ginza, Shibuya, Ikebukuro
+Please provide your analysis in MARKDOWN FORMAT with the following structure:
 
-Do not invent data. If unknown, say ‘Unknown’. Never contradict FACTS; if you think a fact is inconsistent, flag it.
-Format your response as conversational analysis, not strict JSON. Focus on practical buyer advice.
+## 🏆 Overall Verdict
+[STRONG BUY / BUY / CONSIDER / PASS]
+
+## 💰 Value Assessment
+[Your assessment of value for money]
+
+## ✅ Strengths
+- [Strength 1]
+- [Strength 2]
+- [Strength 3]
+- [etc.]
+
+## ⚠️ Weaknesses
+- [Weakness 1]
+- [Weakness 2]
+- [Weakness 3]
+- [etc.]
+
+## 🚇 Commute Times (estimated)
+| Station | Time (minutes) |
+|---------|---------------|
+| Shinjuku | XX min |
+| Tokyo | XX min |
+| Ginza | XX min |
+| Shibuya | XX min |
+| Ikebukuro | XX min |
+
+## ⚠️ Image assesment
+- Building structural damage indication
+- Mold spots? Cracks, blemishes etc
+- Anything missing? no bath, no AC etc
+- Any other key information gleamed from image analysis
+
+## 🔨 Renovation Potential
+[Your assessment of renovation/improvement opportunities]
+
+## 💡 Negotiation Strategy
+[Your price negotiation advice]
+
+## 📊 Summary
+[An overall summary of your analysis of the property and your recommendation.]
+
+Use proper Markdown formatting including:
+- Headers (##, ###)
+- Bold text for emphasis (**text**)
+- Bullet points (-)
+- Tables for structured data
+- Emojis where appropriate for visual appeal
+
+Do not invent data. If unknown, say 'Unknown'. Focus on practical buyer advice.
 """
-    
-    print(f"[DEBUG] ========== FULL PROMPT BEING SENT TO AI ==========")
-    print(prompt)
-    print(f"[DEBUG] ========== END OF PROMPT ({len(prompt)} characters) ==========")
     
     return prompt
 
@@ -321,7 +317,7 @@ def get_ai_analysis(prompt, image_urls):
         user_content.append({"type": "input_image", "image_url": url})
 
     inputs = [
-        {"role": "system", "content": [{"type": "input_text", "text": "You are an expert Tokyo real estate analyst. Provide a natural conversational analysis."}]},
+        {"role": "system", "content": [{"type": "input_text", "text": "You are an expert Tokyo real estate analyst. Provide analysis in clean Markdown format."}]},
         {"role": "user", "content": user_content}
     ]
 
@@ -358,7 +354,7 @@ def get_ai_analysis(prompt, image_urls):
             content.append({"type": "image_url", "image_url": {"url": url}})
         
         messages = [
-            {"role": "system", "content": "You are an expert Tokyo real estate analyst. Provide a natural conversational analysis."},
+            {"role": "system", "content": "You are an expert Tokyo real estate analyst. Provide analysis in clean Markdown format."},
             {"role": "user", "content": content}
         ]
         
@@ -374,14 +370,14 @@ def get_ai_analysis(prompt, image_urls):
         logger.error(f"[AI] Analysis failed: {e}")
         text = "Analysis failed. Please try again."
     
-    # Parse the response into flexible structure
+    # Parse the response into structured format
     return parse_ai_response(text)
 
 def parse_ai_response(text):
-    """Just return the AI response as-is with minimal parsing"""
+    """Parse the Markdown response and extract verdict"""
     print(f"[DEBUG] AI response received, text length: {len(text)}")
     
-    # Just extract the verdict for quick filtering/sorting
+    # Extract the verdict for quick filtering/sorting
     text_lower = text.lower()
     verdict = "CONSIDER"  # Default
     
@@ -392,9 +388,11 @@ def parse_ai_response(text):
     elif "buy" in text_lower and "verdict" in text_lower:
         verdict = "BUY"
     
+    # Store the markdown text for display
     return {
-        "analysis_text": text,
-        "verdict": verdict
+        "analysis_markdown": text,
+        "verdict": verdict,
+        "analysis_text": text  # Keep for backwards compatibility
     }
 
 def convert_to_dynamo_format(obj):
