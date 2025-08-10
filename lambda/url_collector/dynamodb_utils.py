@@ -460,7 +460,36 @@ def mark_url_processed(url, table, logger=None):
         return False
 
 def batch_update_price_changes(price_changes, table, logger=None):
-    """Batch update all price changes with proper DynamoDB operations"""
+    """
+    Batch update all price changes - simplified version with no history records.
+    Just updates the main property record with price tracking fields.
+    
+    Price tracking fields added/updated:
+    - price: Current price (updated)
+    - original_price: First price ever seen (set once, never changes)
+    - previous_price: Price before this change
+    - last_price_change: Amount of this specific change ($)
+    - last_price_change_pct: Percentage of this specific change (%)
+    - total_price_change: Total change from original price ($)
+    - total_price_change_pct: Total change from original price (%)
+    - price_update_count: Number of times price has been updated
+    - last_price_update: Timestamp of this price update
+    - price_history: Simple list of {date, price} entries
+    
+    Args:
+        price_changes: List of dicts with structure:
+            {
+                'property_id': 'PROP#20241220_123456',
+                'url': 'https://...',
+                'old_price': 1000,
+                'new_price': 950
+            }
+        table: DynamoDB table resource
+        logger: Optional logger instance
+    
+    Returns:
+        Number of successful updates
+    """
     successful_updates = 0
     failed_updates = 0
     now = datetime.now()
@@ -468,90 +497,154 @@ def batch_update_price_changes(price_changes, table, logger=None):
     if not price_changes:
         return 0
     
-    try:
-        # Process updates one by one (update_item can't be batched)
-        # But we can batch the history records
-        history_records = []
-        
-        for change in price_changes:
+    for change in price_changes:
+        try:
+            property_id = change['property_id']
+            old_price = change['old_price']
+            new_price = change['new_price']
+            
+            # Calculate price change metrics
+            price_change_amt = new_price - old_price
+            price_change_pct = (price_change_amt / old_price * 100) if old_price > 0 else 0
+            
+            # First, get the current record to check for original_price
+            # We need this to calculate total change from original
             try:
-                property_id = change['property_id']
-                old_price = change['old_price']
-                new_price = change['new_price']
-                
-                # Update META record (must be done individually)
-                try:
-                    table.update_item(
-                        Key={
-                            'property_id': property_id,
-                            'sort_key': 'META'
-                        },
-                        UpdateExpression="SET price = :new_price, analysis_date = :now, listing_status = :status",
-                        ExpressionAttributeValues={
-                            ':new_price': new_price,
-                            ':now': now.isoformat(),
-                            ':status': 'price_updated'
-                        },
-                        ConditionExpression="attribute_exists(property_id)"  # Only update if exists
-                    )
-                    
-                    # If update successful, prepare history record
-                    price_change_amt = new_price - old_price
-                    price_change_pct = (price_change_amt / old_price * 100) if old_price > 0 else 0
-                    
-                    history_records.append({
+                response = table.get_item(
+                    Key={
                         'property_id': property_id,
-                        'sort_key': f"HIST#{now.strftime('%Y-%m-%d_%H:%M:%S')}_{successful_updates:04d}",
-                        'price': new_price,
-                        'previous_price': old_price,
-                        'price_change_amount': price_change_amt,
-                        'price_drop_pct': price_change_pct,
-                        'listing_status': 'price_updated',
-                        'analysis_date': now.isoformat(),
-                        'ttl_epoch': int(time.time()) + 60*60*24*365  # 1 year TTL
-                    })
-                    
-                    successful_updates += 1
-                    
-                except Exception as e:
-                    if 'ConditionalCheckFailedException' in str(e):
-                        if logger:
-                            logger.warning(f"Property {property_id} not found in META records")
-                    else:
-                        if logger:
-                            logger.error(f"Failed to update META for {property_id}: {str(e)}")
+                        'sort_key': 'META'
+                    },
+                    ProjectionExpression='original_price, price_update_count'
+                )
+                
+                if 'Item' not in response:
+                    if logger:
+                        logger.warning(f"Property {property_id} not found in database")
                     failed_updates += 1
-                    
+                    continue
+                
+                existing_item = response['Item']
+                existing_original_price = existing_item.get('original_price')
+                existing_update_count = int(existing_item.get('price_update_count', 0))
+                
             except Exception as e:
-                failed_updates += 1
                 if logger:
-                    logger.error(f"Error processing price change: {str(e)}")
-        
-        # Batch write history records
-        if history_records:
+                    logger.error(f"Failed to get existing record for {property_id}: {str(e)}")
+                failed_updates += 1
+                continue
+            
+            # Build the update expression based on whether original_price exists
+            if existing_original_price is None:
+                # First time tracking price - set original_price to the old price
+                original_price = old_price
+                total_change = new_price - original_price
+                total_change_pct = (total_change / original_price * 100) if original_price > 0 else 0
+                
+                update_expression = """
+                    SET price = :new_price,
+                        original_price = :original_price,
+                        previous_price = :old_price,
+                        last_price_change = :last_change,
+                        last_price_change_pct = :last_change_pct,
+                        total_price_change = :total_change,
+                        total_price_change_pct = :total_change_pct,
+                        price_update_count = :update_count,
+                        last_price_update = :now,
+                        price_history = list_append(if_not_exists(price_history, :empty_list), :price_entry)
+                """
+                
+                expression_values = {
+                    ':new_price': Decimal(str(new_price)),
+                    ':original_price': Decimal(str(old_price)),  # Set original to the old price
+                    ':old_price': Decimal(str(old_price)),
+                    ':last_change': Decimal(str(price_change_amt)),
+                    ':last_change_pct': Decimal(str(round(price_change_pct, 2))),
+                    ':total_change': Decimal(str(total_change)),
+                    ':total_change_pct': Decimal(str(round(total_change_pct, 2))),
+                    ':update_count': existing_update_count + 1,
+                    ':now': now.isoformat(),
+                    ':empty_list': [],
+                    ':price_entry': [{
+                        'date': now.strftime('%Y-%m-%d'),
+                        'price': Decimal(str(new_price))
+                    }]
+                }
+            else:
+                # Original price already exists - calculate total change from original
+                original_price = float(existing_original_price)
+                total_change = new_price - original_price
+                total_change_pct = (total_change / original_price * 100) if original_price > 0 else 0
+                
+                update_expression = """
+                    SET price = :new_price,
+                        previous_price = :old_price,
+                        last_price_change = :last_change,
+                        last_price_change_pct = :last_change_pct,
+                        total_price_change = :total_change,
+                        total_price_change_pct = :total_change_pct,
+                        price_update_count = :update_count,
+                        last_price_update = :now,
+                        price_history = list_append(if_not_exists(price_history, :empty_list), :price_entry)
+                """
+                
+                expression_values = {
+                    ':new_price': Decimal(str(new_price)),
+                    ':old_price': Decimal(str(old_price)),
+                    ':last_change': Decimal(str(price_change_amt)),
+                    ':last_change_pct': Decimal(str(round(price_change_pct, 2))),
+                    ':total_change': Decimal(str(total_change)),
+                    ':total_change_pct': Decimal(str(round(total_change_pct, 2))),
+                    ':update_count': existing_update_count + 1,
+                    ':now': now.isoformat(),
+                    ':empty_list': [],
+                    ':price_entry': [{
+                        'date': now.strftime('%Y-%m-%d'),
+                        'price': Decimal(str(new_price))
+                    }]
+                }
+            
+            # Update the property record (non-destructively)
             try:
-                with table.batch_writer() as batch:
-                    for record in history_records:
-                        batch.put_item(Item=record)
-                        
-                        # Log progress every 25 records
-                        if len(history_records) > 25 and (history_records.index(record) + 1) % 25 == 0:
-                            if logger:
-                                logger.debug(f"Batch history write progress: {history_records.index(record) + 1}/{len(history_records)}")
+                table.update_item(
+                    Key={
+                        'property_id': property_id,
+                        'sort_key': 'META'
+                    },
+                    UpdateExpression=update_expression,
+                    ExpressionAttributeValues=expression_values,
+                    ConditionExpression="attribute_exists(property_id)"  # Only update if exists
+                )
+                
+                successful_updates += 1
                 
                 if logger:
-                    logger.info(f"Successfully wrote {len(history_records)} history records")
-                    
+                    direction = "↑" if price_change_amt > 0 else "↓"
+                    logger.info(f"Price updated for {property_id}: {old_price:,} → {new_price:,} "
+                               f"({direction}{abs(price_change_pct):.1f}%) | "
+                               f"Total from original: {direction}{abs(total_change_pct):.1f}%")
+                
             except Exception as e:
-                if logger:
-                    logger.error(f"Failed to batch write history records: {str(e)}")
+                if 'ConditionalCheckFailedException' in str(e):
+                    if logger:
+                        logger.warning(f"Property {property_id} not found in database")
+                else:
+                    if logger:
+                        logger.error(f"Failed to update price for {property_id}: {str(e)}")
+                failed_updates += 1
+                
+        except Exception as e:
+            failed_updates += 1
+            if logger:
+                logger.error(f"Error processing price change: {str(e)}")
+    
+    # Summary logging
+    if logger:
+        logger.info(f"Price update complete: {successful_updates} successful, {failed_updates} failed out of {len(price_changes)} total")
         
-        if logger:
-            logger.info(f"Price update complete: {successful_updates} successful, {failed_updates} failed out of {len(price_changes)} total")
-        
-        return successful_updates
-        
-    except Exception as e:
-        if logger:
-            logger.error(f"Fatal error in batch price update: {str(e)}")
-        return successful_updates
+        if successful_updates > 0:
+            increases = sum(1 for c in price_changes[:successful_updates] if c['new_price'] > c['old_price'])
+            decreases = sum(1 for c in price_changes[:successful_updates] if c['new_price'] < c['old_price'])
+            logger.info(f"Price movements: {increases} increases, {decreases} decreases")
+    
+    return successful_updates
