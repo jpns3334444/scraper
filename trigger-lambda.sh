@@ -52,6 +52,13 @@ declare -A FUNCTION_MAP=(
 # Generate session ID first
 SESSION_ID="${FUNCTION_NAME:-lambda}-$(date +%s)-$$"
 
+# Check if first argument is a function name (doesn't start with --)
+if [[ $# -gt 0 ]] && [[ ! "$1" =~ ^-- ]]; then
+    # First argument is function name - convert underscores to hyphens
+    FUNCTION_NAME="${1//_/-}"
+    shift
+fi
+
 # Build payload from arguments
 PAYLOAD="{\"session_id\":\"$SESSION_ID\""
 
@@ -59,9 +66,22 @@ PAYLOAD="{\"session_id\":\"$SESSION_ID\""
 PAYLOAD="$PAYLOAD,\"output_bucket\":\"$DEFAULT_BUCKET\""
 OUTPUT_BUCKET="$DEFAULT_BUCKET"
 
+# If we got function name from positional arg, validate and set it up
+if [[ -n "$FUNCTION_NAME" ]]; then
+    if [[ -z "${FUNCTION_MAP[$FUNCTION_NAME]:-}" ]]; then
+        echo "❌ Unknown function: $FUNCTION_NAME"
+        echo "Available functions: ${!FUNCTION_MAP[*]}"
+        exit 1
+    fi
+    LAMBDA_FUNCTION="${FUNCTION_MAP[$FUNCTION_NAME]}"
+    SESSION_ID="${FUNCTION_NAME}-$(date +%s)-$$"
+    PAYLOAD="{\"session_id\":\"$SESSION_ID\",\"output_bucket\":\"$DEFAULT_BUCKET\""
+fi
+
 while [[ $# -gt 0 ]]; do
   case $1 in
     --function)
+        # Keep backward compatibility with --function flag
         FUNCTION_NAME="$2"
         if [[ -z "${FUNCTION_MAP[$FUNCTION_NAME]:-}" ]]; then
             echo "❌ Unknown function: $FUNCTION_NAME"
@@ -73,6 +93,7 @@ while [[ $# -gt 0 ]]; do
         PAYLOAD="{\"session_id\":\"$SESSION_ID\",\"output_bucket\":\"$DEFAULT_BUCKET\""
         shift 2 ;;
     --parallel-instances) PARALLEL_INSTANCES="$2"; shift 2 ;;
+    -p) PARALLEL_INSTANCES="$2"; shift 2 ;;
     --output-bucket) OUTPUT_BUCKET="$2"; PAYLOAD="${PAYLOAD%,\"output_bucket\":*}},\"output_bucket\":\"$2\""; shift 2 ;;
     --max-properties) PAYLOAD="$PAYLOAD,\"max_properties\":$2"; shift 2 ;;
     --areas) PAYLOAD="$PAYLOAD,\"areas\":\"$2\""; shift 2 ;;
@@ -85,13 +106,20 @@ while [[ $# -gt 0 ]]; do
     --log-level) LOG_LEVEL="$2"; PAYLOAD="$PAYLOAD,\"log_level\":\"$2\""; shift 2 ;;
     --sync) SYNC_MODE=true; shift ;;
     --help)
-      echo "Usage: $0 --function <function-name> [OPTIONS]"
+      echo "Usage: $0 <function-name> [OPTIONS]"
+      echo "   or: $0 --function <function-name> [OPTIONS]"
+      echo ""
+      echo "Examples:"
+      echo "  $0 property-processor -p 5"
+      echo "  $0 property_processor -p 5    # underscores converted to hyphens"
+      echo "  $0 url-collector --max-properties 1000"
       echo ""
       echo "Available Functions: ${!FUNCTION_MAP[*]}"
       echo ""
       echo "Options:"
-      echo "  --function FUNC             Lambda function to trigger (required)"
+      echo "  --function FUNC             Lambda function to trigger (alternative to positional arg)"
       echo "  --parallel-instances N      Launch N parallel Lambda instances"
+      echo "  -p N                        Launch N parallel Lambda instances (shortcut)"
       echo "  --output-bucket BUCKET      S3 bucket for output (default: $DEFAULT_BUCKET)"
       echo "  --max-properties N          Max properties to process"
       echo "  --areas AREAS               Comma-separated list of areas"
@@ -112,7 +140,11 @@ done
 
 # Validate required function parameter
 if [[ -z "$FUNCTION_NAME" ]]; then
-    echo "❌ Error: --function is required"
+    echo "❌ Error: function name is required"
+    echo ""
+    echo "Usage: $0 <function-name> [OPTIONS]"
+    echo "   or: $0 --function <function-name> [OPTIONS]"
+    echo ""
     echo "Available functions: ${!FUNCTION_MAP[*]}"
     exit 1
 fi

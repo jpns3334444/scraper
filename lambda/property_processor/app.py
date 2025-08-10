@@ -198,7 +198,8 @@ def parse_lambda_event(event):
         'log_level': event.get('log_level', os.environ.get('LOG_LEVEL', 'INFO')),
         'max_workers': event.get('max_workers', int(os.environ.get('MAX_WORKERS', '5'))),
         'requests_per_second': event.get('requests_per_second', int(os.environ.get('REQUESTS_PER_SECOND', '5'))),
-        'batch_size': event.get('batch_size', int(os.environ.get('BATCH_SIZE', '100')))
+        'batch_size': event.get('batch_size', int(os.environ.get('BATCH_SIZE', '100'))),
+        'skip_no_interior_photos': event.get('skip_no_interior_photos', os.environ.get('SKIP_NO_INTERIOR_PHOTOS', 'false').lower() == 'true')
     }
 
 def get_processor_config(args):
@@ -213,7 +214,8 @@ def get_processor_config(args):
         'enable_deduplication': True,
         'max_workers': args['max_workers'],
         'requests_per_second': args['requests_per_second'],
-        'batch_size': args['batch_size']
+        'batch_size': args['batch_size'],
+        'skip_no_interior_photos': args['skip_no_interior_photos']  # Make this configurable
     }
     
     return config
@@ -276,6 +278,8 @@ def process_single_url(url_data, session_pool, rate_limiter, url_tracking_table,
         
         # Get session from pool
         session = session_pool.get_session()
+        if logger:
+            logger.debug(f"Acquired session for {url}")
         
         # Add random jitter delay
         jitter_delay = random.uniform(0.5, 2.0)
@@ -291,6 +295,12 @@ def process_single_url(url_data, session_pool, rate_limiter, url_tracking_table,
             listing_price=listing_price  # Pass the listing price
         )
         
+        # Handle case where property was skipped (no interior photos)
+        if result is None:
+            if logger:
+                logger.info(f"Skipping property {url}: no interior photos found")
+            return {"url": url, "skip_reason": "no_interior_photos"}
+        
         # Validate data
         is_valid, msg = validate_property_data(result)
         if not is_valid:
@@ -299,12 +309,13 @@ def process_single_url(url_data, session_pool, rate_limiter, url_tracking_table,
             # URL is already marked as processed before batch processing starts
             return result
         
-        # Check for interior photos (excluding floor plans)
-        has_interior_photos = result.get('has_interior_photos', False)
-        if not has_interior_photos:
-            result['skip_reason'] = 'no_interior_photos'
-            logger.warning(f"Skipping property {url}: No interior photos found")
-            return result
+        # ONLY skip if interior photo checking is enabled AND no interior photos
+        if config.get('skip_no_interior_photos', False):
+            has_interior_photos = result.get('has_interior_photos', True)  # Default to True if not set
+            if not has_interior_photos:
+                result['skip_reason'] = 'no_interior_photos'
+                logger.warning(f"Skipping property {url}: No interior photos found")
+                return result
         
         # Additional data quality checks
         quality_issues = []
@@ -340,6 +351,8 @@ def process_single_url(url_data, session_pool, rate_limiter, url_tracking_table,
         # Return session to pool
         if session:
             session_pool.return_session(session)
+            if logger:
+                logger.debug(f"Returned session for {url}")
 
 def process_urls_parallel(urls, config, logger, job_start_time, max_runtime_seconds):
     """Process URLs in parallel with configurable concurrency"""
@@ -394,6 +407,10 @@ def process_urls_parallel(urls, config, logger, job_start_time, max_runtime_seco
                     result = future.result()
                     results.append(result)
                     completed_count += 1
+                    
+                    # Log every completion for debugging
+                    if logger:
+                        logger.debug(f"Completed {completed_count}/{len(urls)}: {url}")
                     
                     # Log progress every 10 URLs
                     if completed_count % 10 == 0:
@@ -630,6 +647,7 @@ def main(event=None):
     
     logger.info(f"Starting property processor - Session: {config['session_id']}")
     logger.info(f"Max runtime: {config['max_runtime_minutes']} minutes")
+    logger.info(f"Interior photo checking: {'ENABLED' if config.get('skip_no_interior_photos') else 'DISABLED'}")
     
     error_count = 0
     success_count = 0

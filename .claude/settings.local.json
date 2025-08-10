@@ -36,7 +36,9 @@
       "Bash(aws s3api head-object:*)",
       "Bash(./update-lambda.sh:*)",
       "Bash(rm:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(./trigger-lambda.sh:*)",
+      "Bash(grep:*)"
     ],
     "deny": []
   }

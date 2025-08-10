@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Core scraping functionality for homes.co.jp
+Fixed version - restores working extraction logic while keeping interior photo detection
 """
 import time
 import requests
@@ -11,81 +12,9 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
 import io
-import boto3
-import json
-import unicodedata
-
-# Normalizer helper functions for optional fields
-def _norm_text(s):
-    try:
-        return " ".join(str(s).strip().replace("\u3000"," ").split()) or None
-    except: return None
-
-def _norm_label(label: str) -> str:
-    if not label:
-        return ""
-    s = unicodedata.normalize("NFKC", str(label))
-    # remove full/half colons and all spaces (incl. full-width)
-    s = re.sub(r"[：:\u3000\s]+", "", s)
-    # strip common trailing punctuation/decor
-    s = re.sub(r"[()（）〔〕［］【】]+", "", s)
-    return s.strip()
-
-def _norm_cell_text(el) -> str:
-    try:
-        # Prefer stripped_strings to avoid JS/CSS noise
-        txt = " ".join(el.stripped_strings)
-        # Collapse spaces, normalize width
-        txt = unicodedata.normalize("NFKC", txt)
-        return " ".join(txt.split())
-    except Exception:
-        return None
-
-def _make_soup(html: str):
-    try:
-        return BeautifulSoup(html, "lxml")
-    except Exception:
-        return BeautifulSoup(html, "html.parser")
-
-def _to_bool_from_jp(s, true_words=("有","あり","可","必要","最上階","角部屋","リフォーム","リノベーション"),
-                     false_words=("無","なし","不可","不要")):
-    try:
-        t = str(s)
-        if any(w in t for w in true_words): return True
-        if any(w in t for w in false_words): return False
-    except: pass
-    return None
-
-def _to_int_yen(s):
-    try:
-        t = str(s).replace(",","").replace("円","").replace("／月","").replace("/月","").strip()
-        return int(float(t)) if t else None
-    except: return None
-
-def _to_float_sqm(s):
-    try:
-        t = str(s).replace(",","").replace("m²","").replace("㎡","").strip()
-        return float(t) if t else None
-    except: return None
-
-def _to_iso_date(s):
-    # Accepts YYYY年M月D日[ 時:分[:秒]] or YYYY/MM/DD or YYYY-MM-DD
-    import re, datetime
-    try:
-        t = _norm_text(s)
-        if not t: return None
-        # YYYY年M月D日...
-        m = re.match(r"(\d{4})[年/.-](\d{1,2})[月/.-](\d{1,2})日?(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?", t)
-        if m:
-            y,mn,d,hh,mm,ss = m.groups()
-            hh = int(hh) if hh else 0; mm = int(mm) if mm else 0; ss = int(ss) if ss else 0
-            return datetime.datetime(int(y),int(mn),int(d),hh,mm,ss).isoformat()
-        # Plain YYYY-MM-DD or YYYY/MM/DD
-        for fmt in ("%Y-%m-%d","%Y/%m/%d"):
-            try: return datetime.datetime.strptime(t, fmt).date().isoformat()
-            except: pass
-    except: pass
-    return None
+import os
+import hashlib
+from urllib.parse import urlparse
 
 # Overview field mapping for deterministic parsing
 OVERVIEW_FIELD_MAP = {
@@ -112,42 +41,14 @@ OVERVIEW_FIELD_MAP = {
     "総戸数": "total_units_text",
 }
 
-# Extended field mapping for optional extras
-FIELD_MAP = [
-    (r"管理会社名",               "management_company",            _norm_text),
-    (r"管理形態|管理の形態",       "management_form",               _norm_text),
-    (r"管理員.*勤務形態",          "manager_workstyle",             _norm_text),
-    (r"管理組合の有無",            "owner_association_present",     _to_bool_from_jp),
-    (r"現況",                    "current_occupancy",             _norm_text),
-    (r"引渡.*(時期|条件)?",        "handover_timing",               _norm_text),
-    (r"取引態様",                 "brokerage_type",                _norm_text),
-    (r"LIFULL物件番号",            "lifull_property_id",            _norm_text),
-    (r"自社管理番号",              "internal_listing_id",           _norm_text),
-    (r"(情報公開日|掲載開始日)",     "info_published_at",            _to_iso_date),
-    (r"(最終更新日|最新情報提供日)", "info_updated_at",              _to_iso_date),
-    (r"(情報有効期限|情報提供日)",   "info_expires_at",              _to_iso_date),
-    (r"建物構造",                 "building_structure",            _norm_text),
-    (r"用途地域",                 "zoning",                        _norm_text),
-    (r"土地権利",                 "land_right",                    _norm_text),
-    (r"国土法届出",               "land_act_notification_required",_to_bool_from_jp),
-    (r"修繕積立(基金|一時金)",      "repair_reserve_fund_initial_yen", _to_int_yen),
-    (r"その他費用",               "other_initial_fees_text",       _norm_text),
-    (r"駐車場",                  "parking_text",                  _norm_text),
-    (r"駐輪場",                  "bicycle_parking_text",          _norm_text),
-    (r"バイク置場",               "motorcycle_parking_text",       _norm_text),
-    (r"ペット",                  "pets_allowed",                  _to_bool_from_jp),
-    (r"総戸数",                  "total_units",                   lambda s: int(str(s).replace(",","").strip()) if str(s).strip().replace(",","").isdigit() else None),
-    (r"敷地面積",                 "site_area_sqm",                 _to_float_sqm),
-]
-
-# Precompile FIELD_MAP patterns
-FIELD_MAP_COMPILED = [(re.compile(p), f, t) for (p, f, t) in FIELD_MAP]
-
-# Orientation mapping from Japanese to English
-ORI_MAP = {
-    "北": "north", "東": "east", "南": "south", "西": "west",
-    "北東": "north-east", "南西": "south-west", 
-    "南東": "south-east", "北西": "north-west"
+# New field mapping for additional property attributes
+NEW_FIELD_MAP = {
+    '用途地域': 'zoning',
+    '土地権利': 'land_rights',
+    '国土法届出': 'national_land_use_notification',
+    '取引態様': 'transaction_type',
+    '現況': 'current_occupancy',
+    '引渡し': 'handover_timing',
 }
 
 # Japanese to English ward mapping
@@ -225,6 +126,133 @@ BROWSER_PROFILES = [
         }
     }
 ]
+
+
+def _safe_name(url: str, idx: int, property_id: str) -> str:
+    # keep extension if present, otherwise default .jpg
+    parsed = urlparse(url)
+    base = os.path.basename(parsed.path) or f"img_{idx}.jpg"
+    if "." not in base:
+        base = f"{base}.jpg"
+    # short hash to avoid collisions
+    h = hashlib.md5(url.encode("utf-8")).hexdigest()[:8]
+    # match your historical key style: {property_id}/NN_hash_name
+    return f"{property_id}/{idx:02d}_{h}_{base}"
+
+def _download_one(url, session, timeout, rate_limiter=None, logger=None):
+    if rate_limiter:
+        # simple token bucket: call() blocks until allowed
+        try:
+            rate_limiter()
+        except Exception:
+            pass
+    try:
+        resp = session.get(url, timeout=timeout)
+        resp.raise_for_status()
+        content = resp.content
+        # Optional lightweight sanity check with Pillow if available
+        try:
+            from PIL import Image
+            Image.open(io.BytesIO(content)).verify()
+        except Exception:
+            # not fatal—some floorplan PNGs can be weird; keep bytes
+            pass
+        return content
+    except Exception as e:
+        if logger:
+            logger.warning(f"Download failed: {url} :: {e}")
+        return None
+
+def download_images_parallel(urls, session_pool, output_bucket, property_id, logger=None, rate_limiter=None, timeout=15, max_workers=8):
+    """
+    Parallel downloader used by the fast path.
+    Returns a list of 'filenames' (S3 keys if uploaded, otherwise local-style keys).
+    """
+    # Lazy import to avoid hard dep if you're not using S3
+    s3 = None
+    if output_bucket:
+        try:
+            import boto3
+            s3 = boto3.client("s3")
+        except Exception as e:
+            if logger:
+                logger.warning(f"S3 client unavailable: {e}")
+
+    results = []
+    # borrow sessions from the pool for concurrency, but limit to avoid pool exhaustion
+    # Never take more than half the remaining sessions to avoid deadlock with main processing
+    max_image_sessions = min(max_workers, len(urls), 3)  # Cap at 3 sessions for images
+    sessions = [session_pool.get_session() for _ in range(max_image_sessions)] if session_pool else [requests.Session()]
+    try:
+        with ThreadPoolExecutor(max_workers=len(sessions)) as executor:
+            futs = {}
+            for idx, url in enumerate(urls):
+                # round-robin a session
+                sess = sessions[idx % len(sessions)]
+                fut = executor.submit(_download_one, url, sess, timeout, rate_limiter, logger)
+                futs[fut] = (idx, url)
+
+            for fut in as_completed(futs):
+                idx, url = futs[fut]
+                content = fut.result()
+                if not content:
+                    continue
+                key = _safe_name(url, idx, property_id or "unknown")
+                # Upload to S3 if configured, otherwise just pretend-key
+                if s3 and output_bucket:
+                    try:
+                        s3.put_object(Bucket=output_bucket, Key=key, Body=content)
+                    except Exception as e:
+                        if logger:
+                            logger.warning(f"S3 put_object failed for {key}: {e}")
+                        # still return the key so downstream logic keeps working
+                results.append(key)
+    finally:
+        # return sessions to the pool
+        if session_pool:
+            for sess in sessions:
+                session_pool.return_session(sess)
+        else:
+            try:
+                sessions[0].close()
+            except Exception:
+                pass
+
+    if logger:
+        logger.info(f"Downloaded {len(results)}/{len(urls)} images")
+    return results
+
+def download_images_parallel_fallback(urls, session, output_bucket, property_id, logger=None, timeout=15):
+    """
+    Sequential fallback used when no session pool is available.
+    Mirrors the return shape of download_images_parallel.
+    """
+    s3 = None
+    if output_bucket:
+        try:
+            import boto3
+            s3 = boto3.client("s3")
+        except Exception as e:
+            if logger:
+                logger.warning(f"S3 client unavailable: {e}")
+
+    results = []
+    for idx, url in enumerate(urls):
+        content = _download_one(url, session, timeout, None, logger)
+        if not content:
+            continue
+        key = _safe_name(url, idx, property_id or "unknown")
+        if s3 and output_bucket:
+            try:
+                s3.put_object(Bucket=output_bucket, Key=key, Body=content)
+            except Exception as e:
+                if logger:
+                    logger.warning(f"S3 put_object failed for {key}: {e}")
+        results.append(key)
+
+    if logger:
+        logger.info(f"(fallback) Downloaded {len(results)}/{len(urls)} images")
+    return results
 
 def create_session(logger=None):
     """Create HTTP session with anti-bot headers"""
@@ -314,6 +342,13 @@ def parse_numeric_field(text, default=None):
         pass
     
     return default
+
+def yen_to_int(s):
+    """Convert yen string to integer value"""
+    if not s:
+        return None
+    m = re.search(r'([\d,]+)\s*円', s)
+    return int(m.group(1).replace(',', '')) if m else None
 
 def parse_building_age(text):
     """Parse building age from 築年月 field with enhanced era and format support"""
@@ -645,38 +680,6 @@ def extract_building_year(text):
     
     return None
 
-def extract_area_details(text):
-    """Extract usable area and total area from size text"""
-    areas = {}
-    if not text:
-        return areas
-    
-    try:
-        # Look for patterns like "専有面積：50.5m²（壁芯）" or "専有面積：45.3m²（内法）"
-        # 壁芯 = total registered area, 内法 = usable area
-        
-        # Total area (壁芯)
-        total_match = re.search(r'(\d+\.?\d*)[m²㎡].*?壁芯', text)
-        if total_match:
-            areas['total_area'] = float(total_match.group(1))
-        
-        # Usable area (内法)
-        usable_match = re.search(r'(\d+\.?\d*)[m²㎡].*?内法', text)
-        if usable_match:
-            areas['usable_area'] = float(usable_match.group(1))
-        
-        # If no specific type mentioned, use as general area
-        if not areas:
-            general_match = re.search(r'(\d+\.?\d*)[m²㎡]', text)
-            if general_match:
-                # Assume it's total area if not specified
-                areas['total_area'] = float(general_match.group(1))
-    
-    except (ValueError, TypeError):
-        pass
-    
-    return areas
-
 def parse_overview_section(soup):
     """Parse property overview from CSS Grid structure and extract detailed info from text patterns"""
     overview = {}
@@ -831,9 +834,7 @@ def extract_listing_urls_from_html(html_content):
 
 def extract_listings_with_prices_from_html(html_content):
     """Extract listing URLs with prices from HTML content"""
-    from bs4 import BeautifulSoup
-    
-    soup = _make_soup(html_content)
+    soup = BeautifulSoup(html_content, 'html.parser')
     listings = []
     
     # Look for listing containers - these may vary, so we'll try multiple selectors
@@ -941,7 +942,7 @@ def collect_area_listings_with_prices(area_name, max_pages=None, session=None, l
             raise Exception(f"Anti-bot protection detected on {area_name}")
         
         # Parse pagination info
-        soup = _make_soup(response.text)
+        soup = BeautifulSoup(response.content, 'html.parser')
         total_element = soup.select_one('.totalNum')
         total_count = int(total_element.text) if total_element else 0
         
@@ -1004,6 +1005,231 @@ def collect_area_listings_with_prices(area_name, max_pages=None, session=None, l
         if should_close_session:
             session.close()
 
+def normalize_url(url):
+    """Normalize URL by removing tracking parameters"""
+    from urllib.parse import urlparse, parse_qs, urlunparse
+    
+    parsed = urlparse(url)
+    # Remove common tracking parameters
+    query_params = parse_qs(parsed.query)
+    
+    # Remove tracking params (add more as needed)
+    tracking_params = {'utm_source', 'utm_medium', 'utm_campaign', 'ref', 'source'}
+    cleaned_params = {k: v for k, v in query_params.items() if k not in tracking_params}
+    
+    # Rebuild query string
+    from urllib.parse import urlencode
+    clean_query = urlencode(cleaned_params, doseq=True) if cleaned_params else ''
+    
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, clean_query, parsed.fragment))
+
+def normalize_category(category):
+    """Normalize category names"""
+    SELECTABLE_CATS = ('floorplan', 'exterior', 'interior', 'facility', 'other')
+    
+    if category == 'surround':
+        return 'other'
+    return category if category in SELECTABLE_CATS else 'other'
+
+def collect_gallery_images(soup, logger=None):
+    """Collect images from gallery sections, dedupe, and classify"""
+    # Step 1: Collect all images with their categories
+    raw_images = []  # List of (url, category, alt) tuples
+    
+    # Primary method: Find the photo-viewer list structure
+    gallery_list = soup.select_one('div[data-target="photo-viewer.list"]')
+    
+    if gallery_list:
+        # Process each section in the gallery
+        sections = [
+            ('image-menu-floorplan', 'floorplan'),
+            ('image-menu-interior', 'interior'),
+            ('image-menu-exterior', 'exterior'),
+            ('image-menu-facility', 'facility'),
+            ('image-menu-surround', 'surround'),  # 周辺環境
+            ('image-menu-other', 'other')
+        ]
+        
+        for section_id, category in sections:
+            # Find the section containing the section ID
+            section = None
+            # First try to find the h2 with the ID and get its parent section
+            header = gallery_list.select_one(f'#{section_id}')
+            if header:
+                section = header.find_parent('section')
+            
+            # Alternative: find section that contains the ID element
+            if not section:
+                for s in gallery_list.select('section'):
+                    if s.select_one(f'#{section_id}'):
+                        section = s
+                        break
+            
+            if section:
+                # Find all images in this section
+                imgs = section.select('img')
+                for img in imgs:
+                    src = (img.get('src') or 
+                          img.get('data-src') or 
+                          img.get('data-original') or 
+                          img.get('data-lazy-src'))
+                    
+                    if src:
+                        # Convert to absolute URL
+                        if src.startswith('//'):
+                            src = 'https:' + src
+                        elif src.startswith('/'):
+                            src = 'https://www.homes.co.jp' + src
+                        elif not src.startswith('http'):
+                            src = 'https://www.homes.co.jp/' + src.lstrip('/')
+                        
+                        # Only keep images from HOME'S domains
+                        if any(domain in src for domain in ['image.homes.jp', 'image1.homes.jp', 
+                                                            'image2.homes.jp', 'image3.homes.jp', 
+                                                            'image4.homes.jp', 'img.homes.jp']):
+                            raw_images.append((src, category, img.get('alt', '')))
+                            if logger:
+                                logger.debug(f"Found {category} image in section {section_id}: {img.get('alt', '')}")
+    else:
+        # Fallback: Use thumbnail rail if gallery sections not found
+        if logger:
+            logger.info("Gallery sections not found, using thumbnail fallback")
+        
+        # Look for photo-slider-photo thumbnails
+        thumbnails = soup.select('photo-slider-photo img')
+        
+        for img in thumbnails:
+            src = (img.get('src') or 
+                  img.get('data-src') or 
+                  img.get('data-original') or 
+                  img.get('data-lazy-src'))
+            
+            if not src:
+                continue
+            
+            # Convert to absolute URL
+            if src.startswith('//'):
+                src = 'https:' + src
+            elif src.startswith('/'):
+                src = 'https://www.homes.co.jp' + src
+            elif not src.startswith('http'):
+                src = 'https://www.homes.co.jp/' + src.lstrip('/')
+            
+            # Only keep images from HOME'S domains
+            if any(domain in src for domain in ['image.homes.jp', 'image1.homes.jp', 
+                                                'image2.homes.jp', 'image3.homes.jp', 
+                                                'image4.homes.jp', 'img.homes.jp']):
+                # Classify using fallback method
+                image_type = classify_image_fallback(img, src, logger)
+                raw_images.append((src, image_type, img.get('alt', '')))
+    
+    # Step 2: Deduplicate by normalized URL, keeping first occurrence
+    seen_urls = set()
+    deduped_images = []
+    
+    for url, category, alt in raw_images:
+        normalized_url = normalize_url(url)
+        if normalized_url not in seen_urls:
+            seen_urls.add(normalized_url)
+            deduped_images.append((url, normalize_category(category), alt))
+    
+    # Step 3: Count by normalized category (post-dedupe)
+    counts = {
+        'floorplan': 0,
+        'exterior': 0,
+        'interior': 0,
+        'facility': 0,
+        'other': 0
+    }
+    
+    for _, category, _ in deduped_images:
+        if category in counts:
+            counts[category] += 1
+    
+    if logger:
+        total = sum(counts.values())
+        logger.info(f"Gallery photo analysis (post-dedupe): interior={counts['interior']}, exterior={counts['exterior']}, "
+                   f"floorplan={counts['floorplan']}, facility={counts['facility']}, other={counts['other']} (total={total})")
+    
+    return deduped_images, counts
+
+def classify_image_fallback(img_element, src_url, logger=None):
+    """Fallback image classification using keywords (only for thumbnails)"""
+    # Get alt text and other attributes
+    alt_text = (img_element.get('alt') or '').lower()
+    title_text = (img_element.get('title') or '').lower()
+    
+    # Look for caption text near thumbnails
+    caption_text = ''
+    try:
+        # For photo-slider-photo elements, look for caption
+        parent = img_element.find_parent('photo-slider-photo')
+        if parent:
+            caption = parent.find('figcaption') or parent.find('div', class_='caption')
+            if caption:
+                caption_text = caption.get_text(strip=True).lower()
+    except:
+        pass
+    
+    # Combine text sources
+    all_text = f"{alt_text} {title_text} {caption_text}"
+    
+    # Floor plan keywords
+    if any(kw in all_text for kw in ['間取り', '間取図', '平面図']):
+        return 'floorplan'
+    
+    # Interior keywords (from captions/alt)
+    interior_keywords = ['室内', 'リビング', 'ダイニング', 'キッチン', '浴室', '洗面', 'トイレ', '洋室', '和室', '玄関', '収納']
+    if any(kw in all_text for kw in interior_keywords):
+        return 'interior'
+    
+    # Exterior keywords
+    exterior_keywords = ['外観', '周辺', 'エントランス']
+    if any(kw in all_text for kw in exterior_keywords):
+        return 'exterior'
+    
+    return 'unknown'
+
+def select_images_for_download(classified_urls, max_total=10, max_floorplan=1, max_exterior=1, max_facility=1, max_other=1, logger=None):
+    """Select images with strict caps per category"""
+    # classified_urls: list of (url, category, alt) tuples AFTER DEDUPE; category already normalized
+    
+    # Separate by category
+    floorplans = [(u, c, a) for u, c, a in classified_urls if c == 'floorplan']
+    exteriors = [(u, c, a) for u, c, a in classified_urls if c == 'exterior']
+    interiors = [(u, c, a) for u, c, a in classified_urls if c == 'interior']
+    facilities = [(u, c, a) for u, c, a in classified_urls if c == 'facility']
+    others = [(u, c, a) for u, c, a in classified_urls if c == 'other']
+    
+    selected = []
+    
+    # Apply strict caps
+    selected.extend(floorplans[:max_floorplan])
+    selected.extend(exteriors[:max_exterior])
+    selected.extend(facilities[:max_facility])
+    selected.extend(others[:max_other])
+    
+    # Fill remainder with interior only
+    remaining = max_total - len(selected)
+    if remaining > 0:
+        selected.extend(interiors[:remaining])
+    
+    # Calculate breakdown
+    breakdown = {
+        'floorplan': sum(1 for u, c, a in selected if c == 'floorplan'),
+        'exterior': sum(1 for u, c, a in selected if c == 'exterior'),
+        'facility': sum(1 for u, c, a in selected if c == 'facility'),
+        'other': sum(1 for u, c, a in selected if c == 'other'),
+        'interior': sum(1 for u, c, a in selected if c == 'interior'),
+    }
+    
+    if logger:
+        logger.info(f"Selected {len(selected)}/{max_total} images: {breakdown}")
+    
+    # Return URLs for download
+    selected_urls = [url for url, _, _ in selected]
+    return selected_urls, breakdown
+
 def extract_property_details(session, property_url, referer_url, retries=3, config=None, logger=None, session_pool=None, image_rate_limiter=None, ward=None, listing_price=None):
     """Extract detailed property information with retry logic"""
     last_error = None
@@ -1026,23 +1252,17 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
             if "pardon our interruption" in response.text.lower():
                 raise Exception("Anti-bot protection detected")
             
-            # ===== ADD WAIT HERE FOR IMAGES TO LOAD =====
-            # This is the key spot - after we get the page but before parsing
+            # Wait for JavaScript to load images
             if logger:
                 logger.debug(f"Waiting 2-3 seconds for JavaScript to load images...")
-            time.sleep(random.uniform(2.0, 3.0))  # Wait 2-3 seconds for JS to execute
+            time.sleep(random.uniform(2.0, 3.0))
             
-            # Some sites need a second request to get fully loaded content
-            # Try getting the page again after the wait
+            # Get the page again after the wait
             response = session.get(property_url, timeout=15)
             
-            # Store raw HTML before parsing
-            raw_html = response.text
-            
-            soup = _make_soup(response.text)
+            soup = BeautifulSoup(response.content, 'html.parser')
             data = {
                 "url": property_url,
-                "raw_html": raw_html,
                 "extraction_timestamp": datetime.now().isoformat()
             }
             
@@ -1081,63 +1301,33 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
             overview = parse_overview_section(soup)
             mapped = normalize_overview(overview)
             
-            # Extract property details from tables with field mapping (FALLBACK for missing fields)
+            # Extract property details from tables with field mapping
             field_mappings = {
                 '価格': 'price_text',
                 '専有面積': 'size_sqm_text',
                 '築年月': 'building_age_text',
-                # Floor field variations (comprehensive list)
                 '所在階': 'floor_text',
                 '階': 'floor_text', 
                 '階数': 'floor_text',
                 '所在階/階数': 'floor_text',
-                '階/建物階数': 'floor_text',
-                '所在階数': 'floor_text',
-                '建物階数': 'floor_text',
-                '階建': 'floor_text',
-                '所在階/総階数': 'floor_text',
-                '総階数': 'floor_text',
-                '建物総階数': 'floor_text',
-                '階数/総階数': 'floor_text',
-                '層': 'floor_text',  # Alternative kanji for floor
-                '階層': 'floor_text',
-                'フロア': 'floor_text',  # Katakana "floor"
-                'Floor': 'floor_text',  # English
-                '位置': 'floor_text',  # Position/location
                 '所在地': 'address',
                 '管理費': 'management_fee_text',
                 '修繕積立金': 'repair_reserve_fee_text',
                 '交通': 'station_info',
                 '向き': 'primary_light',
                 '方角': 'primary_light',
-                '方位': 'primary_light',
-                'バルコニー向き': 'primary_light',
-                '開口向き': 'primary_light',
-                '主要開口部': 'primary_light',
                 '主要採光面': 'primary_light',
                 '間取り': 'layout_text',
                 '建物名': 'building_name',
                 'バルコニー': 'balcony_area_text',
                 'バルコニー面積': 'balcony_area_text',
-                'ベランダ': 'balcony_area_text',
                 '総戸数': 'total_units_text',
-                # Additional variations for fees
-                '管理費等': 'management_fee_text',
-                '管理費（月額）': 'management_fee_text',
-                '月額管理費': 'management_fee_text',
-                '修繕費': 'repair_reserve_fee_text',
-                '修繕積立金（月額）': 'repair_reserve_fee_text',
-                '積立金': 'repair_reserve_fee_text',
-                '月額修繕積立金': 'repair_reserve_fee_text',
-                # Additional transportation patterns
                 '最寄駅': 'station_info',
                 'アクセス': 'station_info',
-                '交通アクセス': 'station_info',
             }
             
             # First, use the new deterministic parser results
             if mapped:
-                # Apply mapped fields from overview parser
                 for key, value in mapped.items():
                     if key.endswith('_text') or key in ['address', 'station_info', 'layout_text', 'building_name']:
                         data[key] = value
@@ -1145,119 +1335,37 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                         data[key] = value
                 
                 if logger:
-                    logger.debug(f"Overview parser extracted {len(mapped)} fields: {list(mapped.keys())}")
+                    logger.debug(f"Overview parser extracted {len(mapped)} fields")
+            
+            # Add new field mappings to existing ones
+            field_mappings.update(NEW_FIELD_MAP)
             
             # Fallback to table parsing for any missing fields
             tables = soup.find_all('table')
-            if logger:
-                logger.debug(f"Found {len(tables)} tables to process for fallback")
-            
-            # Enhanced table walking for extras with normalized labels
-            all_extracted_fields = []
-            extras = {}
-            missed_labels = []
-
-            # Walk all detail tables under the main area; be permissive
-            tables = soup.select("table, .mod-table, .mod-mergeTable")
-            for tbl in tables:
-                for tr in tbl.find_all("tr"):
-                    th = tr.find("th")
-                    td = tr.find("td")
-                    if not th or not td:
-                        # fallback: some pages use divs/spans inside rows
-                        cells = tr.find_all(["th","td","div","span"], recursive=True)
+            for table in tables:
+                rows = table.find_all('tr')
+                if len(rows) > 5:
+                    for row in rows:
+                        cells = row.find_all(['th', 'td'])
                         if len(cells) >= 2:
-                            th, td = cells[0], cells[1]
-                        else:
-                            continue
-
-                    raw_label = _norm_cell_text(th) or ""
-                    raw_value = _norm_cell_text(td)
-                    if not raw_label:
-                        continue
-
-                    # Guard for oversized raw values
-                    if raw_value and len(raw_value) > 2000:
-                        raw_value = raw_value[:2000]
-
-                    # Store for fallback field mapping (old approach)
-                    key = raw_label
-                    value = raw_value
-                    if key and value and len(key) < 30:
-                        # Store raw value only if not already found by overview parser
-                        if key not in data:
-                            data[key] = value
-                            all_extracted_fields.append(f"{key}={value}")
-                        
-                        # Store mapped field if exists and not already found
-                        if key in field_mappings and field_mappings[key] not in data:
-                            data[field_mappings[key]] = value
-                            if logger:
-                                logger.debug(f"Fallback mapped field: {key} -> {field_mappings[key]} = {value}")
-                        # Handle primary light field
-                        elif key in ['主要採光面', '向き', '方角'] and 'primary_light' not in data:
-                            data['primary_light'] = value
-                            if logger:
-                                logger.debug(f"Found primary light field: {key} = {value}")
-
-                    # New normalized label matching approach
-                    label = _norm_label(raw_label)
-                    matched = False
-                    for pat, field, transform in FIELD_MAP_COMPILED:
-                        if pat.search(label):
-                            val = transform(raw_value)
-                            if val is not None:
-                                extras[field] = val
-                            matched = True
-                            break
-                    if not matched:
-                        missed_labels.append(raw_label)
-            
-            # Marketing badges parsing from chips/list text
-            try:
-                chips_text = ""
-                # Look for marketing text in various containers
-                for selector in ['.point', '.recommend', '.sales-point', '.feature', '.highlight', '.badge', 
-                               '.chip', '.tag', '.label', '[class*="point"]', '[class*="feature"]',
-                               'li', 'span', 'div']:
-                    elements = soup.select(selector)
-                    for elem in elements:
-                        if elem.get_text().strip():
-                            chips_text += elem.get_text().strip() + " "
-                
-                if chips_text:
-                    # Only set if the call returns True; don't set False from missing chips
-                    if "最上階" in chips_text and _to_bool_from_jp("最上階"):
-                        extras["is_top_floor"] = True
-                    if "角部屋" in chips_text and _to_bool_from_jp("角部屋"):
-                        extras["is_corner_unit"] = True
-                    if ("リフォーム" in chips_text or "リノベ" in chips_text) and _to_bool_from_jp("リフォーム"):
-                        extras["is_renovated"] = True
-            except Exception:
-                pass  # Fail silently as required
-            
-            # Debug: Log all fields that were extracted
-            if logger:
-                if all_extracted_fields:
-                    logger.debug(f"Fallback extracted fields: {all_extracted_fields[:10]}...")  # Show first 10
-                floor_related = [f for f in all_extracted_fields if '階' in f]
-                if floor_related:
-                    logger.debug(f"Fallback floor-related fields found: {floor_related}")
-                elif not mapped.get('floor_info'):
-                    logger.debug("No floor-related fields found in fallback data")
+                            key = cells[0].text.strip()
+                            # Clean up the value - remove trailing links like "リフォーム情報を見る"
+                            value = cells[1].text.strip()
+                            if key == '築年月' and 'リフォーム情報を見る' in value:
+                                value = re.sub(r'リフォーム情報を見る.*$', '', value).strip()
+                            if key and value and len(key) < 30:
+                                if key not in data:
+                                    data[key] = value
+                                if key in field_mappings and field_mappings[key] not in data:
+                                    mapped_key = field_mappings[key]
+                                    # For 現況, keep only the first token
+                                    if mapped_key == 'current_occupancy':
+                                        value = value.split()[0] if value else value
+                                    data[mapped_key] = value
             
             # Parse extracted fields
             # Price processing with listing price as primary source
             price_numeric = 0
-            
-            # Initialize price_sources for both branches
-            price_sources = []
-            if 'price' in data:  # From regex pattern
-                price_sources.append(('regex_price', data['price']))
-            if 'price_text' in data:  # From table field '価格'
-                price_sources.append(('table_price', data['price_text']))
-            if '価格' in data:  # Direct Japanese field
-                price_sources.append(('japanese_price', data['価格']))
             
             # First, try to use the listing price if provided
             if listing_price and listing_price > 0:
@@ -1265,23 +1373,26 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                 if logger:
                     logger.debug(f"Using price from listing page: {listing_price}")
             else:
-                # Fall back to extracting from detail page (existing logic)
-                # Try each price source until we get a valid result
+                # Fall back to extracting from detail page
+                price_sources = []
+                if 'price' in data:
+                    price_sources.append(('regex_price', data['price']))
+                if 'price_text' in data:
+                    price_sources.append(('table_price', data['price_text']))
+                if '価格' in data:
+                    price_sources.append(('japanese_price', data['価格']))
+                
                 for source_name, price_value in price_sources:
                     if price_value:
                         parsed_price = parse_price_from_text(price_value)
                         if parsed_price > 0:
                             price_numeric = parsed_price
                             if logger:
-                                logger.debug(f"Price extracted from detail page {source_name}: {price_value} -> {parsed_price}")
+                                logger.debug(f"Price extracted from {source_name}: {price_value} -> {parsed_price}")
                             break
             
             # Store the numeric price
             data['price'] = price_numeric
-            
-            # Keep the original price display for reference
-            if price_sources:
-                data['price_display'] = price_sources[0][1]  # Store the first price text found
             
             # Size in square meters
             if 'size_sqm_text' in data:
@@ -1290,22 +1401,10 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                     data['size_sqm'] = size_sqm
                     # Calculate price per sqm if we have both
                     if data.get('price') and data['price'] > 0:
-                        calculated_price_per_sqm = (data['price'] * 10000) / size_sqm  # Convert man-yen to yen
+                        calculated_price_per_sqm = (data['price'] * 10000) / size_sqm
                         data['price_per_sqm'] = calculated_price_per_sqm
                         if logger:
-                            logger.debug(f"Calculated price_per_sqm: {calculated_price_per_sqm:.0f} yen/sqm (price={data['price']} man-yen, size={size_sqm} sqm)")
-                        
-                        # Validation: ensure calculation was successful
-                        if calculated_price_per_sqm == 0:
-                            if logger:
-                                logger.warning(f"Price per sqm calculation resulted in 0: price={data['price']}, size={size_sqm}")
-                    elif data.get('price') and size_sqm:
-                        if logger:
-                            logger.warning(f"Price per sqm not calculated: price={data.get('price')}, size={size_sqm}")
-                elif logger:
-                    logger.debug(f"Failed to parse size from: '{data['size_sqm_text']}'")
-            elif logger:
-                logger.debug("No size_sqm_text field found")
+                            logger.debug(f"Calculated price_per_sqm: {calculated_price_per_sqm:.0f} yen/sqm")
             
             # Building age
             if 'building_age_text' in data:
@@ -1313,56 +1412,21 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                 if age is not None:
                     data['building_age_years'] = age
             
-            # Floor information - prioritize new parser, fallback to old method
+            # Floor information
             if 'floor' not in data and 'building_floors' not in data:
-                # Only process if not already found by overview parser
                 if 'floor_text' in data:
                     floor, total_floors = parse_floor_info(data['floor_text'])
                     if floor is not None:
                         data['floor'] = floor
-                        if logger:
-                            logger.info(f"SUCCESS: Extracted floor from fallback: {floor} from '{data['floor_text']}'")
                     if total_floors is not None:
-                        data['building_floors'] = total_floors  # Use building_floors as primary field
-                        if logger:
-                            logger.info(f"SUCCESS: Extracted building_floors from fallback: {total_floors} from '{data['floor_text']}'")
-                else:
-                    if logger:
-                        logger.warning("No floor_text field found in extracted data")
-                        # Try to find floor info in any field containing '階'
-                        floor_candidates = {k: v for k, v in data.items() if '階' in str(k) or '階' in str(v)}
-                        if floor_candidates:
-                            logger.info(f"Found potential floor data in other fields: {floor_candidates}")
-                            # Try to extract from any field that looks like floor data
-                            for key, value in floor_candidates.items():
-                                if '階' in str(value):
-                                    floor, total_floors = parse_floor_info(str(value))
-                                    if floor is not None:
-                                        data['floor'] = floor
-                                        data['floor_text'] = str(value)  # Store the source
-                                        if logger:
-                                            logger.info(f"SUCCESS: Extracted floor from {key}: {floor} from '{value}'")
-                                    if total_floors is not None:
-                                        data['building_floors'] = total_floors
-                                        if logger:
-                                            logger.info(f"SUCCESS: Extracted building_floors from {key}: {total_floors} from '{value}'")
-                                    break
-            else:
-                if logger:
-                    logger.info(f"Floor info already extracted by overview parser: floor={data.get('floor')}, building_floors={data.get('building_floors')}")
+                        data['building_floors'] = total_floors
             
-            # Ward and district - use provided ward or extract from address
-            extracted_ward, district = None, None
-            
-            # Use ward from URL collection if provided
+            # Ward and district
             if ward:
                 data['ward'] = ward
-                if logger:
-                    logger.debug(f"Using ward from URL collection: {ward}")
             else:
-                # Fall back to extraction from address only if ward not provided
+                # Extract from address
                 address_sources = []
-                
                 if 'address' in data:
                     address_sources.append(('address', data['address']))
                 if 'building_name' in data:
@@ -1370,38 +1434,129 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                 if 'title' in data:
                     address_sources.append(('title', data['title']))
                 
-                # Try each source until we find ward info
                 for source_name, address_text in address_sources:
                     if address_text:
                         ward_result, district_result = extract_ward_and_district(address_text, None, logger)
                         if ward_result:
-                            extracted_ward, district = ward_result, district_result
-                            if logger:
-                                logger.debug(f"Ward extracted from {source_name}: {extracted_ward}")
+                            data['ward'] = ward_result
+                            if district_result:
+                                data['district'] = district_result
                             break
-                
-                if extracted_ward:
-                    data['ward'] = extracted_ward
             
-            # Always try to extract district from address
-            if not district and 'address' in data:
-                _, district_result = extract_ward_and_district(data['address'], data.get('ward'), logger)
-                if district_result:
-                    district = district_result
+            # Fee normalization block (integers in yen/month)
+            # Try most reliable methods first: data attributes from loan-simulator and budget-estimate
+            mgmt_fee = None
+            repair_fee = None
             
-            if district:
-                data['district'] = district
+            # PRIORITY 1: Try data attributes from loan-simulator and budget-estimate elements
+            # Method 1: loan-simulator data-maintenance-fee
+            loan_sim = soup.find('loan-simulator')
+            if loan_sim and loan_sim.get('data-maintenance-fee'):
+                try:
+                    mgmt_fee = int(loan_sim.get('data-maintenance-fee'))
+                except (ValueError, TypeError):
+                    pass
             
-            # Management and repair fees
-            if 'management_fee_text' in data:
-                fee = parse_numeric_field(data['management_fee_text'])
-                if fee is not None:
-                    data['management_fee'] = fee
+            # Method 2: budget-estimate data-management-fees (if loan-simulator didn't work)
+            if mgmt_fee is None:
+                budget_est = soup.find('budget-estimate')
+                if budget_est and budget_est.get('data-management-fees'):
+                    try:
+                        mgmt_fee = int(budget_est.get('data-management-fees'))
+                    except (ValueError, TypeError):
+                        pass
             
-            if 'repair_reserve_fee_text' in data:
-                fee = parse_numeric_field(data['repair_reserve_fee_text'])
-                if fee is not None:
-                    data['repair_reserve_fee'] = fee
+            # PRIORITY 2: Try explicit 管理費 cell (if data attributes failed)
+            if mgmt_fee is None:
+                if '管理費' in data:
+                    mgmt_fee = yen_to_int(data['管理費'])
+                elif 'management_fee_text' in data:
+                    mgmt_fee = yen_to_int(data['management_fee_text'])
+                    if mgmt_fee is None:
+                        # Fallback to old parse method
+                        fee = parse_numeric_field(data['management_fee_text'])
+                        if fee is not None:
+                            mgmt_fee = int(fee)
+            
+            # PRIORITY 1: Try data attributes for repair reserve fee first
+            # Try both loan-simulator and budget-estimate data-repair-reserve-fund
+            for element_name in ['loan-simulator', 'budget-estimate']:
+                element = soup.find(element_name)
+                if element and element.get('data-repair-reserve-fund'):
+                    try:
+                        repair_fee = int(element.get('data-repair-reserve-fund'))
+                        break
+                    except (ValueError, TypeError):
+                        continue
+            
+            # PRIORITY 2: Try explicit 修繕積立金 cell (if data attributes failed)
+            if repair_fee is None:
+                if '修繕積立金' in data:
+                    repair_fee = yen_to_int(data['修繕積立金'])
+                elif 'repair_reserve_fee_text' in data:
+                    repair_fee = yen_to_int(data['repair_reserve_fee_text'])
+                    if repair_fee is None:
+                        # Fallback to old parse method
+                        fee = parse_numeric_field(data['repair_reserve_fee_text'])
+                        if fee is not None:
+                            repair_fee = int(fee)
+            
+            # Fallback: parse from 管理費等 if needed
+            if (mgmt_fee is None or repair_fee is None) and '管理費等' in data:
+                s = data['管理費等']
+                # Extract 管理費
+                if mgmt_fee is None:
+                    m = re.search(r'管理費[^0-9]*([\d,]+)\s*円', s)
+                    if m:
+                        mgmt_fee = int(m.group(1).replace(',', ''))
+                # Extract 修繕積立金
+                if repair_fee is None:
+                    m = re.search(r'修繕積立金[^0-9]*([\d,]+)\s*円', s)
+                    if m:
+                        repair_fee = int(m.group(1).replace(',', ''))
+            
+            # Additional fallback: parse directly from table rows if still missing
+            if mgmt_fee is None or repair_fee is None:
+                # Find table rows containing 管理費等 or 修繕積立金
+                rows = soup.find_all('tr')
+                for row in rows:
+                    th = row.find('th')
+                    td = row.find('td')
+                    if th and td:
+                        header_text = th.get_text(strip=True)
+                        cell_text = td.get_text(strip=True)
+                        
+                        if mgmt_fee is None and '管理費' in header_text:
+                            # Extract number from formats like "10,800円"
+                            m = re.search(r'([\d,]+)', cell_text)
+                            if m:
+                                try:
+                                    mgmt_fee = int(m.group(1).replace(',', ''))
+                                except ValueError:
+                                    pass
+                        
+                        if repair_fee is None and '修繕積立金' in header_text:
+                            # Extract number from formats like "8,000円"
+                            m = re.search(r'([\d,]+)', cell_text)
+                            if m:
+                                try:
+                                    repair_fee = int(m.group(1).replace(',', ''))
+                                except ValueError:
+                                    pass
+            
+            # Store numeric-only fields if parsed
+            if mgmt_fee is not None:
+                data['management_fee'] = mgmt_fee
+            if repair_fee is not None:
+                data['repair_reserve_fee'] = repair_fee
+            
+            # Parse その他費用 → sum + monthly flag
+            if 'その他費用' in data and 'other_fees_total' not in data:
+                s = data['その他費用']
+                amounts = [int(x.replace(',', '')) for x in re.findall(r'([\d,]+)\s*円', s)]
+                if amounts:
+                    data['other_fees_total'] = sum(amounts)
+                    data['other_fees_is_monthly'] = bool(re.search(r'[／/]\s*月|月', s))
             
             # Calculate total monthly costs
             monthly_costs = 0
@@ -1413,35 +1568,25 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                 data['monthly_costs'] = monthly_costs
                 data['total_monthly_costs'] = monthly_costs
             
-            # Station distance and closest station - check multiple sources
+            # Station distance and closest station
             station_sources = []
             if 'station_info' in data:
                 station_sources.append(('station_info', data['station_info']))
             if '交通' in data:
                 station_sources.append(('direct_transport', data['交通']))
-            if 'remarks' in data:
-                station_sources.append(('remarks', data['remarks']))
-            if '備考' in data:
-                station_sources.append(('direct_remarks', data['備考']))
             
-            # Try to extract station distance from any available source
             for source_name, text in station_sources:
                 if text:
                     distance = parse_station_distance(text)
                     if distance is not None:
                         data['station_distance_minutes'] = distance
-                        if logger:
-                            logger.debug(f"Station distance extracted from {source_name}: {distance} minutes")
                         break
             
-            # Try to extract closest station name
             for source_name, text in station_sources:
                 if text:
                     station = parse_closest_station(text)
                     if station:
                         data['closest_station'] = station
-                        if logger:
-                            logger.debug(f"Closest station extracted from {source_name}: {station}")
                         break
             
             # Layout type and bedrooms
@@ -1452,60 +1597,29 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                 if bedrooms is not None:
                     data['num_bedrooms'] = bedrooms
             
-            # Primary light - no need for conversion, keep Japanese direction
-            if 'primary_light' not in data:
-                # Fallback: look for direction in other fields
-                if 'direction_facing' in data:
-                    data['primary_light'] = data['direction_facing']
-                    if logger:
-                        logger.debug(f"Using direction_facing as primary_light: {data['direction_facing']}")
-            else:
-                if logger:
-                    logger.debug(f"Primary light already extracted: {data['primary_light']}")
-            
-            # Extract enrichment-specific fields from structured table data instead of raw HTML
-            # Search in all extracted fields and table data for better keyword detection
+            # Extract enrichment fields
             all_text = " ".join([str(v) for v in data.values() if isinstance(v, str)])
             all_text_lower = all_text.lower()
             
-            # View obstruction detection - improved keywords
+            # View obstruction detection
             view_obstruction_keywords = [
                 '眺望悪い', '前建てあり', '抜け感なし', '眺望不良', '景観悪い',
-                '眺望なし', '眺望無し', '眺望劣る', '見晴らし悪い', '景観劣る',
-                'ビューなし', '眺望期待できない', '前面建物', '隣接建物',
-                '視界悪い', '見通し悪い', '開放感なし', '圧迫感', '密集',
-                '眺望遮られ', '建物で遮られ', '北向き単身', '1階', '地上階'
+                '眺望なし', '眺望無し', '眺望劣る', '見晴らし悪い', '景観劣る'
             ]
             data['view_obstructed'] = any(keyword in all_text_lower for keyword in view_obstruction_keywords)
-            if data['view_obstructed'] and logger:
-                matched_keywords = [kw for kw in view_obstruction_keywords if kw in all_text_lower]
-                logger.debug(f"View obstructed detected with keywords: {matched_keywords}")
             
-            # Enhanced light detection - use primary_light field and keyword detection
+            # Light detection
             light_good = False
-            
-            # Check if primary_light indicates good lighting (south/southeast/southwest facing)
             if data.get('primary_light'):
                 good_directions = ['南', '南東', '南西', '東南', '西南']
                 light_good = any(direction in data['primary_light'] for direction in good_directions)
-                if logger:
-                    logger.debug(f"Primary light direction: {data['primary_light']}, good lighting: {light_good}")
             
-            # Also check for explicit light keywords in text
             light_keywords = ['日当たり良好', '陽当たり良い', '日当たり良', '採光良好', '日照良好', '明るい']
             keyword_light_good = any(keyword in all_text_lower for keyword in light_keywords)
             
-            # Combine both signals
             data['good_lighting'] = light_good or keyword_light_good
             
-            if logger:
-                logger.debug(f"Light detection - direction-based: {light_good}, keyword-based: {keyword_light_good}, final: {data['good_lighting']}")
-            
-            # Remove old light field and fire hatch detection
-            # Old 'light' field replaced with 'good_lighting' above
-            # data['has_fire_hatch'] = False  # Removed as requested
-            
-            # Extract building year from building_age_text or築年月
+            # Extract building year
             building_year = None
             if 'building_age_text' in data and data['building_age_text']:
                 building_year = extract_building_year(data['building_age_text'])
@@ -1514,212 +1628,118 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
             if building_year:
                 data['building_year'] = building_year
             
-            # Remove usable_area and total_area extraction - just use size_sqm
-            # This simplifies the data model and avoids confusion
-            
             # Extract balcony size
             if 'balcony_area_text' in data:
                 balcony_size = parse_numeric_field(data['balcony_area_text'].replace('m²', '').replace('㎡', ''))
                 if balcony_size:
                     data['balcony_size_sqm'] = balcony_size
             
-            # Check if this is the first time seeing this property (add first_seen_date)
-            data['first_seen_date'] = datetime.now().isoformat()
+            # Reform/Renovation parser
+            try:
+                # Look for reform block
+                reform_block = None
+                for text_elem in soup.find_all(string=re.compile('リフォーム')):
+                    # Navigate up to find container
+                    container = text_elem
+                    for _ in range(5):
+                        if container and hasattr(container, 'parent'):
+                            container = container.parent
+                            if container and container.name in ['div', 'section', 'table']:
+                                reform_block = container
+                                break
+                    if reform_block:
+                        break
+                
+                if reform_block:
+                    reform_text = reform_block.get_text(" ", strip=True)
+                    # Pattern: 水回り YYYY年MM月実施 items... 内装 YYYY年MM月実施 items...
+                    water_match = re.search(r'水回り\s+(\d{4})年(\d{2})月実施\s+([^内装]+)', reform_text)
+                    interior_match = re.search(r'内装\s+(\d{4})年(\d{2})月実施\s+(.+)', reform_text)
+                    
+                    if water_match:
+                        data['reform_water_date'] = f"{water_match.group(1)}-{water_match.group(2)}"
+                        data['reform_water_items'] = water_match.group(3).strip()
+                    
+                    if interior_match:
+                        data['reform_interior_date'] = f"{interior_match.group(1)}-{interior_match.group(2)}"
+                        # Clean up items - remove any trailing patterns
+                        items = interior_match.group(3).strip()
+                        items = re.sub(r'[。、]+$', '', items)
+                        data['reform_interior_items'] = items
+            except Exception as e:
+                if logger:
+                    logger.debug(f"Reform parsing error (non-critical): {e}")
             
-            # Additional fields for compatibility
+            # Additional fields
+            data['first_seen_date'] = datetime.now().isoformat()
             data['source'] = 'homes_scraper'
             data['processed_date'] = datetime.now().strftime('%Y-%m-%d')
             
-            # Save complete property data to S3 as individual JSON
+            # Interior photo detection and image extraction using gallery sections
             try:
-                if output_bucket and property_id:
-                    s3_json_key = save_property_json_to_s3(data, output_bucket, property_id, logger)
-                    if s3_json_key:
-                        data['s3_json_key'] = s3_json_key
-                        if logger:
-                            logger.info(f"Property JSON saved to S3: {s3_json_key}")
-                    else:
-                        if logger:
-                            logger.warning(f"Failed to save property JSON to S3 for {property_id}")
-                else:
+                if logger:
+                    logger.info(f"Starting gallery photo analysis for {property_id}")
+                
+                # Collect images from gallery sections with deduplication
+                classified_urls, counts = collect_gallery_images(soup, logger)
+                
+                # HARD SKIP RULE: Skip listing if no interior photos (after dedupe)
+                if counts['interior'] == 0:
                     if logger:
-                        logger.debug(f"Skipping S3 JSON save - bucket: {output_bucket}, property_id: {property_id}")
+                        logger.warning(f"Skipping listing {property_id}: no interior photos found")
+                    # Return None to indicate this property should be skipped
+                    return None
+                
+                # Store classification counts (post-dedupe)
+                data['interior_photo_count'] = counts['interior']
+                data['exterior_photo_count'] = counts['exterior']
+                data['floorplan_photo_count'] = counts['floorplan']
+                data['facility_photo_count'] = counts['facility']
+                data['other_photo_count'] = counts['other']
+                data['has_interior_photos'] = True  # Always true if we reach here
+                
+                # Select images for download with strict caps
+                selected_urls, breakdown = select_images_for_download(
+                    classified_urls, max_total=10, max_floorplan=1, max_exterior=1, 
+                    max_facility=1, max_other=1, logger=logger
+                )
+                
+                if selected_urls and output_bucket:
+                    if session_pool and image_rate_limiter:
+                        s3_keys = download_images_parallel(selected_urls, session_pool, output_bucket, property_id, logger, image_rate_limiter)
+                    else:
+                        s3_keys = download_images_parallel_fallback(selected_urls, session, output_bucket, property_id, logger)
+                    
+                    if s3_keys:
+                        data["photo_filenames"] = "|".join(s3_keys)
+                        data["image_count"] = len(s3_keys)
+                        if logger:
+                            logger.info(f"Downloaded {len(s3_keys)}/{len(selected_urls)} images")
+                    else:
+                        data["image_count"] = 0
+                        if logger:
+                            logger.warning("No images were successfully downloaded")
+                else:
+                    data["image_count"] = 0
+                    data["photo_filenames"] = ""
+                    if logger:
+                        logger.info("No images selected for download or no output bucket configured")
+                    
             except Exception as e:
                 if logger:
-                    logger.error(f"Error saving property JSON to S3: {str(e)}")
+                    logger.error(f"Image extraction failed: {str(e)}")
+                # On error, skip the listing to be safe
+                return None
             
-            # Final price validation and fallback
+            # Final price validation
             if not data.get('price') or data.get('price') == 0:
-                # Try one more time with the title if it contains price info
                 if 'title' in data and '万円' in data['title']:
                     title_price = parse_price_from_text(data['title'])
                     if title_price > 0:
                         data['price'] = title_price
                         if logger:
                             logger.debug(f"Price extracted from title: {data['title']} -> {title_price}")
-                
-                # If still no price, log warning but continue processing
-                if not data.get('price') or data.get('price') == 0:
-                    if logger:
-                        logger.warning(f"No valid price found for {property_url}. Available price fields: {[k for k in data.keys() if 'price' in k.lower() or '価格' in k]}")
             
-            # Extract images with enhanced debugging and interior photo detection
-            try:
-                # Debug: Check if bucket is configured
-                if logger:
-                    logger.info(f"=== IMAGE PROCESSING DEBUG for {property_id} ===")
-                    logger.info(f"Output bucket configured: {output_bucket}")
-                    logger.info(f"Config object: {config}")
-                    logger.info(f"Session pool available: {session_pool is not None}")
-                    logger.info(f"Image rate limiter available: {image_rate_limiter is not None}")
-                    logger.info(f"About to start classification analysis...")
-                
-                # First, classify all images to determine interior photo count
-                if logger:
-                    logger.info(f"Starting interior photo analysis for {property_id}")
-                
-                all_imgs = soup.find_all('img')
-                total_interior_photos = 0
-                total_exterior_photos = 0  
-                total_floorplan_photos = 0
-                total_unknown_photos = 0
-                
-                if logger:
-                    logger.info(f"Found {len(all_imgs)} total img tags on page")
-                
-                for img in all_imgs:
-                    try:
-                        src = (img.get('src') or 
-                              img.get('data-src') or 
-                              img.get('data-original') or 
-                              img.get('data-lazy-src'))
-                        
-                        if not src:
-                            continue
-                        
-                        # Skip obvious non-property images
-                        skip_patterns = ['icon', 'logo', 'btn', 'button', 'arrow', 'banner', 
-                                        'lifull.com/lh/', 'header-footer', 'temprano/assets', 
-                                        'qr-code']
-                        
-                        if any(pattern in src.lower() for pattern in skip_patterns):
-                            continue
-                        
-                        # Check if it's a valid property image URL
-                        is_valid_image = False
-                        if any(domain in src for domain in ['image.homes.jp', 'image1.homes.jp', 
-                                                            'image2.homes.jp', 'image3.homes.jp', 
-                                                            'image4.homes.jp', 'img.homes.jp']):
-                            is_valid_image = True
-                        elif (any(pattern in src.lower() for pattern in ['photo', 'image', 'pic', 'img', 
-                                                                         'mansion', 'bukken', 'property']) or
-                              any(src.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp'])):
-                            is_valid_image = True
-                        
-                        if is_valid_image:
-                            # Convert to absolute URL first
-                            if src.startswith('//'):
-                                src = 'https:' + src
-                            elif src.startswith('/'):
-                                src = 'https://www.homes.co.jp' + src
-                            elif not src.startswith('http'):
-                                src = 'https://www.homes.co.jp/' + src.lstrip('/')
-                            
-                            # Classify the image - with error handling
-                            try:
-                                image_type = classify_image(img, src, logger)
-                                
-                                if image_type == 'interior':
-                                    total_interior_photos += 1
-                                elif image_type == 'exterior':
-                                    total_exterior_photos += 1
-                                elif image_type == 'floorplan':
-                                    total_floorplan_photos += 1
-                                else:
-                                    total_unknown_photos += 1
-                            except Exception as e:
-                                if logger:
-                                    logger.warning(f"Error classifying image {src[:50]}: {str(e)}")
-                                total_unknown_photos += 1
-                    
-                    except Exception as e:
-                        if logger:
-                            logger.warning(f"Error processing image element: {str(e)}")
-                        continue
-                
-                # Determine if property has interior photos (excluding floor plans)
-                has_interior_photos = total_interior_photos > 0
-                
-                # Store classification counts
-                data['interior_photo_count'] = total_interior_photos
-                data['exterior_photo_count'] = total_exterior_photos
-                data['floorplan_photo_count'] = total_floorplan_photos
-                data['has_interior_photos'] = has_interior_photos
-                
-                if logger:
-                    logger.info(f"Interior photo analysis for {property_id}: "
-                               f"{total_interior_photos} interior, {total_exterior_photos} exterior, "
-                               f"{total_floorplan_photos} floor plans, {total_unknown_photos} unknown")
-                    logger.info(f"Has interior photos: {has_interior_photos}")
-                
-                # Only proceed with image download if we have interior photos OR floor plans
-                if has_interior_photos or total_floorplan_photos > 0:
-                    s3_keys = extract_property_images(
-                        soup, session, "https://www.homes.co.jp", 
-                        bucket=output_bucket, property_id=property_id,
-                        config=config, logger=logger,
-                        session_pool=session_pool, image_rate_limiter=image_rate_limiter
-                    )
-                    
-                    if logger:
-                        logger.info(f"Image extraction returned {len(s3_keys) if s3_keys else 0} S3 keys")
-                        if s3_keys:
-                            logger.info(f"S3 keys: {s3_keys[:3]}...")  # Show first 3
-                    
-                    if s3_keys:
-                        data["photo_filenames"] = "|".join(s3_keys)
-                        data["image_count"] = len(s3_keys)
-                        if logger:
-                            logger.info(f"Successfully stored {len(s3_keys)} images for property {property_id}")
-                    else:
-                        if logger:
-                            logger.warning(f"No images processed for property {property_id}")
-                        data["image_count"] = 0
-                else:
-                    # Skip image download for properties without interior photos
-                    data["image_count"] = 0
-                    data["photo_filenames"] = ""
-                    if logger:
-                        logger.info(f"Skipping image download for {property_id}: no interior photos or floor plans")
-                    
-            except Exception as e:
-                if logger:
-                    logger.error(f"Image extraction failed for {property_id}: {str(e)}")
-                    import traceback
-                    logger.error(f"Traceback: {traceback.format_exc()}")
-                data["image_count"] = 0
-                # Set default values for interior photo detection on error
-                data['has_interior_photos'] = False
-                data['interior_photo_count'] = 0
-                data['exterior_photo_count'] = 0
-                data['floorplan_photo_count'] = 0
-            
-            # Coverage logging for field extraction
-            try:
-                expected = {f for _, f, _ in FIELD_MAP}
-                found = set(extras.keys())
-                missing = sorted(expected - found)
-                if logger:
-                    # Only log the first few misses to avoid spam
-                    miss_preview = missing[:8]
-                    logger.info(f"[extras] set={sorted(found)} missing~{len(missing)} sample={miss_preview}")
-            except Exception:
-                pass
-            
-            # Add extras to data for DynamoDB
-            data['_extras'] = extras
-            
-            # Success! Return the data
             return data
             
         except Exception as e:
@@ -1738,619 +1758,3 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
         raise last_error
     else:
         raise Exception("Max retries exceeded")
-
-def classify_image(img_element, src_url, logger=None):
-    """Classify image as interior, exterior, floorplan, or unknown"""
-    # Get alt text and other attributes
-    alt_text = (img_element.get('alt') or '').lower()
-    title_text = (img_element.get('title') or '').lower()
-    data_desc = (img_element.get('data-description') or img_element.get('data-title') or '').lower()
-    
-    # Check URL patterns
-    url_lower = src_url.lower()
-    
-    # Look for nearby text (parent container, captions)
-    nearby_text = ''
-    try:
-        parent = img_element.parent
-        if parent:
-            # Get text from parent and siblings
-            nearby_text = parent.get_text(strip=True).lower()[:200]  # Limit to prevent noise
-    except:
-        pass
-    
-    # Combine all text sources for analysis
-    all_text = f"{alt_text} {title_text} {data_desc} {nearby_text} {url_lower}"
-    
-    if logger:
-        logger.debug(f"Classifying image: alt='{alt_text[:50]}', url='{url_lower[:50]}', nearby='{nearby_text[:50]}'")
-        logger.debug(f"Combined text for analysis: '{all_text[:100]}...'")
-    
-    # Floor plan keywords (highest priority)
-    floorplan_keywords = [
-        # Japanese
-        '間取り', '間取図', '図面', '平面図', 'フロアプラン',
-        # English
-        'floor plan', 'floorplan', 'layout', 'madori', 'zumen'
-    ]
-    
-    matched_floorplan = [kw for kw in floorplan_keywords if kw in all_text]
-    if matched_floorplan:
-        if logger:
-            logger.debug(f"Classified as floorplan - matched keywords: {matched_floorplan}")
-        return 'floorplan'
-    
-    # Interior keywords
-    interior_keywords = [
-        # Rooms
-        '内装', '室内', 'リビング', 'キッチン', '浴室', '洗面', 'トイレ', 
-        '寝室', '居室', 'ダイニング', '和室', '洋室', '玄関', '収納', 
-        'クローゼット', 'バルコニー内側',
-        # English
-        'interior', 'room', 'living', 'kitchen', 'bedroom', 'bathroom', 'toilet',
-        'dining', 'closet', 'storage', 'entrance'
-    ]
-    
-    matched_interior = [kw for kw in interior_keywords if kw in all_text]
-    if matched_interior:
-        if logger:
-            logger.debug(f"Classified as interior - matched keywords: {matched_interior}")
-        return 'interior'
-    
-    # Exterior keywords
-    exterior_keywords = [
-        '外観', 'エントランス', '建物', '外装', '周辺', '環境', '街並み', 
-        'ファサード', '敷地', '駐車場', '共用部',
-        # English
-        'exterior', 'building', 'facade', 'entrance', 'environment', 'parking'
-    ]
-    
-    matched_exterior = [kw for kw in exterior_keywords if kw in all_text]
-    if matched_exterior:
-        if logger:
-            logger.debug(f"Classified as exterior - matched keywords: {matched_exterior}")
-        return 'exterior'
-    
-    # URL pattern analysis
-    if any(pattern in url_lower for pattern in ['interior', 'room', 'living', 'kitchen', 'bedroom']):
-        return 'interior'
-    elif any(pattern in url_lower for pattern in ['exterior', 'building', 'facade', 'entrance']):
-        return 'exterior'
-    elif any(pattern in url_lower for pattern in ['madori', 'zumen', 'floorplan', 'layout']):
-        return 'floorplan'
-    
-    # Default to unknown (treat as potential interior in selection)
-    if logger:
-        logger.debug("Classified as unknown")
-    return 'unknown'
-
-def select_images_for_download(classified_images, max_total=10, max_exterior=2, logger=None):
-    """Select images based on priority: floor plans first, limited exterior, then interior"""
-    selected = []
-    exterior_count = 0
-    
-    if logger:
-        logger.debug(f"Selecting from {len(classified_images)} classified images")
-        counts = {}
-        for img in classified_images:
-            img_type = img['type']
-            counts[img_type] = counts.get(img_type, 0) + 1
-        logger.debug(f"Image type counts: {counts}")
-    
-    # First pass: add floor plans (high priority)
-    for img in classified_images:
-        if img['type'] == 'floorplan' and len(selected) < max_total:
-            selected.append(img)
-            if logger:
-                logger.debug(f"Selected floor plan: {img['url'][:50]}...")
-    
-    # Second pass: add up to max_exterior exterior photos
-    for img in classified_images:
-        if img['type'] == 'exterior' and exterior_count < max_exterior and len(selected) < max_total:
-            # Skip if already selected
-            if not any(existing['url'] == img['url'] for existing in selected):
-                selected.append(img)
-                exterior_count += 1
-                if logger:
-                    logger.debug(f"Selected exterior {exterior_count}/{max_exterior}: {img['url'][:50]}...")
-    
-    # Third pass: fill remaining slots with interior photos (including unknown)
-    for img in classified_images:
-        if img['type'] in ['interior', 'unknown'] and len(selected) < max_total:
-            # Skip if already selected
-            if not any(existing['url'] == img['url'] for existing in selected):
-                selected.append(img)
-                if logger:
-                    logger.debug(f"Selected interior/unknown: {img['url'][:50]}...")
-    
-    if logger:
-        final_counts = {}
-        for img in selected:
-            img_type = img['type']
-            final_counts[img_type] = final_counts.get(img_type, 0) + 1
-        logger.info(f"Selected {len(selected)}/{max_total} images: {final_counts}")
-        
-        # Debug: Show which specific images were selected
-        for i, img in enumerate(selected):
-            logger.debug(f"Selected image {i+1}: {img['type']} - {img['url'][:70]}...")
-    
-    return selected
-
-# Enhanced extract_property_images function in core_scraper.py:
-def extract_property_images(soup, session, base_url, bucket=None, property_id=None, config=None, logger=None, session_pool=None, image_rate_limiter=None):
-    """Extract and classify property images with interior photo detection"""
-    s3_keys = []
-    classified_images = []
-    
-    # Statistics for interior photo detection
-    interior_count = 0
-    exterior_count = 0
-    floorplan_count = 0
-    unknown_count = 0
-    
-    if logger:
-        logger.debug(f"=== Starting image extraction for property {property_id} ===")
-        logger.debug(f"Bucket: {bucket}")
-    
-    try:
-        # Find all img tags
-        all_imgs = soup.find_all('img')
-        if logger:
-            logger.debug(f"Total img tags found in page: {len(all_imgs)}")
-        
-        # Process and classify all images
-        for img in all_imgs:
-            # Get image source (try multiple attributes)
-            src = (img.get('src') or 
-                  img.get('data-src') or 
-                  img.get('data-original') or 
-                  img.get('data-lazy-src'))
-            
-            if not src:
-                continue
-            
-            # Skip obvious non-property images
-            skip_patterns = ['icon', 'logo', 'btn', 'button', 'arrow', 'banner', 
-                            'lifull.com/lh/', 'header-footer', 'temprano/assets', 
-                            'qr-code']
-            
-            if any(pattern in src.lower() for pattern in skip_patterns):
-                continue
-            
-            # Convert to absolute URL
-            if any(domain in src for domain in ['image.homes.jp', 'image1.homes.jp', 
-                                                'image2.homes.jp', 'image3.homes.jp', 
-                                                'image4.homes.jp', 'img.homes.jp']):
-                # This is a valid property image!
-                if src.startswith('//'):
-                    src = 'https:' + src
-                elif not src.startswith('http'):
-                    src = 'https:' + src
-            elif (any(pattern in src.lower() for pattern in ['photo', 'image', 'pic', 'img', 
-                                                             'mansion', 'bukken', 'property']) or
-                  any(src.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp'])):
-                # Convert to absolute URL
-                if src.startswith('//'):
-                    src = 'https:' + src
-                elif src.startswith('/'):
-                    src = base_url + src
-                elif not src.startswith('http'):
-                    src = base_url + '/' + src.lstrip('/')
-            else:
-                continue
-            
-            # Classify the image
-            image_type = classify_image(img, src, logger)
-            
-            # Count classifications
-            if image_type == 'interior':
-                interior_count += 1
-            elif image_type == 'exterior':
-                exterior_count += 1
-            elif image_type == 'floorplan':
-                floorplan_count += 1
-            else:
-                unknown_count += 1
-            
-            classified_images.append({
-                'url': src,
-                'type': image_type,
-                'element': img
-            })
-        
-        # Log classification results
-        if logger:
-            logger.info(f"Image classification for {property_id}: "
-                       f"{interior_count} interior, {exterior_count} exterior, "
-                       f"{floorplan_count} floor plans, {unknown_count} unknown")
-            
-            # Show examples of classifications (first 5 for debugging)
-            for i, img in enumerate(classified_images[:5]):
-                logger.info(f"Classification example {i+1}: {img['type']} - {img['url'][:80]}...")
-            
-            # Show detailed breakdown in debug mode
-            logger.debug(f"Detailed classification breakdown:")
-            logger.debug(f"  Interior images: {[img['url'][:60] for img in classified_images if img['type'] == 'interior'][:3]}")
-            logger.debug(f"  Exterior images: {[img['url'][:60] for img in classified_images if img['type'] == 'exterior'][:3]}")
-            logger.debug(f"  Floor plan images: {[img['url'][:60] for img in classified_images if img['type'] == 'floorplan'][:3]}")
-            logger.debug(f"  Unknown images: {[img['url'][:60] for img in classified_images if img['type'] == 'unknown'][:3]}")
-        
-        # Check if bucket is configured
-        if not bucket:
-            if logger:
-                logger.warning(f"No S3 bucket configured! Cannot save images.")
-            return []
-        
-        if not classified_images:
-            if logger:
-                logger.warning(f"No valid images found for property {property_id}")
-            return []
-        
-        # Select images based on priority (10 max, 2 exterior max)
-        selected_images = select_images_for_download(
-            classified_images, max_total=10, max_exterior=2, logger=logger
-        )
-        
-        if not selected_images:
-            if logger:
-                logger.info("No images selected for download")
-            return []
-        
-        # Extract URLs for download
-        urls = [img['url'] for img in selected_images]
-        
-        # Download and process images
-        if logger:
-            logger.info(f"Processing {len(urls)} selected images for upload to S3")
-        
-        if session_pool and image_rate_limiter:
-            s3_keys = download_images_parallel(urls, session_pool, bucket, property_id, logger, image_rate_limiter)
-        else:
-            s3_keys = download_images_parallel_fallback(urls, session, bucket, property_id, logger)
-        
-        if logger:
-            logger.info(f"Image processing complete: {len(s3_keys)} images saved to S3")
-            if len(s3_keys) < len(urls):
-                logger.warning(f"Some images failed to upload: {len(urls) - len(s3_keys)} out of {len(urls)}")
-
-        return s3_keys
-        
-    except Exception as e:
-        if logger:
-            logger.error(f"Image extraction error: {str(e)}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-        return []
-
-# Also update the download function to handle the image.php URLs better
-def download_single_image(session_pool, img_url, index, bucket, property_id, logger, rate_limiter=None):
-    """Download and process a single image - handles homes.jp image.php URLs"""
-    session = None
-    try:
-        if logger:
-            logger.debug(f"Downloading image {index}: {img_url[:100]}...")
-        
-        # Apply rate limiting if provided
-        if rate_limiter:
-            rate_limiter.acquire()
-        
-        # Get session from pool
-        session = session_pool.get_session()
-        
-        # For homes.jp image.php URLs, we might need to handle redirects
-        img_response = session.get(img_url, timeout=10, allow_redirects=True)
-        
-        if logger:
-            logger.debug(f"Image {index} response: status={img_response.status_code}, "
-                        f"content-type={img_response.headers.get('content-type', 'unknown')}, "
-                        f"size={len(img_response.content)} bytes")
-        
-        if img_response.status_code == 200:
-            content_type = img_response.headers.get('content-type', 'image/jpeg')
-            
-            # Be more permissive with content types
-            if 'image' in content_type or img_response.content[:4] in [b'\xff\xd8\xff\xe0', b'\xff\xd8\xff\xe1', b'\x89PNG']:
-                # Skip tiny images
-                if len(img_response.content) < 1000:
-                    if logger:
-                        logger.debug(f"Skipping tiny image {index}: {len(img_response.content)} bytes")
-                    return None
-                
-                try:
-                    # Convert and resize image
-                    img = Image.open(io.BytesIO(img_response.content))
-                    
-                    if logger:
-                        logger.debug(f"Image {index} opened: size={img.size}, mode={img.mode}")
-                    
-                    if img.mode not in ('RGB', 'L'):
-                        img = img.convert('RGB')
-                    
-                    img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
-                    
-                    output_buffer = io.BytesIO()
-                    img.save(output_buffer, format='JPEG', quality=85, optimize=True)
-                    output_buffer.seek(0)
-                    processed_image_bytes = output_buffer.getvalue()
-                    
-                    if logger:
-                        logger.debug(f"Image {index} processed: final size={len(processed_image_bytes)} bytes")
-                    
-                    # Upload to S3
-                    if bucket and property_id:
-                        s3_key = upload_image_to_s3(
-                            processed_image_bytes, 
-                            bucket, 
-                            property_id, 
-                            index, 
-                            logger=logger
-                        )
-                        if s3_key and logger:
-                            logger.debug(f"Image {index} uploaded to S3: {s3_key}")
-                        return s3_key
-                except Exception as e:
-                    if logger:
-                        logger.error(f"Failed to process image {index}: {str(e)}")
-                    return None
-            else:
-                if logger:
-                    logger.debug(f"Skipping non-image content type for image {index}: {content_type}")
-        else:
-            if logger:
-                logger.warning(f"Failed to download image {index}: HTTP {img_response.status_code}")
-        
-        return None
-        
-    except Exception as e:
-        if logger:
-            logger.error(f"Failed to download image {index}: {str(e)}")
-            import traceback
-            logger.debug(f"Traceback: {traceback.format_exc()}")
-        return None
-    
-    finally:
-        # Return session to pool
-        if session and session_pool:
-            session_pool.return_session(session)
-
-def download_single_image_fallback(session, img_url, index, bucket, property_id, logger):
-    """Download and process a single image (fallback for backward compatibility)"""
-    try:
-        img_response = session.get(img_url, timeout=10)
-        if img_response.status_code == 200:
-            content_type = img_response.headers.get('content-type', 'image/jpeg')
-            
-            if 'image' in content_type:
-                # Skip tiny images
-                if len(img_response.content) < 1000:
-                    return None
-                
-                # Convert and resize image
-                img = Image.open(io.BytesIO(img_response.content))
-                
-                if img.mode not in ('RGB', 'L'):
-                    img = img.convert('RGB')
-                
-                img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
-                
-                output_buffer = io.BytesIO()
-                img.save(output_buffer, format='JPEG', quality=85, optimize=True)
-                output_buffer.seek(0)
-                processed_image_bytes = output_buffer.getvalue()
-                
-                # Upload to S3
-                if bucket and property_id:
-                    s3_key = upload_image_to_s3(
-                        processed_image_bytes, 
-                        bucket, 
-                        property_id, 
-                        index, 
-                        logger=logger
-                    )
-                    return s3_key
-        
-        return None
-        
-    except Exception as e:
-        if logger:
-            logger.debug(f"Failed to download image {index}: {str(e)}")
-        return None
-
-def download_images_parallel(image_urls, session_pool, bucket, property_id, logger, image_rate_limiter):
-    """Download images in parallel with session pool and rate limiting"""
-    if not image_urls:
-        return []
-    
-    s3_keys = []
-    max_workers = min(3, len(image_urls))  # Limit to 3-5 concurrent downloads as requested
-    
-    try:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all download tasks
-            future_to_index = {}
-            for i, img_url in enumerate(image_urls):
-                future = executor.submit(
-                    download_single_image, 
-                    session_pool, img_url, i, bucket, property_id, logger, image_rate_limiter
-                )
-                future_to_index[future] = i
-            
-            # Collect results as they complete
-            for future in as_completed(future_to_index):
-                try:
-                    s3_key = future.result()
-                    if s3_key:
-                        s3_keys.append(s3_key)
-                except Exception as e:
-                    if logger:
-                        logger.debug(f"Image download future failed: {str(e)}")
-    
-    except Exception as e:
-        if logger:
-            logger.debug(f"Parallel image download failed: {str(e)}")
-    
-    return s3_keys
-
-def download_images_parallel_fallback(image_urls, session, bucket, property_id, logger):
-    """Download images in parallel with single session (fallback)"""
-    if not image_urls:
-        return []
-    
-    s3_keys = []
-    max_workers = min(3, len(image_urls))  # Limit to 3-5 concurrent downloads as requested
-    
-    try:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all download tasks
-            future_to_index = {}
-            for i, img_url in enumerate(image_urls):
-                future = executor.submit(
-                    download_single_image_fallback, 
-                    session, img_url, i, bucket, property_id, logger
-                )
-                future_to_index[future] = i
-            
-            # Collect results as they complete
-            for future in as_completed(future_to_index):
-                try:
-                    s3_key = future.result()
-                    if s3_key:
-                        s3_keys.append(s3_key)
-                except Exception as e:
-                    if logger:
-                        logger.debug(f"Image download future failed: {str(e)}")
-    
-    except Exception as e:
-        if logger:
-            logger.debug(f"Parallel image download failed: {str(e)}")
-    
-    return s3_keys
-
-# Enhanced upload_image_to_s3 in core_scraper.py:
-def save_property_json_to_s3(property_data, bucket, property_id, logger=None):
-    """Save complete property data as JSON to S3"""
-    try:
-        if logger:
-            logger.debug(f"Saving property JSON to S3: bucket={bucket}, property_id={property_id}")
-        
-        date_str = datetime.now().strftime('%Y-%m-%d')
-        s3_key = f"raw/{date_str}/properties/{property_id}.json"
-        
-        s3_client = boto3.client('s3')
-        
-        # Check if bucket exists and we have access
-        try:
-            s3_client.head_bucket(Bucket=bucket)
-            if logger:
-                logger.debug(f"S3 bucket '{bucket}' is accessible for property JSON")
-        except Exception as e:
-            if logger:
-                logger.error(f"S3 bucket '{bucket}' is not accessible for property JSON: {str(e)}")
-            return None
-        
-        s3_client.put_object(
-            Bucket=bucket,
-            Key=s3_key,
-            Body=json.dumps(property_data, ensure_ascii=False, indent=2, default=str).encode('utf-8'),
-            ContentType='application/json'
-        )
-        
-        if logger:
-            logger.debug(f"Successfully saved property JSON to S3: {s3_key}")
-        
-        return s3_key
-        
-    except Exception as e:
-        if logger:
-            logger.error(f"S3 property JSON upload failed for {property_id}: {str(e)}")
-            import traceback
-            logger.debug(f"Traceback: {traceback.format_exc()}")
-        return None
-
-
-def upload_image_to_s3(image_content, bucket, property_id, image_index, logger=None):
-    """Enhanced version with debug logging"""
-    try:
-        if logger:
-            logger.debug(f"Uploading image to S3: bucket={bucket}, property_id={property_id}, index={image_index}")
-        
-        date_str = datetime.now().strftime('%Y-%m-%d')
-        s3_key = f"raw/{date_str}/images/{property_id}_{image_index}.jpg"
-        
-        s3 = boto3.client("s3")
-        
-        # Check if bucket exists and we have access
-        try:
-            s3.head_bucket(Bucket=bucket)
-            if logger:
-                logger.debug(f"S3 bucket '{bucket}' is accessible")
-        except Exception as e:
-            if logger:
-                logger.error(f"S3 bucket '{bucket}' is not accessible: {str(e)}")
-            return None
-        
-        s3.put_object(
-            Bucket=bucket,
-            Key=s3_key,
-            Body=image_content,
-            ContentType='image/jpeg'
-        )
-        
-        if logger:
-            logger.debug(f"Successfully uploaded image to S3: {s3_key}")
-        
-        return s3_key
-        
-    except Exception as e:
-        if logger:
-            logger.error(f"S3 upload failed for image {image_index}: {str(e)}")
-            import traceback
-            logger.debug(f"Traceback: {traceback.format_exc()}")
-        return None
-
-
-def discover_tokyo_areas(logger=None):
-    """Discover all Tokyo area URLs"""
-    session = create_session(logger)
-    city_listing_url = "https://www.homes.co.jp/mansion/chuko/tokyo/city/"
-    
-    try:
-        response = session.get(city_listing_url, timeout=15)
-        if response.status_code != 200:
-            raise Exception(f"Failed to access city listing: HTTP {response.status_code}")
-        
-        soup = _make_soup(response.text)
-        area_links = []
-        
-        # Find area links
-        for link in soup.find_all('a', href=True):
-            href = link['href']
-            if '/mansion/chuko/tokyo/' in href and href.endswith('/list/'):
-                area_part = href.split('/mansion/chuko/tokyo/')[-1].replace('/list/', '')
-                if area_part and area_part != 'city':
-                    area_links.append(area_part)
-        
-        # Use fallback list if no links found
-        if not area_links:
-            area_links = [
-                'shibuya-ku', 'shinjuku-ku', 'minato-ku', 'chiyoda-ku', 'chuo-ku',
-                'setagaya-ku', 'nerima-ku', 'suginami-ku', 'nakano-ku', 'itabashi-ku',
-                'chofu-city', 'mitaka-city', 'musashino-city', 'tachikawa-city'
-            ]
-        
-        valid_areas = sorted(list(set(area_links)))
-        
-        if logger:
-            logger.debug(f"Discovered {len(valid_areas)} Tokyo areas")
-        
-        return valid_areas
-        
-    except Exception as e:
-        if logger:
-            logger.error(f"Failed to discover areas: {str(e)}")
-        
-        # Return fallback list
-        return ['chofu-city', 'shibuya-ku', 'shinjuku-ku', 'setagaya-ku']
-    
-    finally:
-        session.close()

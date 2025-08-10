@@ -316,6 +316,21 @@ def create_complete_property_record(property_data, config, logger=None, existing
             'analysis_date': now.isoformat(),
         }
         
+        # Add new fields from NEW_FIELD_MAP (zoning, land_rights, etc.)
+        new_fields = {
+            'zoning': property_data.get('zoning') or property_data.get('用途地域', ''),
+            'land_rights': property_data.get('land_rights') or property_data.get('土地権利', ''),
+            'national_land_use_notification': property_data.get('national_land_use_notification') or property_data.get('国土法届出', ''),
+            'transaction_type': property_data.get('transaction_type') or property_data.get('取引態様', ''),
+            'current_occupancy': property_data.get('current_occupancy') or property_data.get('現況', ''),
+            'handover_timing': property_data.get('handover_timing') or property_data.get('引渡し', '')
+        }
+        
+        # Add non-empty new fields to the record
+        for field_name, field_value in new_fields.items():
+            if field_value and field_value.strip():  # Only add if not empty
+                record[field_name] = field_value.strip()
+        
         # Add previous_price if there was a price change
         if previous_price is not None:
             record['previous_price'] = previous_price
