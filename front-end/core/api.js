@@ -214,4 +214,68 @@ class PropertyAPI {
         const data = await response.json();
         return data; // {analysis_result, property_images, property_summary}
     }
+    
+    // Comparison API methods
+    async compareAllFavorites(userEmail, propertyIds) {
+        console.log(`[API] Comparing favorites for user: ${userEmail}, properties: ${propertyIds.length}`);
+        
+        const response = await fetch(`${this.favoritesApiUrl}/favorites/compare`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-User-Email': userEmail
+            },
+            body: JSON.stringify({ 
+                property_ids: propertyIds,
+                user_email: userEmail
+            })
+        });
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`[API] Compare failed: ${response.status} - ${errorText}`);
+            throw new Error(`Failed to compare favorites: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        console.log('[API] Compare response:', data);
+        return data;
+    }
+    
+    async fetchComparisonAnalysis(userEmail, comparisonId) {
+        const url = `${this.favoritesApiUrl}/favorites/analysis/${encodeURIComponent(userEmail)}/${encodeURIComponent(comparisonId)}`;
+        const response = await fetch(url, {
+            headers: { 
+                'X-User-Email': userEmail
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Failed comparison analysis fetch: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        return data; // {analysis_result, comparison_date, property_count}
+    }
+    
+    async removeComparison(comparisonId, userEmail) {
+        console.log(`[API] Removing comparison: ${comparisonId} for user: ${userEmail}`);
+        
+        const response = await fetch(`${this.favoritesApiUrl}/favorites/${encodeURIComponent(comparisonId)}`, {
+            method: 'DELETE',
+            headers: { 
+                'X-User-Email': userEmail
+            }
+        });
+        
+        console.log(`[API] Delete comparison response status: ${response.status}`);
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`[API] Delete comparison failed: ${response.status} - ${errorText}`);
+            throw new Error(`Failed to remove comparison: ${response.status}`);
+        }
+        
+        return true;
+    }
 }

@@ -24,6 +24,9 @@ dynamodb = boto3.resource('dynamodb')
 table_name = os.environ.get('PROPERTIES_TABLE', 'tokyo-real-estate-ai-analysis-db')
 table = dynamodb.Table(table_name)
 
+# Get listing fetch size from environment (matches config.json)
+LISTING_FETCH_SIZE = int(os.environ.get('LISTING_FETCH_SIZE', '300'))
+
 # S3 configuration for image URLs
 s3_bucket = os.environ.get('OUTPUT_BUCKET', 'tokyo-real-estate-ai-data')
 s3_region = os.environ.get('AWS_REGION', 'ap-northeast-1')
@@ -280,7 +283,7 @@ def lambda_handler(event, context):
         user_id = event.get('headers', {}).get('X-User-Id', 'anonymous')
         
         # Pagination parameters
-        limit = max(1, min(int(params.get('limit', 100)), 100))  # Default 100, max 100, min 1
+        limit = max(1, min(int(params.get('limit', 100)), LISTING_FETCH_SIZE))  # Default 100, max LISTING_FETCH_SIZE
         cursor = json.loads(params['cursor']) if 'cursor' in params else None
         
         # Accumulate items until we reach the desired limit

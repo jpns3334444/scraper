@@ -2,8 +2,10 @@ import json
 import boto3
 import os
 import logging
+import uuid
+import time
 from datetime import datetime
-from openai import OpenAI, BadRequestError
+from openai import OpenAI, BadRequestError, RateLimitError
 from decimal import Decimal
 
 # Setup logging
@@ -20,14 +22,18 @@ bucket = os.environ['DATA_BUCKET']
 
 def lambda_handler(event, context):
     """Main Lambda handler"""
-    print(f"[DEBUG] Favorite analyzer received event: {json.dumps(event)}")
+    # Generate unique request ID for tracking
+    request_id = str(uuid.uuid4())[:8]
+    print(f"[DEBUG] Favorite analyzer [{request_id}] received event: {json.dumps(event)}")
     
     try:
         if 'Records' in event:  # SQS trigger
             for record in event['Records']:
                 body = json.loads(record['body'])
                 analyze(body['user_id'], body['property_id'])
-        else:  # Direct invocation
+        elif event.get('operation') == 'compare_favorites':  # Comparison operation
+            return compare_favorites(event['user_id'], event['property_ids'], request_id)
+        else:  # Direct invocation for single analysis
             analyze(event['user_id'], event['property_id'])
             
         print(f"[DEBUG] Favorite analyzer completed successfully")
@@ -241,7 +247,7 @@ PROPERTY DETAILS:
 - Negotiability Score: {negotiability:.3f}
 
 ENRICHED ANALYTICS:
-{json.dumps({k: v for k, v in e.items() if k not in ['photo_filenames', 'property_id', 'sort_key', 'verdict']}, ensure_ascii=False, indent=2)}
+{json.dumps({k: v for k, v in e.items() if k not in ['photo_filenames', 'property_id', 'sort_key', 'verdict','view_score','view_obstructed', 'renovation_score','negotiability_score']}, ensure_ascii=False, indent=2)}
 
 
 BUYER PRIORITIES:
@@ -271,13 +277,12 @@ Please provide your analysis in MARKDOWN FORMAT with the following structure:
 - [etc.]
 
 ## 🚇 Commute Times (estimated)
-| Station | Time (minutes) |
-|---------|---------------|
-| Shinjuku | XX min |
-| Tokyo | XX min |
-| Ginza | XX min |
-| Shibuya | XX min |
-| Ikebukuro | XX min |
+    Station Time (minutes)
+- [Shinjuku **XX min** (reasoning)]
+- [Tokyo **XX min** (reasoning)]
+- [Ginza **XX min** (reasoning)]
+- [Shibuya **XX min** (reasoning)]
+- [Ikebukuro **XX min** (reasoning)]
 
 ## ⚠️ Image assesment
 - Building structural damage indication
@@ -444,3 +449,343 @@ def get_openai_api_key():
             logger.info("Using fallback API key from environment variable")
             return fallback_key
         raise ValueError("No OpenAI API key available")
+
+def compare_favorites(user_id, property_ids, request_id="unknown"):
+    """Compare multiple favorite properties and return analysis"""
+    print(f"[DEBUG] [{request_id}] Comparing favorites for user_id: {user_id}, properties: {property_ids}")
+    
+    # API call tracking
+    api_calls_made = 0
+    
+    if len(property_ids) < 2:
+        raise ValueError("Need at least 2 properties to compare")
+    
+    # Generate comparison ID with timestamp
+    comparison_timestamp = datetime.utcnow()
+    comparison_id = f"COMPARISON_{comparison_timestamp.strftime('%Y-%m-%d_%H-%M-%S')}"
+    
+    try:
+        # Collect all property data and individual analyses
+        properties_data = []
+        
+        for property_id in property_ids:
+            # Get property data from properties table
+            dynamo_response = properties_table.get_item(
+                Key={'property_id': property_id, 'sort_key': 'META'}
+            )
+            property_data = dynamo_response.get('Item', {})
+            
+            # Get individual analysis from user preferences
+            pref_response = preferences_table.get_item(
+                Key={'user_id': user_id, 'property_id': property_id}
+            )
+            preference_data = pref_response.get('Item', {})
+            
+            if not property_data:
+                print(f"[ERROR] [{request_id}] No property data found for {property_id}")
+                raise ValueError(f"Property data missing for {property_id}")
+            
+            if not preference_data.get('analysis_result'):
+                print(f"[ERROR] [{request_id}] No individual analysis found for {property_id}")
+                print(f"[ERROR] [{request_id}] User must favorite and analyze each property individually first")
+                raise ValueError(f"Individual analysis missing for {property_id}. Please analyze this property first.")
+            
+            # Convert Decimal to float for easier handling
+            property_data = json.loads(json.dumps(property_data, default=decimal_default))
+            preference_data = json.loads(json.dumps(preference_data, default=decimal_default))
+            
+            properties_data.append({
+                'property_id': property_id,
+                'property_data': property_data,
+                'individual_analysis': preference_data.get('analysis_result', {})
+            })
+            print(f"[DEBUG] [{request_id}] Successfully loaded data for property {property_id}")
+        
+        if len(properties_data) < 2:
+            raise ValueError("Insufficient property data available for comparison")
+        
+        # Generate comparison prompt
+        comparison_prompt = generate_comparison_prompt(properties_data)
+        print(f"[DEBUG] [{request_id}] Generated comparison prompt - {len(comparison_prompt)} characters")
+        
+        # Get AI comparison analysis (text-only, no images) - SINGLE API CALL
+        print(f"[INFO] [{request_id}] Making API call #{api_calls_made + 1} for comparison analysis")
+        comparison_analysis = get_comparison_ai_analysis(comparison_prompt, request_id)
+        api_calls_made += 1
+        print(f"[DEBUG] [{request_id}] AI comparison analysis received. Total API calls: {api_calls_made}")
+        
+        # Verify we only made one API call
+        if api_calls_made != 1:
+            print(f"[WARNING] [{request_id}] Expected 1 API call, but made {api_calls_made} calls!")
+        
+        # Ensure DynamoDB compatibility
+        analysis_for_dynamo = convert_to_dynamo_format(comparison_analysis)
+        
+        # Create property summary for the comparison
+        property_summary = {
+            'compared_properties': [p['property_id'] for p in properties_data],
+            'property_count': len(properties_data),
+            'comparison_date': comparison_timestamp.isoformat()
+        }
+        
+        # Store comparison results in preferences table
+        preferences_table.put_item(
+            Item={
+                'user_id': user_id,
+                'property_id': comparison_id,
+                'preference_type': 'favorite',  # Required for GSI query to find it
+                'analysis_status': 'completed',
+                'analysis_completed_at': comparison_timestamp.isoformat(),
+                'analysis_result': analysis_for_dynamo,
+                'property_summary': property_summary,
+                'comparison_date': comparison_timestamp.isoformat(),
+                'property_count': len(properties_data),
+                'created_at': comparison_timestamp.isoformat()
+            }
+        )
+        
+        print(f"[DEBUG] Comparison results stored with ID: {comparison_id}")
+        
+        return {
+            'statusCode': 200,
+            'body': json.dumps({
+                'comparison_id': comparison_id,
+                'status': 'completed',
+                'property_count': len(properties_data)
+            })
+        }
+        
+    except Exception as e:
+        print(f"[ERROR] Comparison failed: {e}")
+        import traceback
+        print(f"[ERROR] Traceback: {traceback.format_exc()}")
+        
+        # Store error in preferences table
+        preferences_table.put_item(
+            Item={
+                'user_id': user_id,
+                'property_id': comparison_id,
+                'preference_type': 'favorite',  # Required for GSI query to find it
+                'analysis_status': 'failed',
+                'last_error': str(e)[:500],
+                'property_count': len(property_ids),
+                'created_at': comparison_timestamp.isoformat()
+            }
+        )
+        
+        return {
+            'statusCode': 500,
+            'body': json.dumps({
+                'error': str(e),
+                'comparison_id': comparison_id
+            })
+        }
+
+def generate_comparison_prompt(properties_data):
+    """Generate a comprehensive comparison prompt for multiple properties"""
+    
+    prompt = """You are an expert Tokyo real estate analyst comparing multiple properties to help a buyer choose the best investment.
+
+COMPARISON OVERVIEW:
+You are comparing {property_count} properties. For each property, I'll provide:
+1. Full property details from the listing
+2. My previous individual investment analysis
+
+Your task is to compare these properties and provide a clear recommendation on which one offers the best investment opportunity.
+
+""".format(property_count=len(properties_data))
+    
+    # Add each property's data
+    for i, prop in enumerate(properties_data, 1):
+        property_data = prop['property_data']
+        individual_analysis = prop['individual_analysis']
+        
+        # Extract key details
+        final_score = property_data.get('final_score', 0)
+        
+        # Get individual analysis text
+        analysis_text = individual_analysis.get('analysis_markdown') or individual_analysis.get('analysis_text', 'No previous analysis available')
+        
+        # Create minimal property reference (only essential fields not in analysis)
+        essential_fields = {
+            'property_id': prop['property_id'],
+            'final_score': final_score,
+            'days_on_market': property_data.get('days_on_market', 0)
+        }
+        
+        prompt += f"""
+=== PROPERTY {i}: {prop['property_id']} ===
+
+ESSENTIAL REFERENCE DATA:
+{json.dumps(essential_fields, ensure_ascii=False, indent=2)}
+
+MY PREVIOUS INDIVIDUAL ANALYSIS:
+{analysis_text}
+
+"""
+    
+    prompt += """
+FORMAT RULES:
+- Do NOT use markdown tables.
+- Use only: headings (##, ###), bullet lists (-), numbered lists (1.), and fenced code blocks ``` for any grid-like data.
+- All grids must be inside fenced code blocks with "text" after the backticks for monospace alignment (```text).
+- Keep each line ≤90 characters for better wrapping in my UI.
+- When referring to properties, NEVER use property IDs. Instead, refer to them as:
+  "Ward|Price(M)|Size(m²)" — example: "Ome City|7.9M|64.4m²".
+- For Price(M) use 1 decimal if needed; for Size(m²) round to 1 decimal.
+
+OUTPUT SECTIONS (in this exact order):
+
+## 🏆 Overall Recommendation
+- Best Choice: [Ward|Price(M)|Size(m²)]
+- Why (≤140 chars): [short reason]
+
+## 📊 Rankings (top to bottom)
+```text
+Rank  Property                     Price(M)  Size(m²)  Score  Key Reason
+1st   [Ward|Price|Size]             [x.x]     [xx.x]    [xx]   [<=45 chars]
+2nd   [Ward|Price|Size]             [x.x]     [xx.x]    [xx]   [<=45 chars]
+3rd   [Ward|Price|Size]             [x.x]     [xx.x]    [xx]   [<=45 chars]
+...
+
+##💰 Value Comparison
+
+    Best price-to-size (post-1981): [prop ids + quick note]
+    Lowest monthly carry: [prop ids + ¥numbers]
+    Best station proximity: [prop id, walk mins]
+
+##✅ Why #1 Stands Out
+
+    [Advantage 1]
+    [Advantage 2]
+    [Advantage 3]
+
+##⚠️ Runner-up Watchouts
+
+    [Prop ID]: [1–2 risks]
+    [Prop ID]: [1–2 risks]
+
+##🚇 Location Notes
+
+    Commute leaders: [props + quick notes]
+    Central access reality: [one-liner]
+
+##💡 Strategy for #1
+
+    Due diligence: [bullets]
+    Offer: [¥ and %]
+    Plan: [reno / hold / rent notes]
+
+📋 Decision Summary
+    [2–3 bullets with the bottom line]
+
+Focus on practical investment advice. Consider price-to-value ratio, location convenience, building condition, and growth potential. Be decisive in your recommendation.
+"""
+    
+    return prompt
+
+def make_api_call_with_backoff(client, request_func, request_id, max_retries=3):
+    """Make API call with exponential backoff for rate limits"""
+    for attempt in range(max_retries):
+        try:
+            return request_func()
+        except RateLimitError as e:
+            wait_time = (2 ** attempt) + 1  # 2, 5, 9 seconds
+            logger.warning(f"[AI] [{request_id}] Rate limit hit on attempt {attempt + 1}. Waiting {wait_time}s before retry. Error: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(wait_time)
+            else:
+                logger.error(f"[AI] [{request_id}] Max retries exceeded for rate limit. Failing.")
+                raise
+        except Exception as e:
+            logger.error(f"[AI] [{request_id}] Non-rate-limit error on attempt {attempt + 1}: {e}")
+            raise
+
+def get_comparison_ai_analysis(prompt, request_id="unknown"):
+    """Get comparison analysis from GPT (text-only, no images)"""
+    api_key = get_openai_api_key()
+    client = OpenAI(api_key=api_key)
+
+    try:
+        # Try GPT-5 with responses API
+        logger.info(f"[AI] [{request_id}] Attempting GPT-5 comparison analysis")
+        
+        inputs = [
+            {"role": "system", "content": [{"type": "input_text", "text": "You are an expert Tokyo real estate analyst comparing multiple investment properties. Provide analysis in clean Markdown format with clear rankings and recommendations."}]},
+            {"role": "user", "content": [{"type": "input_text", "text": prompt}]}
+        ]
+        
+        def gpt5_request():
+            return client.responses.create(
+                model="gpt-5",
+                input=inputs,
+                max_output_tokens=3000,
+                reasoning={"effort": "minimal"}
+            )
+        
+        resp = make_api_call_with_backoff(client, gpt5_request, request_id)
+        
+        # Get the text from response
+        text = getattr(resp, "output_text", None)
+        if not text:
+            # Try to extract from output structure
+            chunks = getattr(resp, "output", []) or []
+            parts = []
+            for ch in chunks:
+                for c in getattr(ch, "content", []) or []:
+                    t = getattr(c, "text", None)
+                    if t:
+                        parts.append(t)
+            text = "\n".join(parts).strip()
+            
+    except BadRequestError as e:
+        # Fallback to GPT-4o with regular chat API
+        logger.warning(f"[AI] [{request_id}] GPT-5 responses API failed: {e}; falling back to GPT-4o")
+        
+        messages = [
+            {"role": "system", "content": "You are an expert Tokyo real estate analyst comparing multiple investment properties. Provide analysis in clean Markdown format with clear rankings and recommendations."},
+            {"role": "user", "content": prompt}
+        ]
+        
+        def gpt4o_request():
+            return client.chat.completions.create(
+                model="gpt-4o",
+                messages=messages,
+                max_tokens=3000,
+                temperature=0.7
+            )
+        
+        response = make_api_call_with_backoff(client, gpt4o_request, request_id)
+        text = response.choices[0].message.content
+    
+    except Exception as e:
+        logger.error(f"[AI] [{request_id}] Comparison analysis failed: {e}")
+        text = "Comparison analysis failed. Please try again."
+    
+    # Parse the response into structured format
+    return parse_comparison_response(text)
+
+def parse_comparison_response(text):
+    """Parse the comparison response and extract key information"""
+    print(f"[DEBUG] Comparison analysis received, text length: {len(text)}")
+    
+    # Try to extract the top recommendation from the text
+    text_lower = text.lower()
+    recommendation = "See analysis for details"  # Default
+    
+    # Look for ranking or recommendation patterns
+    if "1st" in text_lower or "#1" in text_lower or "best choice" in text_lower:
+        # Try to extract property ID from first ranking
+        lines = text.split('\n')
+        for line in lines:
+            if ('1st' in line.lower() or '#1' in line.lower()) and '|' in line:
+                parts = line.split('|')
+                if len(parts) >= 3:
+                    recommendation = f"Top Choice: {parts[2].strip()}"
+                break
+    
+    return {
+        "analysis_markdown": text,
+        "recommendation": recommendation,
+        "analysis_text": text  # Keep for backwards compatibility
+    }

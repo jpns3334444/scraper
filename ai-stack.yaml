@@ -460,6 +460,217 @@ Resources:
       QueueName: !Sub '${AWS::StackName}-property-analyzer-dlq'
       MessageRetentionPeriod: 1209600  # 14 days
 
+  # Step Functions Resources
+
+  # IAM Role for Step Functions State Machine
+  StepFunctionsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StepFunctionsLambdaInvoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt URLCollectorFunction.Arn
+                  - !GetAtt PropertyProcessorFunction.Arn
+                  - !GetAtt PropertyAnalyzerFunction.Arn
+        - PolicyName: StepFunctionsCloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: '*'
+        - PolicyName: StepFunctionsXRay
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: '*'
+
+  # CloudWatch Log Group for Step Functions
+  StepFunctionsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vendedlogs/states/${AWS::StackName}-pipeline'
+      RetentionInDays: 7
+
+  # Step Functions State Machine
+  PropertyPipelineStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${AWS::StackName}-property-pipeline'
+      RoleArn: !GetAtt StepFunctionsExecutionRole.Arn
+      LoggingConfiguration:
+        Level: ERROR
+        IncludeExecutionData: true
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt StepFunctionsLogGroup.Arn
+      TracingConfiguration:
+        Enabled: true
+      DefinitionString: !Sub |
+        {
+          "Comment": "Property scraping and analysis pipeline",
+          "StartAt": "GenerateSessionId",
+          "States": {
+            "GenerateSessionId": {
+              "Type": "Pass",
+              "Parameters": {
+                "session_id.$": "States.Format('pipeline-{}', $$.Execution.StartTime)"
+              },
+              "ResultPath": "$.pipeline",
+              "Next": "URLCollector"
+            },
+            "URLCollector": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${URLCollectorFunction.Arn}",
+                "Payload": {
+                  "session_id.$": "States.Format('url-collector-{}', $$.Execution.StartTime)",
+                  "log_level": "INFO"
+                }
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2
+                }
+              ],
+              "ResultPath": "$.url_collector_result",
+              "Next": "CheckNewURLs"
+            },
+            "CheckNewURLs": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.url_collector_result.Payload.statusCode",
+                  "NumericEquals": 200,
+                  "Next": "PropertyProcessor"
+                }
+              ],
+              "Default": "SkipToEnd"
+            },
+            "PropertyProcessor": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${PropertyProcessorFunction.Arn}",
+                "Payload": {
+                  "session_id.$": "States.Format('property-processor-{}', $$.Execution.StartTime)",
+                  "log_level": "INFO"
+                }
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2
+                }
+              ],
+              "ResultPath": "$.property_processor_result",
+              "Next": "PropertyAnalyzer"
+            },
+            "PropertyAnalyzer": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${PropertyAnalyzerFunction.Arn}",
+                "Payload": {
+                  "session_id.$": "States.Format('property-analyzer-{}', $$.Execution.StartTime)",
+                  "log_level": "INFO"
+                }
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2
+                }
+              ],
+              "ResultPath": "$.property_analyzer_result",
+              "Next": "Success"
+            },
+            "SkipToEnd": {
+              "Type": "Pass",
+              "Result": "URL collection failed or returned non-200 status, skipping processing",
+              "ResultPath": "$.skip_reason",
+              "Next": "Success"
+            },
+            "Success": {
+              "Type": "Succeed"
+            }
+          }
+        }
+
+  # IAM Role for EventBridge to execute Step Functions
+  EventBridgeStepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartStepFunctions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource: !Ref PropertyPipelineStateMachine
+
+  # EventBridge Rule for hourly trigger
+  HourlyPipelineTrigger:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${AWS::StackName}-hourly-pipeline-trigger'
+      Description: 'Trigger property pipeline every hour'
+      ScheduleExpression: 'rate(1 hour)'
+      State: ENABLED
+      Targets:
+        - Arn: !Ref PropertyPipelineStateMachine
+          RoleArn: !GetAtt EventBridgeStepFunctionsRole.Arn
+          Id: PropertyPipelineTarget
+          Input: !Sub |
+            {
+              "trigger_type": "scheduled",
+              "trigger_time": "${AWS::StackName}"
+            }
+
 
 
 
@@ -554,3 +765,28 @@ Outputs:
     Value: !Ref OutputBucket
     Export:
       Name: !Sub "${AWS::StackName}-OutputBucketName"
+
+  # Step Functions Outputs
+  PropertyPipelineStateMachineArn:
+    Description: 'ARN of the Property Pipeline Step Functions State Machine'
+    Value: !Ref PropertyPipelineStateMachine
+    Export:
+      Name: !Sub '${AWS::StackName}-PropertyPipelineStateMachineArn'
+
+  PropertyPipelineStateMachineName:
+    Description: 'Name of the Property Pipeline Step Functions State Machine'
+    Value: !GetAtt PropertyPipelineStateMachine.Name
+    Export:
+      Name: !Sub '${AWS::StackName}-PropertyPipelineStateMachineName'
+
+  HourlyPipelineTriggerArn:
+    Description: 'ARN of the hourly EventBridge rule'
+    Value: !GetAtt HourlyPipelineTrigger.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-HourlyPipelineTriggerArn'
+
+  StepFunctionsLogGroupArn:
+    Description: 'ARN of the Step Functions CloudWatch Log Group'
+    Value: !GetAtt StepFunctionsLogGroup.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-StepFunctionsLogGroupArn'

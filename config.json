@@ -37,7 +37,8 @@
   },
   
   "api": {
-    "API_NAME": "tokyo-real-estate-api"
+    "API_NAME": "tokyo-real-estate-api",
+    "LISTING_FETCH_SIZE": 300
   },
   
   "email": {

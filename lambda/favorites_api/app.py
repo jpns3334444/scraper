@@ -112,6 +112,9 @@ def lambda_handler(event, context):
                 import traceback
                 print(f"[ERROR] add_preference traceback: {traceback.format_exc()}")
                 raise
+        elif method == 'POST' and path == '/favorites/compare':
+            print(f"[DEBUG] Routing to compare_favorites")
+            return compare_favorites(event, user_id)
         elif method == 'POST' and path == '/hidden':
             print(f"[DEBUG] Routing to add_preference for hidden")
             return add_preference(event, user_id, 'hidden')
@@ -557,6 +560,94 @@ def get_favorite_analysis(event, user_id, property_id):
         print("ERROR:", e)
         import traceback
         print(traceback.format_exc())
+        return {
+            "statusCode": 500,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": origin_header,
+                "Access-Control-Allow-Credentials": "true"
+            },
+            "body": json.dumps({'error': str(e)})
+        }
+def compare_favorites(event, user_id):
+    """Handle comparison of user's favorite properties"""
+    print(f"[DEBUG] === compare_favorites ENTRY === user_id: {user_id}")
+    
+    # Determine origin_header at runtime
+    origin_header = event.get("headers", {}).get("origin", "*")
+    
+    try:
+        body = json.loads(event.get('body', '{}'))
+        property_ids = body.get('property_ids', [])
+        user_email = body.get('user_email') or user_id
+        
+        print(f"[DEBUG] Comparing {len(property_ids)} properties for user: {user_email}")
+        print(f"[DEBUG] Property IDs: {property_ids}")
+        
+        if len(property_ids) < 2:
+            return {
+                "statusCode": 400,
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": origin_header,
+                    "Access-Control-Allow-Credentials": "true"
+                },
+                "body": json.dumps({'error': 'Need at least 2 properties to compare'})
+            }
+        
+        # Call the favorite_analyzer Lambda to handle comparison
+        analyzer_payload = {
+            'operation': 'compare_favorites',
+            'user_id': user_email,
+            'property_ids': property_ids
+        }
+        
+        print(f"[DEBUG] Invoking favorite_analyzer Lambda with payload: {analyzer_payload}")
+        
+        response = lambda_client.invoke(
+            FunctionName=os.environ.get('FAVORITE_ANALYZER_FUNCTION', 'tokyo-real-estate-ai-favorite-analyzer'),
+            InvocationType='RequestResponse',
+            Payload=json.dumps(analyzer_payload)
+        )
+        
+        # Parse the response
+        response_payload = json.loads(response['Payload'].read())
+        print(f"[DEBUG] Favorite analyzer response: {response_payload}")
+        
+        if response_payload.get('statusCode') == 200:
+            result = json.loads(response_payload.get('body', '{}'))
+            return {
+                "statusCode": 200,
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": origin_header,
+                    "Access-Control-Allow-Credentials": "true"
+                },
+                "body": json.dumps({
+                    'comparison_id': result.get('comparison_id'),
+                    'status': result.get('status'),
+                    'property_count': result.get('property_count')
+                })
+            }
+        else:
+            error_body = json.loads(response_payload.get('body', '{}'))
+            return {
+                "statusCode": 500,
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": origin_header,
+                    "Access-Control-Allow-Credentials": "true"
+                },
+                "body": json.dumps({
+                    'error': error_body.get('error', 'Comparison failed'),
+                    'comparison_id': error_body.get('comparison_id')
+                })
+            }
+        
+    except Exception as e:
+        print(f"[ERROR] compare_favorites failed: {e}")
+        import traceback
+        print(f"[ERROR] Traceback: {traceback.format_exc()}")
         return {
             "statusCode": 500,
             "headers": {

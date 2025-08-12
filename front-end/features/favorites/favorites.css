@@ -490,3 +490,205 @@
         gap: var(--space-xs);
     }
 }
+
+/* Comparison section styles - compact horizontal layout */
+.comparison-section {
+    grid-column: 1 / -1;
+    margin-bottom: var(--space-md);
+    padding: var(--space-sm) 0;
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    min-height: 40px;
+}
+
+.comparison-section::-webkit-scrollbar {
+    height: 4px;
+}
+
+.comparison-section::-webkit-scrollbar-track {
+    background: var(--paper-gray);
+}
+
+.comparison-section::-webkit-scrollbar-thumb {
+    background: var(--ink-faint);
+    border-radius: 2px;
+}
+
+.compare-all-btn {
+    background: var(--paper-white);
+    color: var(--ink-gray);
+    border: 1px solid var(--ink-faint);
+    padding: var(--space-xs) var(--space-sm);
+    font-size: 12px;
+    font-weight: 400;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-transform: uppercase;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.compare-all-btn:hover {
+    border-color: var(--ink-gray);
+    color: var(--ink-black);
+    background: var(--paper-gray);
+}
+
+.compare-all-btn:active {
+    background: var(--ink-faint);
+}
+
+.compare-all-btn:disabled {
+    background: var(--paper-gray);
+    color: var(--ink-faint);
+    cursor: not-allowed;
+    border-color: var(--ink-faint);
+}
+
+/* Comparison card styles - compact horizontal items */
+.comparison-card {
+    background: var(--paper-white);
+    border: 1px solid var(--ink-faint);
+    padding: var(--space-xs) var(--space-sm);
+    cursor: pointer;
+    position: relative;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    border-radius: 4px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    min-width: 160px;
+    height: 32px;
+}
+
+.comparison-card:hover {
+    border-color: var(--ink-gray);
+    background: var(--paper-gray);
+}
+
+.comparison-icon {
+    font-size: 14px;
+    flex-shrink: 0;
+    opacity: 0.7;
+}
+
+.comparison-details {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.comparison-title {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--ink-gray);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.comparison-meta {
+    font-size: 10px;
+    color: var(--ink-light);
+    font-weight: 300;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.comparison-status {
+    background: transparent;
+    color: var(--ink-gray);
+    border: none;
+    padding: 0;
+    font-size: 10px;
+    font-weight: 400;
+    cursor: pointer;
+    transition: color 0.3s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    flex-shrink: 0;
+}
+
+.comparison-status:hover {
+    color: var(--ink-black);
+}
+
+.remove-comparison-btn {
+    background: none;
+    border: none;
+    color: var(--ink-faint);
+    cursor: pointer;
+    padding: 2px;
+    transition: color 0.3s ease;
+    opacity: 0;
+    margin-left: var(--space-xs);
+    flex-shrink: 0;
+}
+
+.comparison-card:hover .remove-comparison-btn {
+    opacity: 1;
+}
+
+.remove-comparison-btn:hover {
+    color: var(--ink-gray);
+}
+
+.remove-comparison-btn svg {
+    width: 10px;
+    height: 10px;
+}
+
+/* Comparison modal specific styles */
+.comparison-date {
+    color: var(--ink-gray);
+    letter-spacing: 0.1em;
+}
+
+.comparison-count {
+    font-weight: 400;
+    color: var(--ink-black);
+}
+
+@media (max-width: 768px) {
+    .comparison-section {
+        gap: var(--space-sm);
+        padding: var(--space-xs) 0;
+    }
+    
+    .compare-all-btn {
+        padding: var(--space-xs) var(--space-xs);
+        font-size: 11px;
+    }
+    
+    .comparison-card {
+        min-width: 140px;
+        height: 28px;
+        padding: var(--space-xs);
+        gap: 4px;
+    }
+    
+    .comparison-icon {
+        font-size: 12px;
+    }
+    
+    .comparison-title {
+        font-size: 10px;
+    }
+    
+    .comparison-meta {
+        font-size: 9px;
+    }
+    
+    .comparison-status {
+        font-size: 9px;
+    }
+}

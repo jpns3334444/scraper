@@ -188,7 +188,11 @@ class FavoritesManager {
                 
                 const userFavorites = await this.api.loadUserFavorites(this.state.currentUser.email);
                 
-                if (userFavorites.length === 0) {
+                // Separate regular favorites from comparisons
+                const regularFavorites = userFavorites.filter(f => !f.property_id.startsWith('COMPARISON_'));
+                const comparisonCards = userFavorites.filter(f => f.property_id.startsWith('COMPARISON_'));
+                
+                if (regularFavorites.length === 0 && comparisonCards.length === 0) {
                     favoritesList.innerHTML = '<div class="favorites-empty">No favorites yet. Click the ♡ on properties to add them here.</div>';
                     return;
                 }
@@ -196,7 +200,7 @@ class FavoritesManager {
                 // Match favorites with properties from allProperties
                 const favoritedProperties = [];
                 
-                for (const favorite of userFavorites) {
+                for (const favorite of regularFavorites) {
                     const propertyId = favorite.property_id;
                     let property = this.state.getProperty(propertyId);
                     
@@ -229,7 +233,7 @@ class FavoritesManager {
                 }
                 
                 if (this.view) {
-                    await this.view.renderFavorites(favoritedProperties);
+                    await this.view.renderFavorites(favoritedProperties, comparisonCards);
                 }
                 
             } catch (error) {
@@ -245,9 +249,9 @@ class FavoritesManager {
                 return;
             }
             
-            // Render favorites
+            // Render favorites (no comparisons for anonymous users)
             if (this.view) {
-                await this.view.renderFavorites(favoriteProperties);
+                await this.view.renderFavorites(favoriteProperties, []);
             }
         }
     }
@@ -502,6 +506,179 @@ class FavoritesManager {
     async renderAnalysis() {
         if (!this.analysisView || !this.analysisData) return;
         await this.analysisView.render(this.analysisData);
+    }
+    
+    async compareAllFavorites() {
+        if (!this.state.currentUser) {
+            alert('Please login to compare favorites');
+            return;
+        }
+        
+        try {
+            // Get all analyzed favorites
+            const userFavorites = await this.api.loadUserFavorites(this.state.currentUser.email);
+            const regularFavorites = userFavorites.filter(f => 
+                !f.property_id.startsWith('COMPARISON_') &&
+                (f.analysis_status === 'completed' || (f.analysis_result && Object.keys(f.analysis_result).length > 0))
+            );
+            
+            if (regularFavorites.length < 2) {
+                alert('You need at least 2 analyzed favorites to compare.');
+                return;
+            }
+            
+            // Update button state
+            const compareBtn = document.getElementById('compareAllFavoritesBtn');
+            if (compareBtn) {
+                compareBtn.disabled = true;
+                compareBtn.textContent = 'COMPARING...';
+            }
+            
+            // Extract property IDs
+            const propertyIds = regularFavorites.map(f => f.property_id);
+            
+            // Call comparison API
+            const result = await this.api.compareAllFavorites(this.state.currentUser.email, propertyIds);
+            
+            // Refresh favorites to show new comparison card
+            await this.loadFavorites();
+            
+            console.log('Comparison completed:', result);
+            
+        } catch (error) {
+            console.error('Failed to compare favorites:', error);
+            alert('Failed to compare favorites. Please try again.');
+        } finally {
+            // Reset button state
+            const compareBtn = document.getElementById('compareAllFavoritesBtn');
+            if (compareBtn) {
+                compareBtn.disabled = false;
+                // Button text will be reset when favorites reload
+            }
+        }
+    }
+    
+    async showComparisonResults(comparisonId) {
+        if (!this.state.currentUser) return;
+        
+        try {
+            const data = await this.api.fetchComparisonAnalysis(this.state.currentUser.email, comparisonId);
+            await this.showComparisonModal(data);
+        } catch (error) {
+            console.error('Failed to load comparison results:', error);
+            alert('Failed to load comparison results. Please try again.');
+        }
+    }
+    
+    async showComparisonModal(data) {
+        // Ensure markdown library is loaded
+        await this.ensureMarkdownLibrary();
+        
+        // Create modal overlay
+        const modal = document.createElement('div');
+        modal.className = 'analysis-modal-overlay';
+        modal.onclick = (e) => {
+            if (e.target === modal) {
+                document.body.removeChild(modal);
+            }
+        };
+        
+        // Get the comparison analysis
+        const analysis = data.analysis_result || {};
+        const markdownContent = analysis.analysis_markdown || analysis.analysis_text || '';
+        
+        // Format comparison metadata
+        const comparisonDate = new Date(data.comparison_date || data.created_at || Date.now());
+        const formattedDate = comparisonDate.toLocaleDateString('en-US', { 
+            year: 'numeric',
+            month: 'long', 
+            day: 'numeric',
+            hour: '2-digit', 
+            minute: '2-digit' 
+        });
+        const propertyCount = data.property_count || 0;
+        
+        // Render markdown to HTML
+        let renderedContent = '';
+        if (markdownContent && window.marked) {
+            try {
+                // Clean up the markdown content first
+                let cleanedMarkdown = markdownContent;
+                
+                // Fix common markdown issues
+                cleanedMarkdown = cleanedMarkdown.replace(/^(#{1,6})\s*/gm, '$1 ');
+                cleanedMarkdown = cleanedMarkdown.replace(/\|([^|]+)\|/g, (match, content) => {
+                    return '| ' + content.trim() + ' |';
+                });
+                cleanedMarkdown = cleanedMarkdown.replace(/(\n)(\|[^\n]+\|)/g, '$1\n$2');
+                cleanedMarkdown = cleanedMarkdown.replace(/(\|[^\n]+\|)(\n)/g, '$1\n$2');
+                
+                // Parse markdown to HTML
+                renderedContent = marked.parse(cleanedMarkdown);
+                
+                // Post-process the HTML to add styling classes
+                renderedContent = renderedContent
+                    .replace(/<table>/g, '<table class="analysis-table">')
+                    .replace(/<h2>/g, '<h2 class="analysis-section-header">')
+                    .replace(/<h3>/g, '<h3 class="analysis-subsection-header">')
+                    .replace(/<ul>/g, '<ul class="analysis-list">')
+                    .replace(/<strong>/g, '<strong class="analysis-emphasis">');
+                    
+            } catch (error) {
+                console.error('Markdown parsing error:', error);
+                // Fallback to displaying raw markdown
+                renderedContent = `<pre style="white-space: pre-wrap; font-family: inherit;">${markdownContent}</pre>`;
+            }
+        } else {
+            // Fallback if no markdown library or content
+            renderedContent = '<p class="no-analysis">Comparison analysis not available</p>';
+        }
+        
+        modal.innerHTML = `
+            <div class="analysis-modal">
+                <div class="analysis-modal-header">
+                    <h2>📊 Favorite Comparison Results</h2>
+                    <button class="analysis-modal-close" onclick="document.body.removeChild(this.closest('.analysis-modal-overlay'))">&times;</button>
+                    <div class="property-basic-info">
+                        <span class="comparison-date">${formattedDate}</span>
+                        <span class="comparison-count">${propertyCount} Properties Compared</span>
+                    </div>
+                </div>
+                
+                <div class="analysis-modal-content">
+                    <div class="analysis-results analysis-markdown-content">
+                        ${renderedContent}
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        // Animate in
+        setTimeout(() => modal.classList.add('show'), 10);
+    }
+    
+    async removeComparison(comparisonId) {
+        if (!this.state.currentUser) return;
+        
+        try {
+            await this.api.removeComparison(comparisonId, this.state.currentUser.email);
+            
+            // Animate removal
+            const card = document.querySelector(`.comparison-card[data-comparison-id="${comparisonId}"]`);
+            if (card) {
+                card.style.transition = 'all 0.3s';
+                card.style.opacity = '0';
+                card.style.transform = 'translateX(-100%)';
+                setTimeout(() => {
+                    card.remove();
+                }, 300);
+            }
+        } catch (error) {
+            console.error('Failed to remove comparison:', error);
+            alert('Failed to remove comparison. Please try again.');
+        }
     }
 }
 

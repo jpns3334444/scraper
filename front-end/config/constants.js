@@ -12,9 +12,10 @@ const API_URL = 'https://whxu6x5b08.execute-api.ap-northeast-1.amazonaws.com/pro
 const FAVORITES_API_URL = API_URL; // Same API endpoint now
 
 // Pagination Configuration
-const ITEMS_PER_PAGE = 300;
-const PROPERTIES_LIMIT = 300;
-const DEFAULT_LIMIT = 300;
+const LISTING_FETCH_SIZE = 300;  // How many properties to fetch from API at once
+const ITEMS_PER_PAGE = 100;      // How many properties to show per page in UI
+const PROPERTIES_LIMIT = 300;    // Deprecated - use LISTING_FETCH_SIZE
+const DEFAULT_LIMIT = LISTING_FETCH_SIZE;
 
 // UI Configuration
 const ANIMATION_DURATION = 300;
