@@ -52,6 +52,12 @@ def lambda_handler(event, context):
     # 1️⃣ Pull every item where sort_key=='META'
     properties = scan_meta_items(logger)
     logger.info(f"Found {len(properties)} properties to analyze")
+    
+    # Check for property limit from event payload (--max-properties flag)
+    property_limit = event.get('max_properties', 0)
+    if property_limit > 0 and len(properties) > property_limit:
+        properties = properties[:property_limit]
+        logger.info(f"Limited to first {property_limit} properties (via --max-properties flag)")
 
     # 2️⃣ Compute ward medians (one pass)
     ward_stats = calc_ward_medians(properties, logger)
@@ -59,6 +65,8 @@ def lambda_handler(event, context):
 
     # 3️⃣ Iterate + update
     errs = 0
+    processed = 0
+    
     for p in properties:
         try:
             enrich = analyze_one(p, ward_stats, properties)
@@ -68,6 +76,11 @@ def lambda_handler(event, context):
                 ExpressionAttributeValues=build_values(enrich),
                 ExpressionAttributeNames=build_attr_names(enrich)
             )
+            
+            processed += 1
+            if processed % 10 == 0:
+                logger.info(f"Progress: {processed}/{len(properties)} properties processed")
+                
         except Exception as e:
             logger.exception(f"{p['property_id']} failed: {str(e)}")
             errs += 1

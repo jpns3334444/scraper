@@ -491,3 +491,160 @@ def discover_tokyo_areas(logger=None):
     
     finally:
         session.close()
+
+
+def extract_suumo_listing_urls_from_html(html_content):
+    """Extract unique listing URLs from Suumo HTML content"""
+    soup = BeautifulSoup(html_content, 'lxml')
+    
+    # Find all property unit titles with links
+    property_links = soup.select('.property_unit-title a')
+    
+    BASE_URL = "https://suumo.jp"
+    seen_urls = set()
+    results = []
+    
+    for link in property_links:
+        href = link.get('href')
+        if not href:
+            continue
+            
+        # Make absolute URL
+        absolute_url = href if href.startswith('http') else f"{BASE_URL}{href}"
+        
+        # Remove duplicates
+        if absolute_url in seen_urls:
+            continue
+        seen_urls.add(absolute_url)
+        results.append(absolute_url)
+    
+    return results
+
+
+def collect_suumo_listings_with_prices(session=None, logger=None, rate_limiter=None, max_pages=None):
+    """Collect all Suumo property URLs with prices from paginated listings"""
+    
+    # Import config to get base URL
+    import json
+    import os
+    
+    # Try multiple config paths for different environments
+    config_paths = [
+        '/config.json',  # Lambda environment
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config.json'),  # Local development
+        './config.json'  # Current directory fallback
+    ]
+    
+    config = None
+    for config_path in config_paths:
+        try:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            break
+        except FileNotFoundError:
+            continue
+    
+    if not config:
+        # Fallback to hardcoded values if config not found
+        base_url = "https://suumo.jp/jj/bukken/ichiran/JJ010FJ001/?ar=030&bs=011&ta=13&jspIdFlg=patternShikugun&sc=13101&sc=13102&sc=13103&sc=13104&sc=13105&sc=13113&sc=13106&sc=13107&sc=13108&sc=13118&sc=13121&sc=13122&sc=13123&sc=13109&sc=13110&sc=13111&sc=13112&sc=13114&sc=13115&sc=13120&sc=13116&sc=13117&sc=13119&kb=1&kt=3000&mb=0&mt=9999999&ekTjCd=&ekTjNm=&tj=0&cnb=0&cn=9999999&srch_navi=1"
+        max_pages = max_pages or 700
+    else:
+        base_url = config['suumo']['BASE_URL']
+        max_pages = max_pages or config['suumo'].get('MAX_PAGES', 700)
+    
+    should_close_session = session is None
+    if session is None:
+        session = create_session(logger)
+    
+    try:
+        all_listings = {}
+        
+        # Iterate through pages
+        for page_num in range(1, max_pages + 1):
+            try:
+                # Add page parameter
+                page_url = f"{base_url}&page={page_num}"
+                
+                if logger:
+                    logger.info(f"Fetching Suumo page {page_num}/{max_pages}: {page_url}")
+                
+                # Rate limiting
+                if rate_limiter:
+                    rate_limiter.wait()
+                
+                response = session.get(page_url, timeout=15)
+                if response.status_code != 200:
+                    if logger:
+                        logger.warning(f"HTTP {response.status_code} for page {page_num}")
+                    continue
+                
+                soup = BeautifulSoup(response.text, 'lxml')
+                
+                # Find all property units
+                property_units = soup.select('.property_unit')
+                
+                if not property_units:
+                    if logger:
+                        logger.info(f"No more properties found at page {page_num}, stopping")
+                    break
+                
+                for unit in property_units:
+                    # Get URL
+                    title_link = unit.select_one('.property_unit-title a')
+                    if not title_link:
+                        continue
+                    
+                    href = title_link.get('href')
+                    if not href:
+                        continue
+                    
+                    url = href if href.startswith('http') else f"https://suumo.jp{href}"
+                    
+                    # Get price
+                    price_elem = unit.select_one('.dottable-value')
+                    if price_elem:
+                        price_text = price_elem.get_text(strip=True)
+                        price_value = parse_price_from_text(price_text)
+                        
+                        if price_value and price_value > 0:
+                            # Extract property ID from URL
+                            property_id = re.search(r'/nc_(\d+)/', url)
+                            if property_id:
+                                property_id = f"suumo_{property_id.group(1)}"
+                            else:
+                                property_id = url.split('/')[-2] if url.endswith('/') else url.split('/')[-1]
+                            
+                            all_listings[property_id] = {
+                                'url': url,
+                                'price': price_value,
+                                'source': 'suumo'
+                            }
+                
+                if logger:
+                    logger.debug(f"Page {page_num}: Found {len(property_units)} units, total collected: {len(all_listings)}")
+                
+                # Rate limiting success
+                if rate_limiter:
+                    rate_limiter.record_success()
+                    
+            except Exception as e:
+                if logger:
+                    logger.error(f"Error on Suumo page {page_num}: {str(e)}")
+                if rate_limiter:
+                    rate_limiter.record_error()
+                continue
+        
+        listings_list = list(all_listings.values())
+        if logger:
+            logger.info(f"Found {len(listings_list)} Suumo listings with prices")
+        
+        return listings_list
+        
+    except Exception as e:
+        if logger:
+            logger.error(f"Error collecting Suumo listings: {str(e)}")
+        return []
+    
+    finally:
+        if should_close_session:
+            session.close()

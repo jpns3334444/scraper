@@ -55,11 +55,12 @@ def setup_dynamodb_client(logger=None):
 def extract_property_id_from_url(url):
     """Extract property ID from listing URL"""
     patterns = [
-        r'/mansion/b-(\d+)',  # Remove $ to be more flexible
-        r'/b-(\d+)',          # Remove $ to be more flexible  
+        r'/mansion/b-(\d+)',  # Homes.co.jp format
+        r'/b-(\d+)',          # Homes.co.jp format (flexible)
+        r'/nc_(\d+)',         # Suumo format: /nc_78166592/
         r'property[_-]?id[=:](\d+)',
         r'mansion[_-]?(\d{8,})',
-        r'/(\d{10,})'         # Remove $ to be more flexible
+        r'/(\d{10,})'         # Generic long number format
     ]
     
     for pattern in patterns:

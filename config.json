@@ -55,9 +55,20 @@
     "SCRIPT_DIR": "/home/azure/Projects/real-estate-scraper"
   },
   
+  "suumo": {
+    "_comment": "Suumo scraper configuration",
+    "BASE_URL": "https://suumo.jp/jj/bukken/ichiran/JJ010FJ001/?ar=030&bs=011&ta=13&jspIdFlg=patternShikugun&sc=13101&sc=13102&sc=13103&sc=13104&sc=13105&sc=13113&sc=13106&sc=13107&sc=13108&sc=13118&sc=13121&sc=13122&sc=13123&sc=13109&sc=13110&sc=13111&sc=13112&sc=13114&sc=13115&sc=13120&sc=13116&sc=13117&sc=13119&kb=1&kt=3000&mb=0&mt=9999999&ekTjCd=&ekTjNm=&tj=0&cnb=0&cn=9999999&srch_navi=1",
+    "MAX_PAGES": 700
+  },
+  
   "layers": {
     "BCRYPT_LAYER_OBJECT_VERSION": "latest",
     "OPENAI_VERSION": "1.99.3",
     "BCRYPT_VERSION": "4.1.2"
+  },
+
+  "secrets": {
+    "GOOGLE_MAPS_API_KEY": "tokyo-real-estate/google-maps-api-key",
+    "OPENAI_API_KEY": "ai-scraper/openai-api-key"
   }
 }

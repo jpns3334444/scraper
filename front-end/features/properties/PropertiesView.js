@@ -55,11 +55,15 @@ class PropertiesView {
                             <span class="sort-arrows" id="sort-ward">▼</span>
                             <div class="filter-dropdown">
                                 <button class="filter-btn" onclick="toggleFilterDropdown(event, 'ward')" id="filter-btn-ward">▿</button>
-                                <div class="filter-dropdown-content" id="filter-dropdown-ward">
+                                <div class="filter-dropdown-content" id="wardFilter">
+                                    <div class="filter-select-actions">
+                                        <button onclick="event.stopPropagation(); selectAllColumnFilter('ward')">Select All</button>
+                                        <button onclick="event.stopPropagation(); deselectAllColumnFilter('ward')">Deselect All</button>
+                                    </div>
                                     <div id="ward-filter-options"></div>
                                     <div class="filter-actions">
-                                        <button onclick="applyColumnFilter('ward')">Apply</button>
-                                        <button onclick="clearColumnFilter('ward')">Clear</button>
+                                        <button onclick="event.stopPropagation(); applyColumnFilter('ward')">Apply</button>
+                                        <button onclick="event.stopPropagation(); clearColumnFilter('ward')">Clear</button>
                                     </div>
                                 </div>
                             </div>
@@ -87,6 +91,20 @@ class PropertiesView {
                         <div class="column-header">
                             Floor
                             <span class="sort-arrows" id="sort-floor">▼</span>
+                            <div class="filter-dropdown">
+                                <button class="filter-btn" onclick="toggleFilterDropdown(event, 'floor')" id="filter-btn-floor">▿</button>
+                                <div class="filter-dropdown-content" id="floorFilter">
+                                    <div class="filter-select-actions">
+                                        <button onclick="event.stopPropagation(); selectAllColumnFilter('floor')">Select All</button>
+                                        <button onclick="event.stopPropagation(); deselectAllColumnFilter('floor')">Deselect All</button>
+                                    </div>
+                                    <div id="floor-filter-options"></div>
+                                    <div class="filter-actions">
+                                        <button onclick="event.stopPropagation(); applyColumnFilter('floor')">Apply</button>
+                                        <button onclick="event.stopPropagation(); clearColumnFilter('floor')">Clear</button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </th>
                     <th class="sortable" onclick="sortTable('year_built')" style="text-align: center;">
@@ -106,11 +124,15 @@ class PropertiesView {
                             Light
                             <div class="filter-dropdown">
                                 <button class="filter-btn" onclick="toggleFilterDropdown(event, 'primary_light')" id="filter-btn-primary_light">▿</button>
-                                <div class="filter-dropdown-content" id="filter-dropdown-primary_light">
+                                <div class="filter-dropdown-content" id="primary_lightFilter">
+                                    <div class="filter-select-actions">
+                                        <button onclick="event.stopPropagation(); selectAllColumnFilter('primary_light')">Select All</button>
+                                        <button onclick="event.stopPropagation(); deselectAllColumnFilter('primary_light')">Deselect All</button>
+                                    </div>
                                     <div id="primary_light-filter-options"></div>
                                     <div class="filter-actions">
-                                        <button onclick="applyColumnFilter('primary_light')">Apply</button>
-                                        <button onclick="clearColumnFilter('primary_light')">Clear</button>
+                                        <button onclick="event.stopPropagation(); applyColumnFilter('primary_light')">Apply</button>
+                                        <button onclick="event.stopPropagation(); clearColumnFilter('primary_light')">Clear</button>
                                     </div>
                                 </div>
                             </div>
@@ -121,11 +143,15 @@ class PropertiesView {
                             Verdict
                             <div class="filter-dropdown">
                                 <button class="filter-btn" onclick="toggleFilterDropdown(event, 'verdict')" id="filter-btn-verdict">▿</button>
-                                <div class="filter-dropdown-content" id="filter-dropdown-verdict">
+                                <div class="filter-dropdown-content" id="verdictFilter">
+                                    <div class="filter-select-actions">
+                                        <button onclick="event.stopPropagation(); selectAllColumnFilter('verdict')">Select All</button>
+                                        <button onclick="event.stopPropagation(); deselectAllColumnFilter('verdict')">Deselect All</button>
+                                    </div>
                                     <div id="verdict-filter-options"></div>
                                     <div class="filter-actions">
-                                        <button onclick="applyColumnFilter('verdict')">Apply</button>
-                                        <button onclick="clearColumnFilter('verdict')">Clear</button>
+                                        <button onclick="event.stopPropagation(); applyColumnFilter('verdict')">Apply</button>
+                                        <button onclick="event.stopPropagation(); clearColumnFilter('verdict')">Clear</button>
                                     </div>
                                 </div>
                             </div>

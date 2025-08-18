@@ -27,6 +27,7 @@ class AppState {
         // Filters
         this.currentFilters = {
             ward: [],
+            floor: [],
             primary_light: [],
             verdict: []
         };

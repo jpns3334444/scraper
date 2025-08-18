@@ -15,6 +15,7 @@ import io
 import os
 import hashlib
 from urllib.parse import urlparse
+from dynamodb_utils import extract_property_id_from_url, create_property_id_key
 
 # Overview field mapping for deterministic parsing
 OVERVIEW_FIELD_MAP = {
@@ -53,29 +54,29 @@ NEW_FIELD_MAP = {
 
 # Japanese to English ward mapping
 JAPANESE_TO_ENGLISH_WARD = {
-    '千代田区': 'chiyoda-ku',
-    '中央区': 'chuo-ku',
-    '港区': 'minato-ku',
-    '新宿区': 'shinjuku-ku',
-    '文京区': 'bunkyo-ku',
-    '台東区': 'taito-ku',
-    '墨田区': 'sumida-ku',
-    '江東区': 'koto-ku',
-    '品川区': 'shinagawa-ku',
-    '目黒区': 'meguro-ku',
-    '大田区': 'ota-ku',
-    '世田谷区': 'setagaya-ku',
-    '渋谷区': 'shibuya-ku',
-    '中野区': 'nakano-ku',
-    '杉並区': 'suginami-ku',
-    '豊島区': 'toshima-ku',
-    '北区': 'kita-ku',
-    '荒川区': 'arakawa-ku',
-    '板橋区': 'itabashi-ku',
-    '練馬区': 'nerima-ku',
-    '足立区': 'adachi-ku',
-    '葛飾区': 'katsushika-ku',
-    '江戸川区': 'edogawa-ku',
+    '千代田区': 'chiyoda-city',
+    '中央区': 'chuo-city',
+    '港区': 'minato-city',
+    '新宿区': 'shinjuku-city',
+    '文京区': 'bunkyo-city',
+    '台東区': 'taito-city',
+    '墨田区': 'sumida-city',
+    '江東区': 'koto-city',
+    '品川区': 'shinagawa-city',
+    '目黒区': 'meguro-city',
+    '大田区': 'ota-city',
+    '世田谷区': 'setagaya-city',
+    '渋谷区': 'shibuya-city',
+    '中野区': 'nakano-city',
+    '杉並区': 'suginami-city',
+    '豊島区': 'toshima-city',
+    '北区': 'kita-city',
+    '荒川区': 'arakawa-city',
+    '板橋区': 'itabashi-city',
+    '練馬区': 'nerima-city',
+    '足立区': 'adachi-city',
+    '葛飾区': 'katsushika-city',
+    '江戸川区': 'edogawa-city',
     # Tokyo cities
     '八王子市': 'hachioji-city',
     '立川市': 'tachikawa-city',
@@ -1266,24 +1267,17 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                 "extraction_timestamp": datetime.now().isoformat()
             }
             
-            # Extract property ID from URL
-            property_id = "unknown"
-            patterns = [
-                r'/mansion/b-(\d+)/?',
-                r'/b-(\d+)/?',
-                r'property[_-]?id[=:](\d+)',
-                r'mansion[_-]?(\d{8,})',
-                r'/(\d{10,})/'
-            ]
-            
-            for pattern in patterns:
-                match = re.search(pattern, property_url)
-                if match:
-                    property_id = match.group(1)
-                    break
-            
-            data["id"] = property_id
-            data["property_id"] = f"PROP#{datetime.now().strftime('%Y%m%d')}_{property_id}"
+            # Extract property ID from URL using the same logic as dynamodb_utils
+            raw_property_id = extract_property_id_from_url(property_url)
+            if raw_property_id:
+                property_id = create_property_id_key(raw_property_id)
+                data["id"] = raw_property_id
+                data["property_id"] = property_id
+            else:
+                # Fallback to URL hash as simple ID if extraction fails
+                property_id = hashlib.md5(property_url.encode('utf-8')).hexdigest()[:8]
+                data["id"] = property_id
+                data["property_id"] = f"PROP#{datetime.now().strftime('%Y%m%d')}_{property_id}"
             
             # Extract title
             h1_elements = soup.select('h1')
@@ -1399,7 +1393,7 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                 size_sqm = parse_numeric_field(data['size_sqm_text'].replace('m²', '').replace('㎡', ''))
                 if size_sqm:
                     data['size_sqm'] = size_sqm
-                    # Calculate price per sqm if we have both
+                    # Calculate price per sqm if we have both (price is in 万円, convert to yen for calculation)
                     if data.get('price') and data['price'] > 0:
                         calculated_price_per_sqm = (data['price'] * 10000) / size_sqm
                         data['price_per_sqm'] = calculated_price_per_sqm
@@ -1515,34 +1509,51 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                     if m:
                         repair_fee = int(m.group(1).replace(',', ''))
             
-            # Additional fallback: parse directly from table rows if still missing
+            # Additional fallback: parse directly from table cells if still missing
             if mgmt_fee is None or repair_fee is None:
-                # Find table rows containing 管理費等 or 修繕積立金
                 rows = soup.find_all('tr')
                 for row in rows:
-                    th = row.find('th')
-                    td = row.find('td')
-                    if th and td:
-                        header_text = th.get_text(strip=True)
-                        cell_text = td.get_text(strip=True)
+                    cells = row.find_all(['th', 'td'])
+                    for i, cell in enumerate(cells):
+                        cell_text = cell.get_text(strip=True)
                         
-                        if mgmt_fee is None and '管理費' in header_text:
-                            # Extract number from formats like "10,800円"
-                            m = re.search(r'([\d,]+)', cell_text)
-                            if m:
-                                try:
-                                    mgmt_fee = int(m.group(1).replace(',', ''))
-                                except ValueError:
-                                    pass
+                        # Look for management fee
+                        if mgmt_fee is None and '管理費' in cell_text and '修繕' not in cell_text:
+                            if i + 1 < len(cells):
+                                next_cell = cells[i + 1]
+                                next_text = next_cell.get_text(strip=True)
+                                
+                                # Parse the fee amount
+                                if next_text and next_text not in ['-', '－']:
+                                    # Look for patterns like "1万4300円/月" or "7300円/月"
+                                    match = re.search(r'(\d+)万(\d+)', next_text)
+                                    if match:
+                                        man = int(match.group(1)) * 10000
+                                        sen = int(match.group(2)) if match.group(2) else 0
+                                        mgmt_fee = man + sen
+                                    else:
+                                        match = re.search(r'([\d,]+)円', next_text.replace(',', ''))
+                                        if match:
+                                            mgmt_fee = int(match.group(1).replace(',', ''))
                         
-                        if repair_fee is None and '修繕積立金' in header_text:
-                            # Extract number from formats like "8,000円"
-                            m = re.search(r'([\d,]+)', cell_text)
-                            if m:
-                                try:
-                                    repair_fee = int(m.group(1).replace(',', ''))
-                                except ValueError:
-                                    pass
+                        # Look for repair reserve fee
+                        elif repair_fee is None and '修繕積立金' in cell_text:
+                            if i + 1 < len(cells):
+                                next_cell = cells[i + 1]
+                                next_text = next_cell.get_text(strip=True)
+                                
+                                # Parse the fee amount
+                                if next_text and next_text not in ['-', '－']:
+                                    # Look for patterns like "1万4300円/月"
+                                    match = re.search(r'(\d+)万(\d+)', next_text)
+                                    if match:
+                                        man = int(match.group(1)) * 10000
+                                        sen = int(match.group(2)) if match.group(2) else 0
+                                        repair_fee = man + sen
+                                    else:
+                                        match = re.search(r'([\d,]+)円', next_text.replace(',', ''))
+                                        if match:
+                                            repair_fee = int(match.group(1).replace(',', ''))
             
             # Store numeric-only fields if parsed
             if mgmt_fee is not None:
@@ -1758,3 +1769,737 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
         raise last_error
     else:
         raise Exception("Max retries exceeded")
+
+
+def scrape_suumo_property(session, property_url, retries=3, config=None, logger=None, session_pool=None, image_rate_limiter=None):
+    """Extract Suumo property information with comprehensive field extraction"""
+    last_error = None
+    output_bucket = config.get('output_bucket', '') if config else ''
+    
+    for attempt in range(retries + 1):
+        try:
+            # Add delay
+            time.sleep(random.uniform(1, 2))
+            
+            response = session.get(property_url, timeout=15)
+            
+            if response.status_code != 200:
+                if attempt == retries:
+                    raise Exception(f"HTTP {response.status_code}")
+                time.sleep((2 ** attempt) + random.uniform(0, 1))
+                continue
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            data = {
+                "url": property_url,
+                "extraction_timestamp": datetime.now().isoformat(),
+                "source": "suumo"
+            }
+            
+            # Extract property ID from URL using the same logic as dynamodb_utils
+            raw_property_id = extract_property_id_from_url(property_url)
+            if raw_property_id:
+                property_id = create_property_id_key(raw_property_id)
+                data["id"] = raw_property_id
+                data["property_id"] = property_id
+            else:
+                # Fallback to URL hash as simple ID if extraction fails
+                property_id = hashlib.md5(property_url.encode('utf-8')).hexdigest()[:8]
+                data["id"] = property_id
+                data["property_id"] = f"PROP#{datetime.now().strftime('%Y%m%d')}_{property_id}"
+            
+            # Extract property name
+            property_name = soup.find('h1', class_='mainIndexR')
+            if property_name:
+                name_text = property_name.get_text(strip=True)
+                # Extract property name and price from title
+                name_parts = name_text.split()
+                if name_parts:
+                    data["property_name"] = name_parts[0]
+                    # Also extract price from title if present
+                    for part in name_parts:
+                        if '万円' in part:
+                            price_match = re.search(r'(\d+)万円', part)
+                            if price_match:
+                                # Store price in 万円 format (same as Lifull) for frontend compatibility
+                                data["price"] = int(price_match.group(1))
+                                data["price_text"] = part
+            
+            # Extract title
+            data["title"] = property_name.get_text(strip=True) if property_name else ""
+            
+            # Extract property type
+            property_type = soup.find('li', class_='pct01')
+            if property_type:
+                data["property_type"] = property_type.get_text(strip=True)
+            
+            # Extract property description
+            description_h3 = soup.find('h3', class_='fs16 b')
+            if description_h3:
+                data['property_description_title'] = description_h3.get_text(strip=True)
+                desc_p = description_h3.find_next_sibling('p', class_='fs14')
+                if desc_p:
+                    data['property_description'] = desc_p.get_text(strip=True)
+            
+            # Extract detailed information from tables
+            tables = soup.find_all('table', class_='bdGrayT')
+            
+            for table in tables:
+                rows = table.find_all('tr')
+                for row in rows:
+                    # Get ALL th/td pairs in this row (not just the first)
+                    all_ths = row.find_all('th')
+                    all_tds = row.find_all('td')
+                    
+                    # Process each th/td pair
+                    for th, td in zip(all_ths, all_tds):
+                        if not th or not td:
+                            continue
+                            
+                        key = th.get_text(strip=True)
+                        val = td.get_text(strip=True)
+                        
+                        # Price and fees
+                        if '価格' in key and not data.get('price'):
+                            price_match = re.search(r'(\d+)万円', val)
+                            if price_match:
+                                # Store price in 万円 format (same as Lifull) for frontend compatibility
+                                data["price"] = int(price_match.group(1))
+                                data["price_text"] = val
+                        
+                        elif '管理費' in key:
+                            data['management_fee_text'] = val
+                            # Parse patterns like "1万4300円/月" or "7300円/月"
+                            match = re.search(r'(\d+)万(\d+)', val)
+                            if match:
+                                man = int(match.group(1)) * 10000
+                                sen = int(match.group(2)) if match.group(2) else 0
+                                data['management_fee'] = man + sen
+                            else:
+                                match = re.search(r'([\d,]+)円', val.replace(',', ''))
+                                if match:
+                                    data['management_fee'] = int(match.group(1).replace(',', ''))
+                        
+                        elif '修繕積立金' in key:
+                            data['repair_reserve_fee_text'] = val
+                            # Parse patterns like "1万4300円/月"
+                            match = re.search(r'(\d+)万(\d+)', val)
+                            if match:
+                                man = int(match.group(1)) * 10000
+                                sen = int(match.group(2)) if match.group(2) else 0
+                                data['repair_reserve_fee'] = man + sen
+                            else:
+                                match = re.search(r'([\d,]+)円', val.replace(',', ''))
+                                if match:
+                                    data['repair_reserve_fee'] = int(match.group(1).replace(',', ''))
+                        
+                        # Transaction fees
+                        elif '諸費用' in key or '取引にかかる費用' in key:
+                            data['transaction_fees'] = val
+                            if '仲介手数料無料' in val:
+                                data['no_brokerage_fee'] = True
+                            elif '仲介手数料' in val:
+                                brokerage_match = re.search(r'(\d+[\d,]*)円', val.replace(',', ''))
+                                if brokerage_match:
+                                    data['brokerage_fee'] = int(brokerage_match.group(1).replace(',', ''))
+                        
+                        # Property characteristics
+                        elif '間取り' in key:
+                            data['layout_text'] = val
+                            # Parse layout type (1LDK, 2DK, etc.)
+                            layout_match = re.search(r'(\d+[A-Z]+)', val)
+                            if layout_match:
+                                data['layout_type'] = layout_match.group(1)
+                            # Extract number of bedrooms
+                            bedroom_match = re.search(r'^(\d+)', val)
+                            if bedroom_match:
+                                data['num_bedrooms'] = int(bedroom_match.group(1))
+                        
+                        elif '専有面積' in key:
+                            data['size_text'] = val
+                            # Handle different size formats: "54.00m²", "54m<sup>2</sup>", "54.00平米"
+                            size_match = re.search(r'([\d.]+)(?:m[²²]?|m<sup>2</sup>|平米|㎡)', val)
+                            if size_match:
+                                size_value = float(size_match.group(1))
+                                data['size'] = size_value  # Legacy field
+                                data['size_sqm'] = size_value  # Expected field for consistency with Suumo
+                        
+                        elif 'バルコニー面積' in key or ('その他面積' in key and 'バルコニー' in val):
+                            # Handle different size formats: "6.48m²", "6.48m<sup>2</sup>", "6.48平米"  
+                            balcony_match = re.search(r'([\d.]+)(?:m[²²]?|m<sup>2</sup>|平米|㎡)', val)
+                            if balcony_match:
+                                data['balcony_size_sqm'] = float(balcony_match.group(1))
+                            data['balcony_text'] = val
+                        
+                        elif '所在階' in key:
+                            # Handle combined format: "2階/SRC7階建"
+                            combined_match = re.search(r'(\d+)階/([A-Z]+)(\d+)階建', val)
+                            if combined_match:
+                                data['floor'] = int(combined_match.group(1))
+                                structure = combined_match.group(2)
+                                if not structure.endswith('造'):
+                                    structure += '造'
+                                data['structure'] = structure
+                                data['total_floors'] = int(combined_match.group(3))
+                                data['building_floors'] = int(combined_match.group(3))  # For DynamoDB
+                            else:
+                                # Regular floor extraction
+                                floor_match = re.search(r'(\d+)階', val)
+                                if floor_match:
+                                    data['floor'] = int(floor_match.group(1))
+                            data['floor_info'] = val
+                        
+                        elif '向き' in key:
+                            data['primary_light'] = val
+                            good_directions = ['南', '南東', '南西', '東南', '西南']
+                            data['good_lighting'] = any(direction in val for direction in good_directions)
+                        
+                        elif '総戸数' in key:
+                            units_match = re.search(r'(\d+)戸', val)
+                            if units_match:
+                                data['total_units'] = int(units_match.group(1))
+                        
+                        # Building info
+                        elif '構造' in key or '階建' in key:
+                            data['building_structure'] = val
+                            
+                            # Handle structure and floors in one field: "SRC7階建"
+                            struct_floors_match = re.search(r'([A-Z]+)造?(\d+)階建', val)
+                            if struct_floors_match:
+                                structure = struct_floors_match.group(1)
+                                if not structure.endswith('造'):
+                                    structure += '造'
+                                data['structure'] = structure
+                                data['total_floors'] = int(struct_floors_match.group(2))
+                                data['building_floors'] = int(struct_floors_match.group(2))  # For DynamoDB
+                            else:
+                                # Extract total floors only
+                                floors_match = re.search(r'(\d+)階建', val)
+                                if floors_match:
+                                    data['total_floors'] = int(floors_match.group(1))
+                                    data['building_floors'] = int(floors_match.group(1))  # For DynamoDB
+                                    
+                                # Extract structure patterns
+                                structure_patterns = ['SRC', 'RC', 'S造', 'W造', '鉄骨', '鉄筋', '木造']
+                                for struct_type in structure_patterns:
+                                    if struct_type in val:
+                                        if struct_type == '鉄骨':
+                                            data['structure'] = 'S造'
+                                        elif struct_type == '鉄筋':
+                                            data['structure'] = 'RC造'
+                                        elif struct_type == '木造':
+                                            data['structure'] = 'W造'
+                                        elif not struct_type.endswith('造'):
+                                            data['structure'] = struct_type + '造'
+                                        else:
+                                            data['structure'] = struct_type
+                                        break
+                        
+                        elif '完成時期' in key or '築年月' in key:
+                            data['built_text'] = val
+                            year_match = re.search(r'(\d{4})年', val)
+                            month_match = re.search(r'(\d{1,2})月', val)
+                            if year_match:
+                                data['building_year'] = int(year_match.group(1))
+                                data['building_age_years'] = datetime.now().year - int(year_match.group(1))
+                            if month_match:
+                                data['building_month'] = int(month_match.group(1))
+                        
+                        # Energy and sustainability metrics
+                        elif 'エネルギー消費性能' in key:
+                            data['energy_performance'] = val
+                            if 'ZEH' in val:
+                                data['is_zeh'] = True
+                        
+                        elif '断熱性能' in key:
+                            data['insulation_performance'] = val
+                            # Extract grade if present
+                            grade_match = re.search(r'等級(\d+)', val)
+                            if grade_match:
+                                data['insulation_grade'] = int(grade_match.group(1))
+                        
+                        elif '目安光熱費' in key:
+                            data['estimated_utility_cost_text'] = val
+                            utility_match = re.search(r'([\d,]+)円', val.replace(',', ''))
+                            if utility_match:
+                                data['estimated_utility_cost'] = int(utility_match.group(1))
+                        
+                        # Location
+                        elif key == '住所' or key == '所在地':
+                            data['address'] = val
+                            # Extract prefecture
+                            pref_match = re.search(r'(東京都|神奈川県|埼玉県|千葉県|茨城県|栃木県|群馬県|山梨県)', val)
+                            if pref_match:
+                                data['prefecture'] = pref_match.group(1)
+                            # Extract city
+                            city_match = re.search(r'([^都道府県]+市)', val)
+                            if city_match:
+                                data['city'] = city_match.group(1)
+                            # Extract ward if present
+                            ward_match = re.search(r'([^都道府県市]+区)', val)
+                            if ward_match:
+                                japanese_ward = ward_match.group(1)
+                                # Convert Japanese ward to English
+                                english_ward = JAPANESE_TO_ENGLISH_WARD.get(japanese_ward, japanese_ward)
+                                data['ward'] = english_ward
+                            # Extract district/town
+                            district_match = re.search(r'区([^0-9０-９]+)', val)
+                            if district_match:
+                                data['district'] = district_match.group(1).strip()
+                        
+                        elif key == '交通':
+                            data['station_info'] = val
+                        
+                        # Renovation info
+                        elif 'リフォーム' in key:
+                            data['renovation_status'] = val
+                            data['has_renovation'] = True
+                            # Parse renovation details
+                            if '年' in val and '月' in val:
+                                year_match = re.search(r'(\d{4})年', val)
+                                month_match = re.search(r'(\d{1,2})月', val)
+                                if year_match and month_match:
+                                    data['renovation_year'] = int(year_match.group(1))
+                                    data['renovation_month'] = int(month_match.group(1))
+                            # Extract renovation items
+                            if 'キッチン' in val:
+                                data['renovation_kitchen'] = True
+                            if '浴室' in val:
+                                data['renovation_bathroom'] = True
+                            if 'トイレ' in val:
+                                data['renovation_toilet'] = True
+                            if '内装' in val:
+                                data['renovation_interior'] = True
+                            if 'フローリング' in val:
+                                data['renovation_flooring'] = True
+                        
+                        # Move-in availability
+                        elif '引渡' in key or '入居' in key:
+                            data['move_in_availability'] = val
+                            if '即' in val:
+                                data['immediate_move_in'] = True
+                        
+                        # Land rights
+                        elif '敷地の権利形態' in key or '権利形態' in key:
+                            data['land_rights'] = val
+                            if '所有権' in val:
+                                data['freehold'] = True
+                            elif '借地' in val:
+                                data['leasehold'] = True
+                        
+                        # Zoning
+                        elif '用途地域' in key:
+                            data['zoning'] = val
+                        
+                        # Company info
+                        elif '取引態様' in key:
+                            data['transaction_type'] = val
+                            if '売主' in val:
+                                data['is_direct_seller'] = True
+                            elif '代理' in val:
+                                data['is_agent'] = True
+                            elif '仲介' in val:
+                                data['is_broker'] = True
+            
+            # Extract company information
+            company_link = soup.find('a', class_='jscToiawaseSakiWindow')
+            if company_link:
+                data['company_name'] = company_link.get_text(strip=True)
+            
+            # Extract phone number
+            phone_spans = soup.find_all('span', class_='fs18 b')
+            for span in phone_spans:
+                text = span.get_text(strip=True)
+                if 'TEL' in text or re.search(r'\d{2,4}-\d{2,4}-\d{4}', text):
+                    phone_match = re.search(r'([\d-]+)', text)
+                    if phone_match:
+                        data['contact_phone'] = phone_match.group(1)
+            
+            # Extract event/viewing information
+            event_section = soup.find(text=re.compile('現地見学会'))
+            if event_section:
+                parent = event_section.parent
+                if parent:
+                    data['viewing_info'] = parent.get_text(strip=True)
+            
+            # Extract transportation details (multiple stations)
+            stations = []
+            # Method 1: From table cells
+            transport_cells = soup.find_all('td', class_='bdCell')
+            for cell in transport_cells:
+                text = cell.get_text()
+                if '歩' in text and '分' in text:
+                    station_matches = re.findall(r'([^「」]+線)?「([^」]+)」歩(\d+)分', text)
+                    for match in station_matches:
+                        station_data = {
+                            'line': match[0].replace('線', '') if match[0] else '',
+                            'station': match[1],
+                            'walk_minutes': int(match[2])
+                        }
+                        # Avoid duplicates
+                        if station_data not in stations:
+                            stations.append(station_data)
+            
+            # Method 2: From any text containing station info
+            transport_sections = soup.find_all(text=re.compile(r'「.+?」歩\d+分'))
+            for section in transport_sections:
+                matches = re.findall(r'([^「」]+線)?「([^」]+)」歩(\d+)分', str(section))
+                for match in matches:
+                    station_data = {
+                        'line': match[0].replace('線', '') if match[0] else '',
+                        'station': match[1],
+                        'walk_minutes': int(match[2])
+                    }
+                    if station_data not in stations:
+                        stations.append(station_data)
+            
+            if stations:
+                data['stations'] = stations
+                data['station_count'] = len(stations)
+                # Set closest station
+                closest = min(stations, key=lambda x: x['walk_minutes'])
+                data['closest_station'] = closest['station']
+                data['station_distance_minutes'] = closest['walk_minutes']
+                # Calculate transportation convenience score
+                data['transport_score'] = max(0, 100 - (closest['walk_minutes'] * 5))
+            
+            # Extract special features - improved parsing
+            features = []
+            
+            # From feature list items at top
+            feature_items = soup.find_all('li', class_='pct01')
+            features.extend([f.get_text(strip=True) for f in feature_items if f.get_text(strip=True)])
+            
+            # From detailed feature section at bottom
+            feature_section = soup.find('div', class_='mt10')
+            if feature_section:
+                # Look for feature lists separated by slashes
+                feature_texts = feature_section.find_all(text=re.compile('/'))
+                for text in feature_texts:
+                    if isinstance(text, str):
+                        items = [item.strip() for item in text.split('/') if item.strip()]
+                        features.extend(items)
+            
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_features = []
+            for f in features:
+                if f not in seen and len(f) < 50:  # Exclude very long text
+                    seen.add(f)
+                    unique_features.append(f)
+            
+            if unique_features:
+                data['special_features'] = unique_features
+                data['feature_count'] = len(unique_features)
+                
+                # Check for key features
+                feature_text = ' '.join(unique_features)
+                data['has_elevator'] = 'エレベーター' in feature_text
+                data['is_corner_unit'] = '角住戸' in feature_text or '角部屋' in feature_text
+                data['has_parking'] = '駐車場' in feature_text
+                data['has_bike_parking'] = '駐輪場' in feature_text
+                data['has_renovation'] = 'リノベーション' in feature_text or 'リフォーム' in feature_text
+                data['south_facing'] = '南向き' in feature_text or '南面' in feature_text
+                data['has_security'] = 'オートロック' in feature_text or 'セキュリティ' in feature_text
+                data['has_floor_heating'] = '床暖房' in feature_text
+                data['pet_allowed'] = 'ペット可' in feature_text or 'ペット相談' in feature_text
+            
+            # Enhanced neighborhood info extraction
+            neighborhood = {}
+            amenity_count = 0
+            
+            # Method 1: From structured list items
+            neighborhood_items = soup.find_all('li', class_='dibz w235 vat')
+            for item in neighborhood_items:
+                text = item.get_text(strip=True)
+                # Parse different facility types with distances
+                facility_patterns = [
+                    (r'(.+?)まで(\d+)m', 'meters'),
+                    (r'(.+?)：徒歩(\d+)分', 'minutes'),
+                    (r'(.+?)徒歩約?(\d+)分', 'minutes')
+                ]
+                
+                for pattern, unit in facility_patterns:
+                    match = re.search(pattern, text)
+                    if match:
+                        facility = match.group(1)
+                        distance = int(match.group(2))
+                        
+                        # Convert minutes to meters if needed (80m per minute)
+                        if unit == 'minutes':
+                            distance = distance * 80
+                        
+                        amenity_count += 1
+                        
+                        # Categorize facilities
+                        if 'スーパー' in facility or 'ストア' in facility:
+                            if 'supermarket_distance' not in neighborhood or distance < neighborhood['supermarket_distance']:
+                                neighborhood['supermarket_distance'] = distance
+                                neighborhood['supermarket_name'] = facility
+                        elif 'コンビニ' in facility or 'セブン' in facility or 'ファミリー' in facility or 'ローソン' in facility:
+                            if 'convenience_store_distance' not in neighborhood or distance < neighborhood['convenience_store_distance']:
+                                neighborhood['convenience_store_distance'] = distance
+                                neighborhood['convenience_store_name'] = facility
+                        elif '小学校' in facility:
+                            neighborhood['elementary_school_distance'] = distance
+                            neighborhood['elementary_school_name'] = facility
+                        elif '中学校' in facility:
+                            neighborhood['middle_school_distance'] = distance
+                            neighborhood['middle_school_name'] = facility
+                        elif '幼稚園' in facility or '保育園' in facility:
+                            if 'kindergarten_distance' not in neighborhood or distance < neighborhood['kindergarten_distance']:
+                                neighborhood['kindergarten_distance'] = distance
+                                neighborhood['kindergarten_name'] = facility
+                        elif '公園' in facility:
+                            if 'park_distance' not in neighborhood or distance < neighborhood['park_distance']:
+                                neighborhood['park_distance'] = distance
+                                neighborhood['park_name'] = facility
+                        elif '病院' in facility or 'クリニック' in facility:
+                            if 'hospital_distance' not in neighborhood or distance < neighborhood['hospital_distance']:
+                                neighborhood['hospital_distance'] = distance
+                                neighborhood['hospital_name'] = facility
+                        elif '薬' in facility or 'ドラッグ' in facility:
+                            if 'drugstore_distance' not in neighborhood or distance < neighborhood['drugstore_distance']:
+                                neighborhood['drugstore_distance'] = distance
+                                neighborhood['drugstore_name'] = facility
+                        elif '郵便局' in facility:
+                            neighborhood['post_office_distance'] = distance
+                            neighborhood['post_office_name'] = facility
+                        elif '銀行' in facility or '信用金庫' in facility:
+                            if 'bank_distance' not in neighborhood or distance < neighborhood['bank_distance']:
+                                neighborhood['bank_distance'] = distance
+                                neighborhood['bank_name'] = facility
+            
+            # Method 2: From facility table
+            facility_divs = soup.find_all('div', class_='fl w320 mt5 lh15')
+            for div in facility_divs:
+                text = div.get_text(strip=True)
+                # Parse facility info
+                match = re.search(r'(.+?)：徒歩(\d+)分（(\d+)ｍ）', text)
+                if not match:
+                    match = re.search(r'(.+?)：徒歩(\d+)分', text)
+                if match:
+                    facility_name = match.group(1)
+                    walk_minutes = int(match.group(2))
+                    meters = int(match.group(3)) if match.lastindex >= 3 else walk_minutes * 80
+                    
+                    amenity_count += 1
+                    
+                    # Categorize and store
+                    if 'スーパー' in text or 'ストア' in facility_name:
+                        if 'supermarket_distance' not in neighborhood or meters < neighborhood['supermarket_distance']:
+                            neighborhood['supermarket_distance'] = meters
+                            neighborhood['supermarket_name'] = facility_name
+            
+            if neighborhood:
+                data['neighborhood_facilities'] = neighborhood
+                data['amenity_count'] = amenity_count
+                
+                # Calculate neighborhood quality score
+                score = 100
+                if neighborhood.get('supermarket_distance', 1000) > 500:
+                    score -= 10
+                if neighborhood.get('convenience_store_distance', 1000) > 300:
+                    score -= 10
+                if neighborhood.get('park_distance', 1000) > 1000:
+                    score -= 5
+                data['neighborhood_score'] = max(0, score)
+            
+            # Fallback fee parsing if not found in main table
+            if not data.get('management_fee') or not data.get('repair_reserve_fee'):
+                rows = soup.find_all('tr')
+                for row in rows:
+                    cells = row.find_all(['th', 'td'])
+                    for i, cell in enumerate(cells):
+                        cell_text = cell.get_text(strip=True)
+                        
+                        # Look for management fee
+                        if not data.get('management_fee') and '管理費' in cell_text and '修繕' not in cell_text:
+                            if i + 1 < len(cells):
+                                next_cell = cells[i + 1]
+                                next_text = next_cell.get_text(strip=True)
+                                
+                                # Parse the fee amount
+                                if next_text and next_text not in ['-', '－']:
+                                    data['management_fee_text'] = next_text
+                                    # Look for patterns like "1万4300円/月" or "7300円/月"
+                                    match = re.search(r'(\d+)万(\d+)', next_text)
+                                    if match:
+                                        man = int(match.group(1)) * 10000
+                                        sen = int(match.group(2)) if match.group(2) else 0
+                                        data['management_fee'] = man + sen
+                                    else:
+                                        match = re.search(r'([\d,]+)円', next_text.replace(',', ''))
+                                        if match:
+                                            data['management_fee'] = int(match.group(1).replace(',', ''))
+                        
+                        # Look for repair reserve fee
+                        elif not data.get('repair_reserve_fee') and '修繕積立金' in cell_text:
+                            if i + 1 < len(cells):
+                                next_cell = cells[i + 1]
+                                next_text = next_cell.get_text(strip=True)
+                                
+                                # Parse the fee amount
+                                if next_text and next_text not in ['-', '－']:
+                                    data['repair_reserve_fee_text'] = next_text
+                                    # Look for patterns like "1万4300円/月"
+                                    match = re.search(r'(\d+)万(\d+)', next_text)
+                                    if match:
+                                        man = int(match.group(1)) * 10000
+                                        sen = int(match.group(2)) if match.group(2) else 0
+                                        data['repair_reserve_fee'] = man + sen
+                                    else:
+                                        match = re.search(r'([\d,]+)円', next_text.replace(',', ''))
+                                        if match:
+                                            data['repair_reserve_fee'] = int(match.group(1).replace(',', ''))
+            
+            # Calculate total monthly costs
+            monthly_costs = 0
+            if data.get('management_fee'):
+                monthly_costs += data['management_fee']
+            if data.get('repair_reserve_fee'):
+                monthly_costs += data['repair_reserve_fee']
+            if monthly_costs > 0:
+                data['monthly_costs'] = monthly_costs
+                data['total_monthly_costs'] = monthly_costs
+            
+            # Note: price_per_sqm calculation is handled later with proper unit conversion
+            
+            # Extract images - comprehensive approach
+            image_urls = []
+            seen_images = set()
+            
+            # Multiple image selectors
+            image_selectors = [
+                '.carousel_item-object img',  # Carousel images
+                '.w220.h165 img',  # Thumbnail images
+                '.w296.h222 img',  # Large thumbnails
+                'img[alt][src*="gazo/bukken"]',  # Property images
+                'a.jscNyroModal img',  # Modal images
+            ]
+            
+            for selector in image_selectors:
+                imgs = soup.select(selector)
+                for img in imgs:
+                    src = img.get('src') or img.get('data-src') or img.get('rel')
+                    if src and 'spacer' not in src and 'spinner' not in src:
+                        # Clean up image URL
+                        if src.startswith('//'):
+                            src = 'https:' + src
+                        elif src.startswith('/'):
+                            src = 'https://suumo.jp' + src
+                        
+                        # Check if it's a real image URL
+                        if ('resizeImage' in src or 'gazo/bukken' in src) and src not in seen_images:
+                            image_urls.append(src)
+                            seen_images.add(src)
+            
+            if image_urls:
+                data['has_interior_photos'] = True
+                data['image_count'] = len(image_urls)
+                data['image_urls'] = image_urls[:20]  # Store first 20 URLs
+                
+                # Analyze image types
+                interior_count = sum(1 for url in image_urls if 'interior' in url.lower() or '内装' in url)
+                exterior_count = sum(1 for url in image_urls if 'exterior' in url.lower() or '外観' in url)
+                data['interior_photo_count'] = interior_count
+                data['exterior_photo_count'] = exterior_count
+                
+                # Download images if configured
+                if output_bucket and image_urls[:10]:
+                    # Image download logic would go here if needed
+                    pass
+            
+            # Listing metadata and market context
+            info_date = soup.find(text=re.compile('情報提供日'))
+            if info_date:
+                date_match = re.search(r'(\d{4})年(\d+)月(\d+)日', info_date.parent.get_text())
+                if not date_match:
+                    date_match = re.search(r'(\d{2})/(\d+)/(\d+)', info_date.parent.get_text())
+                    if date_match:
+                        year = 2000 + int(date_match.group(1)) if int(date_match.group(1)) < 50 else 1900 + int(date_match.group(1))
+                        data['listing_date'] = f"{year}-{date_match.group(2).zfill(2)}-{date_match.group(3).zfill(2)}"
+                else:
+                    data['listing_date'] = f"{date_match.group(1)}-{date_match.group(2).zfill(2)}-{date_match.group(3).zfill(2)}"
+                
+                # Calculate days on market
+                if data.get('listing_date'):
+                    try:
+                        listing_date = datetime.strptime(data['listing_date'], '%Y-%m-%d')
+                        days_on_market = (datetime.now() - listing_date).days
+                        data['days_on_market'] = days_on_market
+                        
+                        # Market freshness indicator
+                        if days_on_market <= 7:
+                            data['market_freshness'] = 'new'
+                        elif days_on_market <= 30:
+                            data['market_freshness'] = 'fresh'
+                        elif days_on_market <= 90:
+                            data['market_freshness'] = 'standard'
+                        else:
+                            data['market_freshness'] = 'stale'
+                    except:
+                        pass
+            
+            # Update date
+            update_date = soup.find(text=re.compile('次回更新日'))
+            if update_date:
+                data['next_update'] = update_date.parent.get_text(strip=True).replace('次回更新日', '').replace('：', '').strip()
+            
+            # Price history (if available)
+            price_update = soup.find(text=re.compile('価格更新'))
+            if price_update:
+                data['has_price_update'] = True
+                update_text = price_update.parent.get_text(strip=True)
+                data['price_update_info'] = update_text
+            
+            # Process size_sqm_text field (same logic as Homes.co.jp scraper)
+            if 'size_sqm_text' in data:
+                size_sqm = parse_numeric_field(data['size_sqm_text'].replace('m²', '').replace('㎡', '').replace('m<sup>2</sup>', ''))
+                if size_sqm:
+                    data['size_sqm'] = size_sqm
+                    # Calculate price per sqm if we have both (price is in 万円, convert to yen for calculation)
+                    if data.get('price') and data['price'] > 0:
+                        calculated_price_per_sqm = (data['price'] * 10000) / size_sqm
+                        data['price_per_sqm'] = calculated_price_per_sqm
+                        if logger:
+                            logger.debug(f"Calculated price_per_sqm: {calculated_price_per_sqm:.0f} yen/sqm")
+            
+            # Overall quality scores
+            if data.get('building_age_years'):
+                age_score = max(0, 100 - (data['building_age_years'] * 2))
+                if data.get('has_renovation'):
+                    age_score = min(100, age_score + 20)
+                data['building_condition_score'] = age_score
+            
+            # Calculate overall property score
+            scores = []
+            if data.get('transport_score'):
+                scores.append(data['transport_score'])
+            if data.get('neighborhood_score'):
+                scores.append(data['neighborhood_score'])
+            if data.get('building_condition_score'):
+                scores.append(data['building_condition_score'])
+            
+            if scores:
+                data['overall_score'] = int(sum(scores) / len(scores))
+            
+            data['first_seen_date'] = datetime.now().isoformat()
+            data['processed_date'] = datetime.now().strftime('%Y-%m-%d')
+            
+            return data
+            
+        except Exception as e:
+            last_error = e
+            if logger:
+                logger.debug(f"Suumo scrape attempt {attempt + 1} failed: {str(e)}")
+            
+            if attempt == retries:
+                break
+                
+            time.sleep((2 ** attempt) + random.uniform(0, 1))
+    
+    if last_error:
+        raise last_error
+    else:
+        raise Exception("Max retries exceeded for Suumo property")

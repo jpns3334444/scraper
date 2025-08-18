@@ -128,6 +128,11 @@ class PropertiesManager {
                 return false;
             }
             
+            // Floor filter
+            if (filters.floor.length > 0 && !filters.floor.includes(property.floor)) {
+                return false;
+            }
+            
             // Verdict filter
             const verdict = property.verdict || property.recommendation;
             if (filters.verdict.length > 0 && !filters.verdict.includes(verdict)) {
@@ -277,11 +282,35 @@ class PropertiesManager {
     }
     
     populateColumnFilters() {
-        const wards = [...new Set(this.state.allProperties.map(p => p.ward).filter(Boolean))];
-        const lights = [...new Set(this.state.allProperties.map(p => p.primary_light).filter(Boolean))];
-        const verdicts = [...new Set(this.state.allProperties.map(p => p.verdict || p.recommendation).filter(Boolean))];
+        const wards = [...new Set(this.state.allProperties.map(p => p.ward).filter(Boolean))].sort();
+        const floors = [...new Set(this.state.allProperties.map(p => p.floor).filter(Boolean))].sort();
+        const lights = [...new Set(this.state.allProperties.map(p => p.primary_light).filter(Boolean))].sort();
+        const verdicts = [...new Set(this.state.allProperties.map(p => p.verdict || p.recommendation).filter(Boolean))].sort();
         
-        this.state.availableFilters = { wards, lights, verdicts };
+        this.state.availableFilters = { wards, floors, lights, verdicts };
+        
+        // Populate the dropdown HTML
+        this.populateFilterDropdown('ward', wards);
+        this.populateFilterDropdown('floor', floors);
+        this.populateFilterDropdown('primary_light', lights);
+        this.populateFilterDropdown('verdict', verdicts);
+    }
+    
+    populateFilterDropdown(column, values) {
+        const optionsContainer = document.getElementById(`${column}-filter-options`);
+        if (!optionsContainer || !values.length) return;
+        
+        let html = '';
+        values.forEach(value => {
+            html += `
+                <label>
+                    <input type="checkbox" value="${value}">
+                    ${value}
+                </label>
+            `;
+        });
+        
+        optionsContainer.innerHTML = html;
     }
 }
 

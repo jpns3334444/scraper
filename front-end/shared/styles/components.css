@@ -380,3 +380,27 @@ button {
 .filter-actions button:hover {
     background: var(--ink-faint);
 }
+
+/* Filter select all/deselect all buttons */
+.filter-select-actions {
+    padding: var(--space-sm);
+    border-bottom: 1px solid var(--ink-faint);
+    display: flex;
+    gap: var(--space-xs);
+}
+
+.filter-select-actions button {
+    flex: 1;
+    padding: var(--space-xs) var(--space-sm);
+    font-size: 11px;
+    border: 1px solid var(--ink-faint);
+    background: var(--paper-gray);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    color: var(--ink-gray);
+}
+
+.filter-select-actions button:hover {
+    background: var(--ink-faint);
+    color: var(--paper-white);
+}

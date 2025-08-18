@@ -285,15 +285,28 @@ def process_single_url(url_data, session_pool, rate_limiter, url_tracking_table,
         jitter_delay = random.uniform(0.5, 2.0)
         time.sleep(jitter_delay)
         
-        # Extract property details with session pool for images, ward info, and listing price
-        result = extract_property_details(
-            session, url, "https://www.homes.co.jp", 
-            config=config, logger=logger,
-            session_pool=session_pool, 
-            image_rate_limiter=image_rate_limiter,
-            ward=ward,
-            listing_price=listing_price  # Pass the listing price
-        )
+        # Check if this is a Suumo URL
+        if 'suumo.jp' in url:
+            # Import Suumo scraper
+            from core_scraper import scrape_suumo_property
+            result = scrape_suumo_property(
+                session, url,
+                config=config,
+                logger=logger,
+                session_pool=session_pool,
+                image_rate_limiter=image_rate_limiter
+            )
+        else:
+            # Original Homes.co.jp scraping
+            # Extract property details with session pool for images, ward info, and listing price
+            result = extract_property_details(
+                session, url, "https://www.homes.co.jp", 
+                config=config, logger=logger,
+                session_pool=session_pool, 
+                image_rate_limiter=image_rate_limiter,
+                ward=ward,
+                listing_price=listing_price  # Pass the listing price
+            )
         
         # Handle case where property was skipped (no interior photos)
         if result is None:

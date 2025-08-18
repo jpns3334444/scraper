@@ -6,6 +6,7 @@ import boto3
 import re
 from datetime import datetime
 import time
+from decimal import Decimal
 
 def setup_dynamodb_client(logger=None):
     """Setup DynamoDB client and table reference"""
@@ -408,15 +409,28 @@ def scan_unprocessed_urls(table, logger=None):
             logger.error(f"Failed to scan unprocessed URLs: {str(e)}")
         return []
 
-def load_all_urls_from_tracking_table(table, logger=None):
-    """Load ALL URLs from tracking table into a set for fast lookups"""
-    if logger:
-        logger.info("Loading all URLs from tracking table...")
+def load_all_urls_from_tracking_table(table, logger=None, ward=None, exclude_ward=None):
+    """Load URLs from tracking table into a set for fast lookups. If ward is specified, only load URLs from that ward. If exclude_ward is specified, exclude URLs from that ward."""
+    if ward:
+        if logger:
+            logger.info(f"Loading URLs for ward '{ward}' from tracking table...")
+    elif exclude_ward:
+        if logger:
+            logger.info(f"Loading URLs excluding ward '{exclude_ward}' from tracking table...")
+    else:
+        if logger:
+            logger.info("Loading all URLs from tracking table...")
     
     tracking_urls = set()
     
     try:
         scan_kwargs = {}
+        
+        # Add filter expression based on parameters
+        if ward:
+            scan_kwargs['FilterExpression'] = boto3.dynamodb.conditions.Attr('ward').eq(ward)
+        elif exclude_ward:
+            scan_kwargs['FilterExpression'] = boto3.dynamodb.conditions.Attr('ward').ne(exclude_ward)
         
         items_processed = 0
         while True:
@@ -433,8 +447,12 @@ def load_all_urls_from_tracking_table(table, logger=None):
                 break
             scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
         
-        if logger:
-            logger.debug(f"Loaded {items_processed} URLs from tracking table")
+        if ward:
+            if logger:
+                logger.debug(f"Loaded {items_processed} URLs for ward '{ward}' from tracking table")
+        else:
+            if logger:
+                logger.debug(f"Loaded {items_processed} URLs from tracking table")
         
         return tracking_urls
         

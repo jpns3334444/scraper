@@ -81,6 +81,28 @@ document.addEventListener('DOMContentLoaded', async function() {
         propertiesManager.applyFilters();
     };
     
+    window.selectAllColumnFilter = (column) => {
+        console.log('Select All clicked for column:', column);
+        const checkboxes = document.querySelectorAll(`#${column}-filter-options input[type="checkbox"]`);
+        console.log('Found checkboxes:', checkboxes.length);
+        checkboxes.forEach(cb => cb.checked = true);
+        appState.currentFilters[column] = Array.from(checkboxes).map(cb => cb.value);
+        propertiesManager.applyFilters();
+    };
+    
+    window.deselectAllColumnFilter = (column) => {
+        const checkboxes = document.querySelectorAll(`#${column}-filter-options input[type="checkbox"]`);
+        checkboxes.forEach(cb => cb.checked = false);
+        appState.currentFilters[column] = [];
+        propertiesManager.applyFilters();
+    };
+
+    window.toggleFilterDropdown = (event, column) => {
+        if (window.app && window.app.filterDropdown) {
+            window.app.filterDropdown.toggle(event, column);
+        }
+    };
+    
     // Initialize components
     try {
         console.log('[DEBUG] ==========================================');

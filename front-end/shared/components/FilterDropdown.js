@@ -6,13 +6,27 @@
 class FilterDropdown {
     constructor() {
         this.activeDropdown = null;
+        
+        // Close dropdowns when clicking outside
+        document.addEventListener('click', (event) => {
+            if (!event.target.closest('.filter-dropdown')) {
+                this.closeAll();
+            }
+        });
+    }
+    
+    closeAll() {
+        document.querySelectorAll('.filter-dropdown-content').forEach(dropdown => {
+            dropdown.style.display = 'none';
+        });
+        this.activeDropdown = null;
     }
     
     toggle(event, column) {
         event.stopPropagation();
         
         // Close other dropdowns
-        document.querySelectorAll('.filter-dropdown').forEach(dropdown => {
+        document.querySelectorAll('.filter-dropdown-content').forEach(dropdown => {
             if (dropdown.id !== `${column}Filter`) {
                 dropdown.style.display = 'none';
             }
@@ -26,44 +40,6 @@ class FilterDropdown {
         }
     }
     
-    populateFilter(column, values) {
-        const dropdown = document.getElementById(`${column}Filter`);
-        if (!dropdown) return;
-        
-        let html = `
-            <div class="filter-options">
-                <label><input type="checkbox" class="filter-all" onchange="this.toggleAll('${column}')"> All</label>
-        `;
-        
-        values.forEach(value => {
-            html += `
-                <label>
-                    <input type="checkbox" value="${value}" onchange="this.applyFilter('${column}')">
-                    ${value}
-                </label>
-            `;
-        });
-        
-        html += `
-                <div class="filter-actions">
-                    <button onclick="this.clearFilter('${column}')">Clear</button>
-                    <button onclick="this.applyFilter('${column}')">Apply</button>
-                </div>
-            </div>
-        `;
-        
-        dropdown.innerHTML = html;
-    }
-    
-    applyFilter(column) {
-        // Implementation would trigger filter application
-        console.log(`Applying filter for column: ${column}`);
-    }
-    
-    clearFilter(column) {
-        // Implementation would clear filter
-        console.log(`Clearing filter for column: ${column}`);
-    }
 }
 
 // Global functions for backwards compatibility with onclick handlers

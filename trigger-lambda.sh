@@ -105,6 +105,8 @@ while [[ $# -gt 0 ]]; do
     --debug) LOG_LEVEL="DEBUG"; PAYLOAD="$PAYLOAD,\"log_level\":\"DEBUG\""; shift ;;
     --log-level) LOG_LEVEL="$2"; PAYLOAD="$PAYLOAD,\"log_level\":\"$2\""; shift 2 ;;
     --sync) SYNC_MODE=true; shift ;;
+    suumo) PAYLOAD="$PAYLOAD,\"source\":\"suumo\""; SOURCE_NAME="suumo"; shift ;;
+    lifull|homes) PAYLOAD="$PAYLOAD,\"source\":\"homes\""; SOURCE_NAME="homes"; shift ;;
     --help)
       echo "Usage: $0 <function-name> [OPTIONS]"
       echo "   or: $0 --function <function-name> [OPTIONS]"
@@ -112,6 +114,9 @@ while [[ $# -gt 0 ]]; do
       echo "Examples:"
       echo "  $0 property-processor -p 5"
       echo "  $0 property_processor -p 5    # underscores converted to hyphens"
+      echo "  $0 url-collector               # runs both Homes + Suumo in parallel"
+      echo "  $0 url-collector suumo         # runs only Suumo"
+      echo "  $0 url-collector lifull        # runs only Homes (Lifull)"
       echo "  $0 url-collector --max-properties 1000"
       echo ""
       echo "Available Functions: ${!FUNCTION_MAP[*]}"
@@ -131,6 +136,12 @@ while [[ $# -gt 0 ]]; do
       echo "  --debug                     Enable debug logging"
       echo "  --log-level LEVEL           Set log level"
       echo "  --sync                      Wait for completion"
+      echo ""
+      echo "URL Collector Sources:"
+      echo "  suumo                       Run only Suumo scraper"
+      echo "  lifull|homes                Run only Homes/Lifull scraper"
+      echo "  (no source)                 Run both sources in parallel (default)"
+      echo ""
       echo "  --help                      Show this help message"
       exit 0
       ;;
@@ -151,8 +162,81 @@ fi
 
 PAYLOAD="$PAYLOAD}"
 
+# Special handling for url-collector - launch both Homes and Suumo by default
+if [[ "$FUNCTION_NAME" == "url-collector" ]] && [[ -z "${PARALLEL_INSTANCES:-}" ]] && [[ "$PAYLOAD" != *"source"* ]] && [[ -z "${SOURCE_NAME:-}" ]]; then
+    echo "🔗 Triggering dual URL collection (Homes + Suumo) with session base: $SESSION_ID"
+    echo "📦 Using S3 bucket: $OUTPUT_BUCKET"
+    
+    # Launch Homes.co.jp collector
+    HOMES_SESSION_ID="${SESSION_ID}-homes"
+    HOMES_PAYLOAD=$(echo "$PAYLOAD" | jq --arg sid "$HOMES_SESSION_ID" '.session_id = $sid')
+    
+    echo "  🏠 Launching Homes.co.jp collector (session: $HOMES_SESSION_ID)..."
+    aws lambda invoke \
+        --function-name "$LAMBDA_FUNCTION" \
+        --invocation-type "Event" \
+        --payload "$HOMES_PAYLOAD" \
+        --cli-binary-format raw-in-base64-out \
+        --region "$REGION" \
+        /tmp/url-collector-homes-response.json >/dev/null 2>&1 || { echo "❌ Failed to trigger Homes collector"; exit 1; }
+    echo "  ✓ Homes collector launched"
+    
+    # Launch Suumo collector  
+    SUUMO_SESSION_ID="${SESSION_ID}-suumo"
+    SUUMO_PAYLOAD=$(echo "$PAYLOAD" | jq --arg sid "$SUUMO_SESSION_ID" --arg source "suumo" '.session_id = $sid | .source = $source')
+    
+    echo "  🏢 Launching Suumo collector (session: $SUUMO_SESSION_ID)..."
+    aws lambda invoke \
+        --function-name "$LAMBDA_FUNCTION" \
+        --invocation-type "Event" \
+        --payload "$SUUMO_PAYLOAD" \
+        --cli-binary-format raw-in-base64-out \
+        --region "$REGION" \
+        /tmp/url-collector-suumo-response.json >/dev/null 2>&1 || { echo "❌ Failed to trigger Suumo collector"; exit 1; }
+    echo "  ✓ Suumo collector launched"
+    
+    echo "✅ Both collectors launched successfully"
+    echo "📊 Streaming logs for both collectors..."
+    
+    # Stream logs for both sessions
+    sleep 2 # Give Lambda time to start
+    
+    # Extract base timestamp for log filtering
+    BASE_TIMESTAMP=$(echo "$SESSION_ID" | sed 's/.*-//')
+    
+    aws logs tail "/aws/lambda/$LAMBDA_FUNCTION" \
+      --region "$REGION" \
+      --follow \
+      --since 30s \
+      --filter-pattern "\"${BASE_TIMESTAMP}\"" \
+      --format short 2>/dev/null &
+    SESSION_PID=$!
+    
+    # Also stream ERROR logs in parallel
+    aws logs tail "/aws/lambda/$LAMBDA_FUNCTION" \
+      --region "$REGION" \
+      --follow \
+      --since 30s \
+      --filter-pattern "ERROR" \
+      --format short 2>/dev/null &
+    ERROR_PID=$!
+    
+    # Wait for either process to finish or user interrupt
+    wait $SESSION_PID $ERROR_PID 2>/dev/null || echo "Log streaming ended"
+    
+    # Clean up background processes
+    kill $SESSION_PID $ERROR_PID 2>/dev/null || true
+    
+    echo "✨ Done!"
+    exit 0
+fi
+
 # Trigger Lambda (based on working url-collector pattern)
-echo "🔗 Triggering $FUNCTION_NAME with session: $SESSION_ID (Log level: $LOG_LEVEL)"
+if [[ -n "${SOURCE_NAME:-}" ]]; then
+    echo "🔗 Triggering $FUNCTION_NAME (${SOURCE_NAME} only) with session: $SESSION_ID (Log level: $LOG_LEVEL)"
+else
+    echo "🔗 Triggering $FUNCTION_NAME with session: $SESSION_ID (Log level: $LOG_LEVEL)"
+fi
 echo "📦 Using S3 bucket: $OUTPUT_BUCKET"
 if [[ "${SYNC_MODE:-false}" == "true" ]]; then
   echo "⏳ Running in synchronous mode..."
