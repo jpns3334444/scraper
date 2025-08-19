@@ -37,15 +37,19 @@ class PropertiesManager {
             this.updateFavoriteStatus(this.state.allProperties);
             this.state.filteredProperties = [...this.state.allProperties];
             
-            // Apply filters INCLUDING hidden filter
-            this.applyFilters();
-            
             DOMUtils.hideElement('loading');
             DOMUtils.showElement('tableContainer');
             
+            // First populate the filter dropdowns with checkboxes
+            // This will also restore the checked state from saved filters
+            this.populateColumnFilters();
+            
+            // Then apply filters INCLUDING hidden filter
+            // Use skipSave=true on initial load to avoid overwriting just-restored filters
+            this.applyFilters(true);
+            
             this.applySort();
             this.renderCurrentPage();
-            this.populateColumnFilters();
             
             cursor = firstPage.nextCursor;
             
@@ -111,11 +115,17 @@ class PropertiesManager {
         });
     }
     
-    applyFilters() {
+    applyFilters(skipSave = false) {
         const filters = this.state.currentFilters;
+        
+        // Save filters to localStorage (unless we're just restoring them)
+        if (!skipSave) {
+            StorageManager.saveFilters(filters);
+        }
         
         console.log('[DEBUG] Applying filters, hidden count:', this.state.hidden.size);
         console.log('[DEBUG] Hidden IDs:', Array.from(this.state.hidden));
+        console.log('[DEBUG] Current filters:', filters);
         
         this.state.filteredProperties = this.state.allProperties.filter(property => {
             // Ward filter
@@ -300,11 +310,15 @@ class PropertiesManager {
         const optionsContainer = document.getElementById(`${column}-filter-options`);
         if (!optionsContainer || !values.length) return;
         
+        // Get saved filters to know which checkboxes to check
+        const savedFilters = this.state.currentFilters[column] || [];
+        
         let html = '';
         values.forEach(value => {
+            const isChecked = savedFilters.includes(value) ? 'checked' : '';
             html += `
                 <label>
-                    <input type="checkbox" value="${value}">
+                    <input type="checkbox" value="${value}" ${isChecked}>
                     ${value}
                 </label>
             `;

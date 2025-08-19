@@ -2363,7 +2363,12 @@ def scrape_suumo_property(session, property_url, retries=3, config=None, logger=
                 data['monthly_costs'] = monthly_costs
                 data['total_monthly_costs'] = monthly_costs
             
-            # Note: price_per_sqm calculation is handled later with proper unit conversion
+            # Calculate price_per_sqm for SUUMO properties (uses 'size_text' not 'size_sqm_text')
+            if data.get('price') and data.get('size_sqm') and data['price'] > 0 and data['size_sqm'] > 0:
+                calculated_price_per_sqm = (data['price'] * 10000) / data['size_sqm']
+                data['price_per_sqm'] = calculated_price_per_sqm
+                if logger:
+                    logger.debug(f"Calculated SUUMO price_per_sqm: {calculated_price_per_sqm:.0f} yen/sqm")
             
             # Extract images - comprehensive approach
             image_urls = []

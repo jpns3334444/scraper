@@ -72,6 +72,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         const checkboxes = document.querySelectorAll(`#${column}-filter-options input[type="checkbox"]:checked`);
         appState.currentFilters[column] = Array.from(checkboxes).map(cb => cb.value);
         propertiesManager.applyFilters();
+        // Filters are now saved inside applyFilters()
     };
     
     window.clearColumnFilter = (column) => {
@@ -79,6 +80,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         const checkboxes = document.querySelectorAll(`#${column}-filter-options input[type="checkbox"]`);
         checkboxes.forEach(cb => cb.checked = false);
         propertiesManager.applyFilters();
+        // Filters are now saved inside applyFilters()
     };
     
     window.selectAllColumnFilter = (column) => {
@@ -88,6 +90,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         checkboxes.forEach(cb => cb.checked = true);
         appState.currentFilters[column] = Array.from(checkboxes).map(cb => cb.value);
         propertiesManager.applyFilters();
+        // Filters are now saved inside applyFilters()
     };
     
     window.deselectAllColumnFilter = (column) => {
@@ -95,6 +98,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         checkboxes.forEach(cb => cb.checked = false);
         appState.currentFilters[column] = [];
         propertiesManager.applyFilters();
+        // Filters are now saved inside applyFilters()
     };
 
     window.toggleFilterDropdown = (event, column) => {
@@ -158,10 +162,16 @@ document.addEventListener('DOMContentLoaded', async function() {
         favoritesManager.updateFavoritesCount();
         hiddenManager.updateHiddenCount();
         
+        // Load saved filters from localStorage
+        const savedFilters = StorageManager.loadFilters();
+        appState.restoreFilters(savedFilters);
+        console.log('[DEBUG] Restored filters from localStorage:', savedFilters);
+        
         console.log('[DEBUG] ==========================================');
         console.log('[DEBUG] STEP 3: Loading properties...');
         console.log('[DEBUG] ==========================================');
         console.log('[DEBUG] Hidden items that will be filtered:', Array.from(appState.hidden));
+        console.log('[DEBUG] Active filters:', appState.currentFilters);
         
         // NOW load properties - they will be filtered automatically based on hidden items
         await propertiesManager.loadAllProperties();

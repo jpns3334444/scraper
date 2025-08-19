@@ -147,6 +147,11 @@ class AppState {
         this.emit('filters', this.currentFilters);
     }
     
+    restoreFilters(filters) {
+        // Restore filters without emitting events (used during initialization)
+        this.currentFilters = { ...filters };
+    }
+    
     hasActiveFilters() {
         return Object.values(this.currentFilters).some(filter => 
             Array.isArray(filter) ? filter.length > 0 : filter

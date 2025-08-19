@@ -65,4 +65,21 @@ class StorageManager {
         const saved = this.loadFromLocalStorage(`hidden_${userId}`);
         return saved ? new Set(saved) : new Set();
     }
+    
+    static saveFilters(filters) {
+        const userId = this.getUserId();
+        this.saveToLocalStorage(`filters_${userId}`, filters);
+    }
+    
+    static loadFilters() {
+        const userId = this.getUserId();
+        const saved = this.loadFromLocalStorage(`filters_${userId}`);
+        // Return default filter structure if nothing saved
+        return saved || {
+            ward: [],
+            floor: [],
+            primary_light: [],
+            verdict: []
+        };
+    }
 }
