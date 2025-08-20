@@ -80,24 +80,7 @@ def generate_image_urls(property_item):
                 except Exception as e:
                     logger.warning(f"Failed to generate presigned URL for {filename}: {e}")
                     continue
-    else:
-        # Fallback: try to generate URLs based on expected pattern
-        # Pattern: raw/{date}/images/{property_id}_{index}.jpg
-        for i in range(3):  # Try first 3 images
-            s3_key = f"raw/{date_part}/images/{property_id}_{i}.jpg"
-            try:
-                # Check if object exists first
-                s3_client.head_object(Bucket=s3_bucket, Key=s3_key)
-                # Generate presigned URL (valid for 1 hour)
-                presigned_url = s3_client.generate_presigned_url(
-                    'get_object',
-                    Params={'Bucket': s3_bucket, 'Key': s3_key},
-                    ExpiresIn=3600
-                )
-                image_urls.append(presigned_url)
-            except Exception as e:
-                # Object doesn't exist or other error, skip
-                continue
+    # Fallback image path logic removed - only using photo_filenames from DynamoDB
     
     return image_urls
 
@@ -295,11 +278,17 @@ def lambda_handler(event, context):
         
         while len(items) < limit and scan_count < max_scans:
             # Add price filtering to DynamoDB scan - filter out properties over 3000 万円 (30M yen)
-            filter_expr = Attr('sort_key').eq('META') & (Attr('price').lt(3000) | Attr('price').not_exists())
+            # Also filter out occupied properties - only show vacant or immediately available
+            filter_expr = (Attr('sort_key').eq('META') & 
+                          (Attr('price').lt(3000) | Attr('price').not_exists()) &
+                          (Attr('current_occupancy').not_exists() | 
+                           Attr('current_occupancy').eq('空室') |
+                           Attr('current_occupancy').eq('即時') |
+                           Attr('current_occupancy').eq('即入居可')))
             
             scan_kwargs = {
                 'FilterExpression': filter_expr,
-                'ProjectionExpression': 'PK, price, size_sqm, total_sqm, ward, ward_discount_pct, img_url, listing_url, #url_attr, verdict, recommendation, property_id, analysis_date, photo_filenames, price_per_sqm, total_monthly_costs, ward_median_price_per_sqm, closest_station, station_distance_minutes, #floor_attr, building_age_years, primary_light',
+                'ProjectionExpression': 'PK, price, size_sqm, total_sqm, ward, ward_discount_pct, img_url, listing_url, #url_attr, verdict, recommendation, property_id, analysis_date, photo_filenames, price_per_sqm, total_monthly_costs, ward_median_price_per_sqm, closest_station, station_distance_minutes, #floor_attr, building_age_years, primary_light, current_occupancy',
                 'ExpressionAttributeNames': {
                     '#url_attr': 'url',
                     '#floor_attr': 'floor'
@@ -357,8 +346,8 @@ def lambda_handler(event, context):
             # If listing_url is still empty, try to reconstruct from property_id
             elif not property_data.get('listing_url') and property_data.get('property_id'):
                 prop_id = property_data['property_id']
-                if '#' in prop_id and '_' in prop_id:
-                    homes_id = prop_id.split('_')[-1]
+                if '#' in prop_id:
+                    homes_id = prop_id.split('#')[1]  # New simplified format: PROP#78201604
                     if homes_id.isdigit():
                         property_data['listing_url'] = f"https://www.homes.co.jp/mansion/b-{homes_id}"
             

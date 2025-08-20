@@ -76,9 +76,8 @@ def extract_property_id_from_url(url):
 
 def create_property_id_key(raw_property_id, date_str=None):
     """Create property_id key for DynamoDB"""
-    if not date_str:
-        date_str = datetime.now().strftime('%Y%m%d')
-    return f"PROP#{date_str}_{raw_property_id}"
+    # Simplified: just use raw ID without date to prevent duplicates
+    return f"PROP#{raw_property_id}"
 
 def load_all_existing_properties(table, logger=None):
     """Load all existing properties from DynamoDB"""
@@ -99,8 +98,13 @@ def load_all_existing_properties(table, logger=None):
             
             for item in items:
                 property_id = item.get('property_id', '')
-                if property_id and '#' in property_id and '_' in property_id:
-                    raw_property_id = property_id.split('#')[1].split('_')[1]
+                if property_id and '#' in property_id:
+                    # Handle both old format (PROP#date_id) and new format (PROP#id)
+                    parts = property_id.split('#')[1]
+                    if '_' in parts:
+                        raw_property_id = parts.split('_')[1]  # Old format
+                    else:
+                        raw_property_id = parts  # New format
                     if raw_property_id:
                         existing_properties[raw_property_id] = {
                             'property_id': item.get('property_id'),
@@ -227,8 +231,8 @@ def create_complete_property_record(property_data, config, logger=None, existing
                 return None
         else:
             # Extract raw_property_id from existing property_id
-            if '#' in property_id and '_' in property_id:
-                raw_property_id = property_id.split('#')[1].split('_')[1]
+            if '#' in property_id:
+                raw_property_id = property_id.split('#')[1]
         
         # Check for existing property to track price changes
         current_price = int(property_data.get('price', 0)) if property_data.get('price') else 0

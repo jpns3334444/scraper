@@ -595,54 +595,61 @@ def compare_favorites(event, user_id):
                 "body": json.dumps({'error': 'Need at least 2 properties to compare'})
             }
         
-        # Call the favorite_analyzer Lambda to handle comparison
+        # Generate comparison ID with timestamp for immediate return
+        comparison_timestamp = datetime.utcnow()
+        comparison_id = f"COMPARISON_{comparison_timestamp.strftime('%Y-%m-%d_%H-%M-%S')}"
+        
+        # Create initial comparison record with processing status
+        print(f"[DEBUG] Creating initial comparison record: {comparison_id}")
+        preferences_table.put_item(
+            Item={
+                'user_id': user_email,
+                'property_id': comparison_id,
+                'preference_type': 'favorite',  # Required for GSI query
+                'analysis_status': 'processing',
+                'created_at': comparison_timestamp.isoformat(),
+                'comparison_date': comparison_timestamp.isoformat(),
+                'property_count': len(property_ids),
+                'property_summary': {
+                    'compared_properties': property_ids,
+                    'property_count': len(property_ids),
+                    'comparison_date': comparison_timestamp.isoformat()
+                }
+            }
+        )
+        
+        # Call the favorite_analyzer Lambda asynchronously
         analyzer_payload = {
             'operation': 'compare_favorites',
             'user_id': user_email,
-            'property_ids': property_ids
+            'property_ids': property_ids,
+            'comparison_id': comparison_id  # Pass the pre-generated ID
         }
         
-        print(f"[DEBUG] Invoking favorite_analyzer Lambda with payload: {analyzer_payload}")
+        print(f"[DEBUG] Invoking favorite_analyzer Lambda asynchronously with payload: {analyzer_payload}")
         
         response = lambda_client.invoke(
             FunctionName=os.environ.get('FAVORITE_ANALYZER_FUNCTION', 'tokyo-real-estate-ai-favorite-analyzer'),
-            InvocationType='RequestResponse',
+            InvocationType='Event',  # Changed to async invocation
             Payload=json.dumps(analyzer_payload)
         )
         
-        # Parse the response
-        response_payload = json.loads(response['Payload'].read())
-        print(f"[DEBUG] Favorite analyzer response: {response_payload}")
+        print(f"[DEBUG] Favorite analyzer invoked asynchronously, response status: {response['StatusCode']}")
         
-        if response_payload.get('statusCode') == 200:
-            result = json.loads(response_payload.get('body', '{}'))
-            return {
-                "statusCode": 200,
-                "headers": {
-                    "Content-Type": "application/json",
-                    "Access-Control-Allow-Origin": origin_header,
-                    "Access-Control-Allow-Credentials": "true"
-                },
-                "body": json.dumps({
-                    'comparison_id': result.get('comparison_id'),
-                    'status': result.get('status'),
-                    'property_count': result.get('property_count')
-                })
-            }
-        else:
-            error_body = json.loads(response_payload.get('body', '{}'))
-            return {
-                "statusCode": 500,
-                "headers": {
-                    "Content-Type": "application/json",
-                    "Access-Control-Allow-Origin": origin_header,
-                    "Access-Control-Allow-Credentials": "true"
-                },
-                "body": json.dumps({
-                    'error': error_body.get('error', 'Comparison failed'),
-                    'comparison_id': error_body.get('comparison_id')
-                })
-            }
+        # Return immediately with processing status
+        return {
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": origin_header,
+                "Access-Control-Allow-Credentials": "true"
+            },
+            "body": json.dumps({
+                'comparison_id': comparison_id,
+                'status': 'processing',
+                'property_count': len(property_ids)
+            })
+        }
         
     except Exception as e:
         print(f"[ERROR] compare_favorites failed: {e}")

@@ -49,13 +49,15 @@ class PropertiesView {
                             <span class="sort-arrows" id="sort-total_monthly_costs">▼</span>
                         </div>
                     </th>
-                    <th onclick="sortTable('ward')">
+                    <th>
                         <div class="column-header">
-                            Ward
-                            <span class="sort-arrows" id="sort-ward">▼</span>
-                            <div class="filter-dropdown">
+                            <span onclick="sortTable('ward')" style="cursor: pointer; flex: 1;">
+                                Ward
+                                <span class="sort-arrows" id="sort-ward">▼</span>
+                            </span>
+                            <div class="filter-dropdown" onclick="event.stopPropagation();">
                                 <button class="filter-btn" onclick="toggleFilterDropdown(event, 'ward')" id="filter-btn-ward">▿</button>
-                                <div class="filter-dropdown-content" id="wardFilter">
+                                <div class="filter-dropdown-content" id="wardFilter" onclick="event.stopPropagation();">
                                     <div class="filter-select-actions">
                                         <button onclick="event.stopPropagation(); selectAllColumnFilter('ward')">Select All</button>
                                         <button onclick="event.stopPropagation(); deselectAllColumnFilter('ward')">Deselect All</button>
@@ -87,13 +89,15 @@ class PropertiesView {
                             <span class="sort-arrows" id="sort-station_distance_minutes">▼</span>
                         </div>
                     </th>
-                    <th class="sortable" onclick="sortTable('floor')" style="text-align: center;">
+                    <th class="sortable" style="text-align: center;">
                         <div class="column-header">
-                            Floor
-                            <span class="sort-arrows" id="sort-floor">▼</span>
-                            <div class="filter-dropdown">
+                            <span onclick="sortTable('floor')" style="cursor: pointer; flex: 1;">
+                                Floor
+                                <span class="sort-arrows" id="sort-floor">▼</span>
+                            </span>
+                            <div class="filter-dropdown" onclick="event.stopPropagation();">
                                 <button class="filter-btn" onclick="toggleFilterDropdown(event, 'floor')" id="filter-btn-floor">▿</button>
-                                <div class="filter-dropdown-content" id="floorFilter">
+                                <div class="filter-dropdown-content" id="floorFilter" onclick="event.stopPropagation();">
                                     <div class="filter-select-actions">
                                         <button onclick="event.stopPropagation(); selectAllColumnFilter('floor')">Select All</button>
                                         <button onclick="event.stopPropagation(); deselectAllColumnFilter('floor')">Deselect All</button>
@@ -122,9 +126,9 @@ class PropertiesView {
                     <th>
                         <div class="column-header">
                             Light
-                            <div class="filter-dropdown">
+                            <div class="filter-dropdown" onclick="event.stopPropagation();">
                                 <button class="filter-btn" onclick="toggleFilterDropdown(event, 'primary_light')" id="filter-btn-primary_light">▿</button>
-                                <div class="filter-dropdown-content" id="primary_lightFilter">
+                                <div class="filter-dropdown-content" id="primary_lightFilter" onclick="event.stopPropagation();">
                                     <div class="filter-select-actions">
                                         <button onclick="event.stopPropagation(); selectAllColumnFilter('primary_light')">Select All</button>
                                         <button onclick="event.stopPropagation(); deselectAllColumnFilter('primary_light')">Deselect All</button>
@@ -141,9 +145,9 @@ class PropertiesView {
                     <th>
                         <div class="column-header">
                             Verdict
-                            <div class="filter-dropdown">
+                            <div class="filter-dropdown" onclick="event.stopPropagation();">
                                 <button class="filter-btn" onclick="toggleFilterDropdown(event, 'verdict')" id="filter-btn-verdict">▿</button>
-                                <div class="filter-dropdown-content" id="verdictFilter">
+                                <div class="filter-dropdown-content" id="verdictFilter" onclick="event.stopPropagation();">
                                     <div class="filter-select-actions">
                                         <button onclick="event.stopPropagation(); selectAllColumnFilter('verdict')">Select All</button>
                                         <button onclick="event.stopPropagation(); deselectAllColumnFilter('verdict')">Deselect All</button>

@@ -32,7 +32,7 @@ def lambda_handler(event, context):
                 body = json.loads(record['body'])
                 analyze(body['user_id'], body['property_id'])
         elif event.get('operation') == 'compare_favorites':  # Comparison operation
-            return compare_favorites(event['user_id'], event['property_ids'], request_id)
+            return compare_favorites(event['user_id'], event['property_ids'], request_id, event.get('comparison_id'))
         else:  # Direct invocation for single analysis
             analyze(event['user_id'], event['property_id'])
             
@@ -141,18 +141,8 @@ def build_property_data_package(property_id):
     # Convert Decimal to float for easier handling
     enriched_data = json.loads(json.dumps(enriched_data, default=decimal_default))
     
-    # Get raw scraped data from S3
+    # Raw data functionality removed - using only enriched DynamoDB data
     raw_data = {}
-    try:
-        date_part = property_id.split('#')[1].split('_')[0]
-        formatted_date = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]}"
-        numeric_id = property_id.split('#')[1].split('_')[1]
-        s3_key = f"raw/{formatted_date}/properties/{numeric_id}.json"
-        
-        response = s3_client.get_object(Bucket=bucket, Key=s3_key)
-        raw_data = json.loads(response['Body'].read())
-    except Exception as e:
-        logger.warning(f"Could not load raw data: {e}")
     
     # Generate presigned URLs for images
     image_urls = []
@@ -253,8 +243,9 @@ ENRICHED ANALYTICS:
 BUYER PRIORITIES:
 - Wants a good deal (fair or below-market price)
 - Willing to accept older/cosmetic issues for value
-- Needs structurally sound building (post-1981 preferred)
-- Commute time to major hubs is important
+- Needs structurally sound building (needs to either be newer than 1981, or a 1960-70s buildings that indicate being "tanks".. thick concrete, etc.)
+- Train commute time to major hubs is important, but willing to walk 20+ minutes to said station
+- Walk up apartments are not an issue at all
 
 Please provide your analysis in MARKDOWN FORMAT with the following structure:
 
@@ -450,7 +441,7 @@ def get_openai_api_key():
             return fallback_key
         raise ValueError("No OpenAI API key available")
 
-def compare_favorites(user_id, property_ids, request_id="unknown"):
+def compare_favorites(user_id, property_ids, request_id="unknown", comparison_id=None):
     """Compare multiple favorite properties and return analysis"""
     print(f"[DEBUG] [{request_id}] Comparing favorites for user_id: {user_id}, properties: {property_ids}")
     
@@ -460,9 +451,12 @@ def compare_favorites(user_id, property_ids, request_id="unknown"):
     if len(property_ids) < 2:
         raise ValueError("Need at least 2 properties to compare")
     
-    # Generate comparison ID with timestamp
+    # Use provided comparison ID or generate new one
     comparison_timestamp = datetime.utcnow()
-    comparison_id = f"COMPARISON_{comparison_timestamp.strftime('%Y-%m-%d_%H-%M-%S')}"
+    if not comparison_id:
+        comparison_id = f"COMPARISON_{comparison_timestamp.strftime('%Y-%m-%d_%H-%M-%S')}"
+    
+    print(f"[DEBUG] [{request_id}] Using comparison_id: {comparison_id}")
     
     try:
         # Collect all property data and individual analyses
@@ -528,23 +522,35 @@ def compare_favorites(user_id, property_ids, request_id="unknown"):
             'comparison_date': comparison_timestamp.isoformat()
         }
         
-        # Store comparison results in preferences table
-        preferences_table.put_item(
-            Item={
-                'user_id': user_id,
-                'property_id': comparison_id,
-                'preference_type': 'favorite',  # Required for GSI query to find it
-                'analysis_status': 'completed',
-                'analysis_completed_at': comparison_timestamp.isoformat(),
-                'analysis_result': analysis_for_dynamo,
-                'property_summary': property_summary,
-                'comparison_date': comparison_timestamp.isoformat(),
-                'property_count': len(properties_data),
-                'created_at': comparison_timestamp.isoformat()
-            }
+        # Debug what we're storing before updating
+        print(f"[DEBUG] Storing comparison results:")
+        print(f"[DEBUG] - comparison_id: {comparison_id}")
+        print(f"[DEBUG] - user_id: {user_id}")
+        print(f"[DEBUG] - analysis_status: completed")
+        print(f"[DEBUG] - analysis_result keys: {list(analysis_for_dynamo.keys())}")
+        print(f"[DEBUG] - property_summary: {property_summary}")
+        
+        # Update existing comparison record with results
+        update_result = preferences_table.update_item(
+            Key={'user_id': user_id, 'property_id': comparison_id},
+            UpdateExpression='''
+                SET analysis_status = :status,
+                    analysis_completed_at = :completed,
+                    analysis_result = :result,
+                    property_summary = :summary
+            ''',
+            ExpressionAttributeValues={
+                ':status': 'completed',
+                ':completed': comparison_timestamp.isoformat(),
+                ':result': analysis_for_dynamo,
+                ':summary': property_summary
+            },
+            ReturnValues='ALL_NEW'
         )
         
-        print(f"[DEBUG] Comparison results stored with ID: {comparison_id}")
+        print(f"[DEBUG] Comparison results stored successfully with ID: {comparison_id}")
+        print(f"[DEBUG] Updated item status: {update_result.get('Attributes', {}).get('analysis_status', 'unknown')}")
+        print(f"[DEBUG] Updated item has analysis_result: {bool(update_result.get('Attributes', {}).get('analysis_result'))}")
         
         return {
             'statusCode': 200,
@@ -560,16 +566,16 @@ def compare_favorites(user_id, property_ids, request_id="unknown"):
         import traceback
         print(f"[ERROR] Traceback: {traceback.format_exc()}")
         
-        # Store error in preferences table
-        preferences_table.put_item(
-            Item={
-                'user_id': user_id,
-                'property_id': comparison_id,
-                'preference_type': 'favorite',  # Required for GSI query to find it
-                'analysis_status': 'failed',
-                'last_error': str(e)[:500],
-                'property_count': len(property_ids),
-                'created_at': comparison_timestamp.isoformat()
+        # Update existing comparison record with error status
+        preferences_table.update_item(
+            Key={'user_id': user_id, 'property_id': comparison_id},
+            UpdateExpression='''
+                SET analysis_status = :status,
+                    last_error = :error
+            ''',
+            ExpressionAttributeValues={
+                ':status': 'failed',
+                ':error': str(e)[:500]
             }
         )
         
@@ -650,7 +656,7 @@ Rank  Property                     Price(M)  Size(m²)  Score  Key Reason
 
 ##💰 Value Comparison
 
-    Best price-to-size (post-1981): [prop ids + quick note]
+    Best price-to-size: [prop ids + quick note]
     Lowest monthly carry: [prop ids + ¥numbers]
     Best station proximity: [prop id, walk mins]
 
@@ -659,12 +665,23 @@ Rank  Property                     Price(M)  Size(m²)  Score  Key Reason
     [Advantage 1]
     [Advantage 2]
     [Advantage 3]
+## ⚠️ Properties to pass on and the main reason why 
+    *[Prop ID]*
+        [summary of why to pass]
+    *[Prop ID]*
+        [summary of why to pass]
+    *[Prop ID]*
+        [summary of why to pass]
+    (etc..)
+##⚠️ Top 3 Strengths/Weaknesses for each property
 
-##⚠️ Runner-up Watchouts
-
-    [Prop ID]: [1–2 risks]
-    [Prop ID]: [1–2 risks]
-
+    *[Prop ID]*
+        [bullet list of top 3 strengths/weakness]
+    *[Prop ID]*
+        [bullet list of top 3 strengths/weakness]
+    *[Prop ID]*
+        [bullet list of top 3 strengths/weakness]
+    (etc..)
 ##🚇 Location Notes
 
     Commute leaders: [props + quick notes]
@@ -676,7 +693,7 @@ Rank  Property                     Price(M)  Size(m²)  Score  Key Reason
     Offer: [¥ and %]
     Plan: [reno / hold / rent notes]
 
-📋 Decision Summary
+##📋 Decision Summary
     [2–3 bullets with the bottom line]
 
 Focus on practical investment advice. Consider price-to-value ratio, location convenience, building condition, and growth potential. Be decisive in your recommendation.

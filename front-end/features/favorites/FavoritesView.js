@@ -63,17 +63,36 @@ class FavoritesView {
             month: 'short', 
             day: 'numeric'
         });
-        const propertyCount = comparisonData.property_count || 0;
-        const comparisonId = comparisonData.property_id || comparisonData.comparison_id;
+        const propertyCount = comparisonData.property_count || 
+                              (comparisonData.property_summary && comparisonData.property_summary.property_count) || 0;
+        
+        // Fixed: Always use property_id for comparisons since that's how they're stored in DynamoDB
+        const comparisonId = comparisonData.property_id;
+        
+        console.log(`[DEBUG] Rendering comparison card: ID=${comparisonId}, status=${comparisonData.analysis_status}, hasResult=${!!comparisonData.analysis_result}`);
+        
+        // Check if comparison is completed - be more flexible with the checks
+        const hasAnalysisResult = comparisonData.analysis_result && 
+                                 (typeof comparisonData.analysis_result === 'object' ? 
+                                  Object.keys(comparisonData.analysis_result).length > 0 : 
+                                  comparisonData.analysis_result.length > 0);
+        const isCompleted = comparisonData.analysis_status === 'completed' && hasAnalysisResult;
+        const isProcessing = comparisonData.analysis_status === 'processing';
+        const isFailed = comparisonData.analysis_status === 'failed';
+        
+        const statusClass = isCompleted ? 'processed' : isProcessing ? 'processing' : 'failed';
+        const statusText = isCompleted ? 'View' : isProcessing ? 'Processing...' : isFailed ? 'Failed' : 'Pending';
+        const titleText = isCompleted ? 'Results' : isProcessing ? 'Processing' : 'Results';
+        const clickable = isCompleted;
         
         return `
-            <div class="comparison-card" data-comparison-id="${comparisonId}" onclick="window.app.favorites.showComparisonResults('${comparisonId}'); event.stopPropagation();" style="cursor: pointer;">
+            <div class="comparison-card" data-comparison-id="${comparisonId}" ${clickable ? `onclick="window.app.favorites.showComparisonResults('${comparisonId}'); event.stopPropagation();" style="cursor: pointer;"` : 'style="cursor: default;"'}>
                 <div class="comparison-icon">📊</div>
                 <div class="comparison-details">
-                    <div class="comparison-title">Results</div>
+                    <div class="comparison-title">${titleText}</div>
                     <div class="comparison-meta">${formattedDate} • ${propertyCount}</div>
                 </div>
-                <button class="comparison-status processed" title="View Comparison Results">View</button>
+                <button class="comparison-status ${statusClass}" title="${isCompleted ? 'View Comparison Results' : statusText}" ${!clickable ? 'disabled' : ''}>${statusText}</button>
                 <button class="remove-comparison-btn" onclick="event.stopPropagation(); window.app.favorites.removeComparison('${comparisonId}')" title="Remove comparison">
                     <svg width="10" height="10" viewBox="0 0 12 12">
                         <path d="M1 1l10 10M11 1L1 11" stroke="currentColor" stroke-width="1.5"/>
@@ -88,12 +107,20 @@ class FavoritesView {
         const price = property.price ? `¥${(property.price * 10000).toLocaleString()}` : '—';
         const size = property.size_sqm || property.total_sqm ? 
             `${Math.round(property.size_sqm || property.total_sqm)}m²` : '—';
+        
+        // URL validation - check if we have a valid URL
         const url = property.listing_url || '#';
+        const hasValidUrl = url !== '#' && url && url.startsWith('http');
+        
+        // Debug logging for URL issues
+        if (property.isFallback && !hasValidUrl) {
+            console.warn(`[DEBUG] Fallback property ${property.property_id} has invalid URL: ${url}`);
+        }
         
         // Get property image
         const imageUrl = await this.getPropertyImage(property);
         const imageHtml = imageUrl ? 
-            `<img src="${imageUrl}" alt="Property image" onError="this.parentElement.classList.add('no-image'); this.parentElement.innerHTML='No Image';">` : 
+            `<img src="${imageUrl}" alt="Property image" onerror="this.parentElement.classList.add('no-image'); this.parentElement.innerHTML='No Image';">` : 
             '<div class="no-image">No Image</div>';
         
         // Determine processing status - Since analysis starts automatically when favorited, default to processing
@@ -112,8 +139,11 @@ class FavoritesView {
         // Default is already 'processing' for pending or processing states
         
         // Card with image on left, essential information
+        // Only make clickable if we have a valid URL
+        const cardClickable = hasValidUrl ? `onclick="openListing(event, '${url}')" style="cursor: pointer;"` : 'style="cursor: default;" title="Original listing not available"';
+        
         return `
-            <div class="favorite-card" data-property-id="${property.property_id}" onclick="openListing(event, '${url}')" style="cursor: pointer;">
+            <div class="favorite-card" data-property-id="${property.property_id}" ${cardClickable}>
                 <div class="favorite-image-section">
                     ${imageHtml}
                 </div>
@@ -126,6 +156,12 @@ class FavoritesView {
                     ${isClickable ? `onclick="window.app.favorites.showAnalysisPopup('${property.property_id}'); event.stopPropagation();"` : 'disabled'}
                     ${isClickable ? 'style="cursor: pointer;"' : ''}
                     title="${isClickable ? 'View Analysis' : statusText}">${statusText}</button>
+                <button class="move-to-hidden-btn" onclick="event.stopPropagation(); window.app.favorites.moveToHidden('${property.property_id}')" title="Move to hidden">
+                    <svg width="14" height="14" viewBox="0 0 14 14">
+                        <path d="M7 2.5C4 2.5 1.5 5 1.5 7s2.5 4.5 5.5 4.5 5.5-2.5 5.5-4.5S10 2.5 7 2.5z" stroke="currentColor" stroke-width="1.2" fill="none"/>
+                        <path d="M2 2L12 12" stroke="currentColor" stroke-width="1.2"/>
+                    </svg>
+                </button>
                 <button class="remove-favorite-btn" onclick="event.stopPropagation(); removeFavorite('${property.property_id}')" title="Remove from favorites">
                     <svg width="12" height="12" viewBox="0 0 12 12">
                         <path d="M1 1l10 10M11 1L1 11" stroke="currentColor" stroke-width="1.5"/>
@@ -135,7 +171,16 @@ class FavoritesView {
     }
     
     async getPropertyImage(property) {
-        // Check if property has image_url or image_key field
+        // Debug logging for fallback properties
+        if (property.isFallback) {
+            console.log(`[DEBUG] Getting image for fallback property ${property.property_id}:`, {
+                image_url: property.image_url,
+                image_key: property.image_key,
+                image_s3_key: property.image_s3_key
+            });
+        }
+        
+        // Check if property has image_url field
         if (property.image_url) {
             return property.image_url;
         } else if (property.image_key || property.image_s3_key) {
@@ -145,10 +190,14 @@ class FavoritesView {
                 if (response.ok) {
                     const data = await response.json();
                     return data.presigned_url || data.image_url;
+                } else {
+                    console.warn(`Failed to fetch image URL for ${property.property_id}: ${response.status}`);
                 }
             } catch (error) {
-                console.error('Failed to get image URL:', error);
+                console.error(`Failed to get image URL for ${property.property_id}:`, error);
             }
+        } else if (property.isFallback) {
+            console.log(`[DEBUG] No image data available for fallback property ${property.property_id}`);
         }
         return null;
     }

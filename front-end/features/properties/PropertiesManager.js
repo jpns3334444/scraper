@@ -21,6 +21,20 @@ class PropertiesManager {
         try {
             console.log('[DEBUG] Starting to load properties...');
             
+            // IMPORTANT: Load saved filters FIRST before anything else
+            // This ensures checkboxes will be properly checked when dropdowns are populated
+            console.log('[FILTER DEBUG MAIN] About to load filters from localStorage');
+            console.log('[FILTER DEBUG MAIN] Current localStorage state:');
+            Object.keys(localStorage).forEach(k => {
+                console.log(`  ${k}:`, localStorage.getItem(k));
+            });
+            
+            const savedFilters = StorageManager.loadFilters();
+            console.log('[FILTER DEBUG MAIN] Loaded filters:', savedFilters);
+            
+            this.state.restoreFilters(savedFilters);
+            console.log('[FILTER DEBUG MAIN] Restored to state:', this.state.currentFilters);
+            
             // IMPORTANT: Wait for hidden items to be loaded first
             // This ensures we filter them out from the beginning
             console.log('[DEBUG] Waiting for hidden items to be fully loaded...');
@@ -41,7 +55,7 @@ class PropertiesManager {
             DOMUtils.showElement('tableContainer');
             
             // First populate the filter dropdowns with checkboxes
-            // This will also restore the checked state from saved filters
+            // Now the saved filters are already in state, so checkboxes will be properly checked
             this.populateColumnFilters();
             
             // Then apply filters INCLUDING hidden filter
@@ -68,7 +82,8 @@ class PropertiesManager {
         if (!cursor) {
             console.log('No more pages to load');
             this.state.setBackgroundLoading(false);
-            this.applyFilters();
+            // Re-apply filters without saving (we're just updating with new data)
+            this.applyFilters(true);
             return;
         }
         
@@ -81,14 +96,18 @@ class PropertiesManager {
             this.updateFavoriteStatus(filteredItems);
             this.state.addProperties(filteredItems);
             
-            // Re-apply filters to include new items (but exclude hidden)
+            // Always re-apply filters when adding new items
+            // This ensures both active filters and hidden items are respected
+            this.state.needsResort = true;
+            
+            // Only update UI if we're on the properties tab and no active filters
+            // (with active filters, we'll update after all pages load)
             if (!this.state.hasActiveFilters()) {
                 // Filter out hidden properties from new items
                 const visibleItems = filteredItems.filter(property => 
                     !this.state.hidden.has(property.property_id)
                 );
                 this.state.filteredProperties.push(...visibleItems);
-                this.state.needsResort = true;
                 
                 if (document.getElementById('properties-tab').classList.contains('active')) {
                     this.updateResultsInfo();
@@ -96,8 +115,6 @@ class PropertiesManager {
                         this.renderPagination();
                     }
                 }
-            } else {
-                this.state.needsResort = true;
             }
             
             // Continue loading
@@ -299,6 +316,8 @@ class PropertiesManager {
         
         this.state.availableFilters = { wards, floors, lights, verdicts };
         
+        console.log('[DEBUG] Populating column filters with saved state:', this.state.currentFilters);
+        
         // Populate the dropdown HTML
         this.populateFilterDropdown('ward', wards);
         this.populateFilterDropdown('floor', floors);
@@ -313,16 +332,29 @@ class PropertiesManager {
         // Get saved filters to know which checkboxes to check
         const savedFilters = this.state.currentFilters[column] || [];
         
+        console.log(`[FILTER DEBUG POPULATE] === Populating ${column} dropdown ===`);
+        console.log(`[FILTER DEBUG POPULATE] this.state.currentFilters:`, this.state.currentFilters);
+        console.log(`[FILTER DEBUG POPULATE] savedFilters for ${column}:`, savedFilters);
+        console.log(`[FILTER DEBUG POPULATE] Available values:`, values);
+        
         let html = '';
+        let checkedCount = 0;
         values.forEach(value => {
-            const isChecked = savedFilters.includes(value) ? 'checked' : '';
+            const isChecked = savedFilters.includes(value);
+            if (isChecked) {
+                console.log(`[FILTER DEBUG POPULATE] Checking checkbox for: ${value}`);
+                checkedCount++;
+            }
             html += `
                 <label>
-                    <input type="checkbox" value="${value}" ${isChecked}>
+                    <input type="checkbox" value="${value}" ${isChecked ? 'checked' : ''}>
                     ${value}
                 </label>
             `;
         });
+        
+        console.log(`[FILTER DEBUG POPULATE] Result: ${checkedCount} of ${values.length} checkboxes will be checked`);
+        console.log(`[FILTER DEBUG POPULATE] === End ${column} ===`);
         
         optionsContainer.innerHTML = html;
     }
@@ -340,11 +372,4 @@ function goToPage(page) {
         window.app.properties.state.setPage(page);
         window.app.properties.renderCurrentPage();
     }
-}
-
-function openListing(event, url) {
-    if (event.target.tagName === 'BUTTON' || event.target.closest('button')) {
-        return;
-    }
-    window.open(url, '_blank');
 }

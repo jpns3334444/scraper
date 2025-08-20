@@ -38,7 +38,10 @@
       "Bash(rm:*)",
       "Bash(python3:*)",
       "Bash(./trigger-lambda.sh:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(./deploy-frontend.sh:*)",
+      "Bash(aws lambda invoke:*)",
+      "Bash(aws logs get-log-events:*)"
     ],
     "deny": []
   }

@@ -243,18 +243,34 @@ class PropertyAPI {
     }
     
     async fetchComparisonAnalysis(userEmail, comparisonId) {
+        console.log(`[API] fetchComparisonAnalysis: userEmail=${userEmail}, comparisonId=${comparisonId}`);
+        
         const url = `${this.favoritesApiUrl}/favorites/analysis/${encodeURIComponent(userEmail)}/${encodeURIComponent(comparisonId)}`;
+        console.log(`[API] fetchComparisonAnalysis URL: ${url}`);
+        
         const response = await fetch(url, {
             headers: { 
                 'X-User-Email': userEmail
             }
         });
         
+        console.log(`[API] fetchComparisonAnalysis response status: ${response.status}`);
+        
         if (!response.ok) {
-            throw new Error(`Failed comparison analysis fetch: ${response.status}`);
+            const errorText = await response.text();
+            console.error(`[API] fetchComparisonAnalysis failed: ${response.status} - ${errorText}`);
+            throw new Error(`Failed comparison analysis fetch: ${response.status} - ${errorText}`);
         }
         
         const data = await response.json();
+        console.log(`[API] fetchComparisonAnalysis response data:`, {
+            hasAnalysisResult: !!data.analysis_result,
+            analysisStatus: data.analysis_status,
+            propertyCount: data.property_count,
+            comparisonDate: data.comparison_date,
+            resultKeys: data.analysis_result ? Object.keys(data.analysis_result) : []
+        });
+        
         return data; // {analysis_result, comparison_date, property_count}
     }
     

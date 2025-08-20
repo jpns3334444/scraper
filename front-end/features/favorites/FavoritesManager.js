@@ -177,6 +177,8 @@ class FavoritesManager {
     
     async loadFavorites() {
         console.log('[DEBUG] Loading favorites tab...');
+        console.log('[DEBUG] User authenticated:', !!this.state.currentUser);
+        console.log('[DEBUG] All properties count:', this.state.allProperties.length);
         
         const favoritesList = document.getElementById('favoritesList');
         if (!favoritesList) return;
@@ -187,10 +189,20 @@ class FavoritesManager {
                 favoritesList.innerHTML = '<div style="padding:40px; text-align:center; color:#999;">Loading favorites...</div>';
                 
                 const userFavorites = await this.api.loadUserFavorites(this.state.currentUser.email);
+                console.log('[DEBUG] Loaded user favorites:', userFavorites.length);
                 
                 // Separate regular favorites from comparisons
                 const regularFavorites = userFavorites.filter(f => !f.property_id.startsWith('COMPARISON_'));
                 const comparisonCards = userFavorites.filter(f => f.property_id.startsWith('COMPARISON_'));
+                console.log('[DEBUG] Regular favorites:', regularFavorites.length, 'Comparisons:', comparisonCards.length);
+                
+                // Debug comparison cards
+                if (comparisonCards.length > 0) {
+                    console.log('[DEBUG] Comparison cards details:');
+                    comparisonCards.forEach((card, index) => {
+                        console.log(`  ${index + 1}. ID: ${card.property_id}, Status: ${card.analysis_status}, HasResult: ${!!card.analysis_result}, ResultKeys: ${card.analysis_result ? Object.keys(card.analysis_result) : 'none'}`);
+                    });
+                }
                 
                 if (regularFavorites.length === 0 && comparisonCards.length === 0) {
                     favoritesList.innerHTML = '<div class="favorites-empty">No favorites yet. Click the ♡ on properties to add them here.</div>';
@@ -199,6 +211,8 @@ class FavoritesManager {
                 
                 // Match favorites with properties from allProperties
                 const favoritedProperties = [];
+                let matchedCount = 0;
+                let fallbackCount = 0;
                 
                 for (const favorite of regularFavorites) {
                     const propertyId = favorite.property_id;
@@ -209,9 +223,27 @@ class FavoritesManager {
                         property.analysis_status = favorite.analysis_status;
                         property.analysis_result = favorite.analysis_result;
                         favoritedProperties.push(property);
+                        matchedCount++;
                     } else {
                         // If property not found in allProperties, use the summary from favorites
                         const summary = favorite.property_summary || {};
+                        
+                        // Try to get original URL from multiple possible sources
+                        const originalUrl = favorite.original_listing_url || 
+                                          favorite.listing_url || 
+                                          summary.listing_url || 
+                                          summary.url ||
+                                          '#';
+                        
+                        // Preserve image data if available
+                        const imageData = {
+                            image_url: favorite.image_url || summary.image_url,
+                            image_key: favorite.image_key || summary.image_key,
+                            image_s3_key: favorite.image_s3_key || summary.image_s3_key
+                        };
+                        
+                        console.log(`[DEBUG] Creating fallback property for ${propertyId} with URL: ${originalUrl}`);
+                        
                         favoritedProperties.push({
                             property_id: propertyId,
                             price: summary.price || 1,
@@ -219,11 +251,13 @@ class FavoritesManager {
                             ward: summary.ward || 'Unknown Ward',
                             closest_station: summary.station || 'Unknown Station',
                             verdict: 'favorited',
-                            listing_url: '#',
+                            listing_url: originalUrl,
                             analysis_status: favorite.analysis_status,
                             analysis_result: favorite.analysis_result,
-                            isFallback: true
+                            isFallback: true,
+                            ...imageData
                         });
+                        fallbackCount++;
                     }
                     
                     // Start polling for properties that are still processing
@@ -231,6 +265,8 @@ class FavoritesManager {
                         this.pollForAnalysisCompletion(propertyId);
                     }
                 }
+                
+                console.log(`[DEBUG] Favorites processing complete - Matched: ${matchedCount}, Fallback: ${fallbackCount}, Total: ${favoritedProperties.length}`);
                 
                 if (this.view) {
                     await this.view.renderFavorites(favoritedProperties, comparisonCards);
@@ -537,13 +573,17 @@ class FavoritesManager {
             // Extract property IDs
             const propertyIds = regularFavorites.map(f => f.property_id);
             
-            // Call comparison API
+            // Call comparison API (now async)
             const result = await this.api.compareAllFavorites(this.state.currentUser.email, propertyIds);
+            console.log('Comparison initiated:', result);
             
-            // Refresh favorites to show new comparison card
+            // Refresh favorites to show new comparison card with processing status
             await this.loadFavorites();
             
-            console.log('Comparison completed:', result);
+            // Start polling for completion if we have a comparison ID
+            if (result.comparison_id) {
+                this.pollForComparisonCompletion(result.comparison_id);
+            }
             
         } catch (error) {
             console.error('Failed to compare favorites:', error);
@@ -561,12 +601,29 @@ class FavoritesManager {
     async showComparisonResults(comparisonId) {
         if (!this.state.currentUser) return;
         
+        console.log(`[DEBUG] showComparisonResults called with comparisonId: ${comparisonId}`);
+        
         try {
             const data = await this.api.fetchComparisonAnalysis(this.state.currentUser.email, comparisonId);
+            console.log(`[DEBUG] fetchComparisonAnalysis returned:`, {
+                hasData: !!data,
+                status: data?.analysis_status,
+                hasResult: !!data?.analysis_result,
+                resultType: typeof data?.analysis_result,
+                resultKeys: data?.analysis_result ? Object.keys(data.analysis_result) : [],
+                propertyCount: data?.property_count
+            });
+            
+            if (!data.analysis_result || Object.keys(data.analysis_result).length === 0) {
+                console.warn(`[DEBUG] Comparison ${comparisonId} has no analysis result yet`);
+                alert('Comparison analysis is not ready yet. Please wait for processing to complete.');
+                return;
+            }
+            
             await this.showComparisonModal(data);
         } catch (error) {
-            console.error('Failed to load comparison results:', error);
-            alert('Failed to load comparison results. Please try again.');
+            console.error(`[ERROR] Failed to load comparison results for ${comparisonId}:`, error);
+            alert(`Failed to load comparison results: ${error.message}. Please try again.`);
         }
     }
     
@@ -596,7 +653,8 @@ class FavoritesManager {
             hour: '2-digit', 
             minute: '2-digit' 
         });
-        const propertyCount = data.property_count || 0;
+        const propertyCount = data.property_count || 
+                              (data.property_summary && data.property_summary.property_count) || 0;
         
         // Render markdown to HTML
         let renderedContent = '';
@@ -659,6 +717,56 @@ class FavoritesManager {
         setTimeout(() => modal.classList.add('show'), 10);
     }
     
+    async pollForComparisonCompletion(comparisonId, attempts = 0) {
+        const maxAttempts = 60; // 60 attempts = 10 minutes max
+        
+        if (attempts >= maxAttempts) {
+            console.log(`[DEBUG] Comparison ${comparisonId} polling timed out after ${maxAttempts} attempts`);
+            return;
+        }
+        
+        try {
+            console.log(`[DEBUG] Polling comparison ${comparisonId}, attempt ${attempts + 1}/${maxAttempts}`);
+            const data = await this.api.fetchComparisonAnalysis(this.state.currentUser.email, comparisonId);
+            
+            console.log(`[DEBUG] Comparison ${comparisonId} polling result:`, {
+                status: data.analysis_status,
+                hasResult: !!data.analysis_result,
+                resultKeys: data.analysis_result ? Object.keys(data.analysis_result) : [],
+                resultSize: data.analysis_result ? Object.keys(data.analysis_result).length : 0
+            });
+            
+            // Check if comparison is completed - be more flexible with the check
+            const hasAnalysisResult = data.analysis_result && 
+                                     (typeof data.analysis_result === 'object' ? 
+                                      Object.keys(data.analysis_result).length > 0 : 
+                                      data.analysis_result.length > 0);
+            
+            if (hasAnalysisResult && data.analysis_status === 'completed') {
+                // Comparison completed, refresh favorites to show updated card
+                console.log(`[SUCCESS] Comparison ${comparisonId} completed, refreshing favorites`);
+                await this.loadFavorites();
+                return;
+            }
+            
+            // Check if failed
+            if (data.analysis_status === 'failed') {
+                console.log(`[ERROR] Comparison ${comparisonId} failed:`, data.last_error || 'Unknown error');
+                await this.loadFavorites(); // Refresh to show failed state
+                return;
+            }
+            
+            // Continue polling if still processing or pending
+            console.log(`[DEBUG] Comparison ${comparisonId} still ${data.analysis_status || 'pending'}, continuing to poll...`);
+            setTimeout(() => this.pollForComparisonCompletion(comparisonId, attempts + 1), 10000); // Poll every 10 seconds
+            
+        } catch (error) {
+            console.log(`[DEBUG] Comparison ${comparisonId} polling error (attempt ${attempts + 1}):`, error.message);
+            // Continue polling on error (comparison might not be ready yet)
+            setTimeout(() => this.pollForComparisonCompletion(comparisonId, attempts + 1), 10000);
+        }
+    }
+
     async removeComparison(comparisonId) {
         if (!this.state.currentUser) return;
         
@@ -679,6 +787,95 @@ class FavoritesManager {
             console.error('Failed to remove comparison:', error);
             alert('Failed to remove comparison. Please try again.');
         }
+    }
+    
+    async moveToHidden(propertyId) {
+        try {
+            // First remove from favorites
+            if (this.state.currentUser) {
+                await this.api.removeFavorite(propertyId, this.state.currentUser.email);
+            }
+            this.state.removeFavorite(propertyId);
+            this.saveFavoritesToStorage();
+            
+            // Then add to hidden
+            if (this.state.currentUser) {
+                await this.api.addHidden(propertyId, this.state.currentUser.email);
+            }
+            this.state.addHidden(propertyId);
+            
+            // Save hidden to localStorage for anonymous users
+            if (!this.state.currentUser) {
+                StorageManager.saveHidden(this.state.hidden);
+            }
+            
+            // Update both counts
+            this.updateFavoritesCount();
+            if (window.app.hidden) {
+                window.app.hidden.updateHiddenCount();
+            }
+            
+            // Animate removal from favorites view
+            const card = document.querySelector(`.favorite-card[data-property-id="${propertyId}"]`);
+            if (card) {
+                card.style.transition = 'all 0.3s';
+                card.style.opacity = '0';
+                card.style.transform = 'translateX(-100%)';
+                setTimeout(() => {
+                    card.remove();
+                    // Check if no favorites left
+                    if (document.querySelectorAll('.favorite-card').length === 0) {
+                        const container = document.querySelector('.favorites-container');
+                        if (container) {
+                            container.innerHTML = '<div style="padding:40px; text-align:center; color:#999;">No favorites yet</div>';
+                        }
+                    }
+                }, 300);
+            }
+            
+        } catch (error) {
+            console.error('Failed to move property to hidden:', error);
+            alert('Failed to move property to hidden. Please try again.');
+        }
+    }
+    
+    // Debug function for troubleshooting favorites issues
+    debugFavorites() {
+        console.log('=== FAVORITES DEBUG REPORT ===');
+        console.log('1. User authenticated:', !!this.state.currentUser);
+        console.log('2. Current favorites count:', this.state.favorites.size);
+        console.log('3. All properties loaded:', this.state.allProperties.length);
+        console.log('4. Visible favorite cards:', document.querySelectorAll('.favorite-card').length);
+        
+        // Check for cards with invalid URLs
+        const cards = document.querySelectorAll('.favorite-card');
+        let invalidUrlCount = 0;
+        let noImageCount = 0;
+        
+        cards.forEach(card => {
+            const hasValidUrl = card.getAttribute('onclick') && !card.getAttribute('onclick').includes('#');
+            const hasImage = !card.querySelector('.no-image');
+            
+            if (!hasValidUrl) invalidUrlCount++;
+            if (!hasImage) noImageCount++;
+        });
+        
+        console.log('5. Cards with invalid URLs:', invalidUrlCount);
+        console.log('6. Cards with no images:', noImageCount);
+        console.log('7. Recent console errors related to favorites:');
+        
+        // Log any recent favorites-related console messages
+        const recentLogs = console.memory || 'Console history not available';
+        console.log('=== END DEBUG REPORT ===');
+        
+        return {
+            authenticated: !!this.state.currentUser,
+            favoritesCount: this.state.favorites.size,
+            propertiesLoaded: this.state.allProperties.length,
+            visibleCards: cards.length,
+            invalidUrls: invalidUrlCount,
+            noImages: noImageCount
+        };
     }
 }
 

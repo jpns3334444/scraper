@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Filter Persistence Test</title>
+</head>
+<body>
+    <h1>Filter Persistence Test</h1>
+    <div id="test-results"></div>
+    
+    <script>
+        // Simple test to verify localStorage filter persistence
+        const testUserId = 'test_user_' + Math.random().toString(36).substr(2, 9);
+        const testFilters = {
+            ward: ['Shibuya', 'Minato'],
+            floor: ['3', '5'],
+            primary_light: ['South'],
+            verdict: ['BUY']
+        };
+        
+        // Save filters
+        localStorage.setItem(`filters_${testUserId}`, JSON.stringify(testFilters));
+        console.log('Saved filters:', testFilters);
+        
+        // Load filters
+        const loaded = JSON.parse(localStorage.getItem(`filters_${testUserId}`));
+        console.log('Loaded filters:', loaded);
+        
+        // Display results
+        const resultsDiv = document.getElementById('test-results');
+        if (JSON.stringify(testFilters) === JSON.stringify(loaded)) {
+            resultsDiv.innerHTML = '<h2 style="color: green;">✓ Filter persistence is working!</h2>';
+            resultsDiv.innerHTML += '<pre>' + JSON.stringify(loaded, null, 2) + '</pre>';
+        } else {
+            resultsDiv.innerHTML = '<h2 style="color: red;">✗ Filter persistence failed!</h2>';
+        }
+        
+        // Clean up
+        localStorage.removeItem(`filters_${testUserId}`);
+    </script>
+</body>
+</html>

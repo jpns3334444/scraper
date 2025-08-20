@@ -1191,6 +1191,32 @@ def classify_image_fallback(img_element, src_url, logger=None):
     
     return 'unknown'
 
+def classify_suumo_image(src_url, logger=None):
+    """Classify Suumo images based on URL patterns and keywords"""
+    src_lower = src_url.lower()
+    
+    # Floor plan keywords in URL
+    if any(kw in src_lower for kw in ['madori', '間取り', 'floorplan', 'layout']):
+        return 'floorplan'
+    
+    # Interior keywords in URL
+    interior_keywords = ['interior', '内装', 'living', 'kitchen', 'bathroom', 'room']
+    if any(kw in src_lower for kw in interior_keywords):
+        return 'interior'
+    
+    # Exterior keywords in URL
+    exterior_keywords = ['exterior', '外観', 'building', 'entrance']
+    if any(kw in src_lower for kw in exterior_keywords):
+        return 'exterior'
+    
+    # Facility keywords in URL
+    facility_keywords = ['facility', '設備', 'amenity']
+    if any(kw in src_lower for kw in facility_keywords):
+        return 'facility'
+    
+    # Default to interior for most property images
+    return 'interior'
+
 def select_images_for_download(classified_urls, max_total=10, max_floorplan=1, max_exterior=1, max_facility=1, max_other=1, logger=None):
     """Select images with strict caps per category"""
     # classified_urls: list of (url, category, alt) tuples AFTER DEDUPE; category already normalized
@@ -1277,7 +1303,7 @@ def extract_property_details(session, property_url, referer_url, retries=3, conf
                 # Fallback to URL hash as simple ID if extraction fails
                 property_id = hashlib.md5(property_url.encode('utf-8')).hexdigest()[:8]
                 data["id"] = property_id
-                data["property_id"] = f"PROP#{datetime.now().strftime('%Y%m%d')}_{property_id}"
+                data["property_id"] = f"PROP#{property_id}"
             
             # Extract title
             h1_elements = soup.select('h1')
@@ -1806,7 +1832,7 @@ def scrape_suumo_property(session, property_url, retries=3, config=None, logger=
                 # Fallback to URL hash as simple ID if extraction fails
                 property_id = hashlib.md5(property_url.encode('utf-8')).hexdigest()[:8]
                 data["id"] = property_id
-                data["property_id"] = f"PROP#{datetime.now().strftime('%Y%m%d')}_{property_id}"
+                data["property_id"] = f"PROP#{property_id}"
             
             # Extract property name
             property_name = soup.find('h1', class_='mainIndexR')
@@ -2100,6 +2126,10 @@ def scrape_suumo_property(session, property_url, retries=3, config=None, logger=
                                 data['is_agent'] = True
                             elif '仲介' in val:
                                 data['is_broker'] = True
+                        
+                        # Current occupancy status
+                        elif '現況' in key:
+                            data['current_occupancy'] = val.split()[0] if val else val
             
             # Extract company information
             company_link = soup.find('a', class_='jscToiawaseSakiWindow')
@@ -2412,8 +2442,53 @@ def scrape_suumo_property(session, property_url, retries=3, config=None, logger=
                 
                 # Download images if configured
                 if output_bucket and image_urls[:10]:
-                    # Image download logic would go here if needed
-                    pass
+                    try:
+                        # Classify and prepare images for download
+                        classified_urls = []
+                        for url in image_urls[:20]:  # Process up to 20 images
+                            category = classify_suumo_image(url, logger)
+                            # Normalize category to match existing system
+                            if category not in ['floorplan', 'exterior', 'interior', 'facility']:
+                                category = 'interior'  # Default fallback
+                            classified_urls.append((url, category, ''))
+                        
+                        if logger:
+                            logger.info(f"Classified {len(classified_urls)} Suumo images for download")
+                        
+                        # Select images with same limits as Lifull
+                        selected_urls, breakdown = select_images_for_download(
+                            classified_urls, max_total=10, max_floorplan=1, max_exterior=1, 
+                            max_facility=1, max_other=1, logger=logger
+                        )
+                        
+                        if selected_urls:
+                            # Download images using existing infrastructure
+                            if session_pool and image_rate_limiter:
+                                s3_keys = download_images_parallel(selected_urls, session_pool, output_bucket, property_id, logger, image_rate_limiter)
+                            else:
+                                s3_keys = download_images_parallel_fallback(selected_urls, session, output_bucket, property_id, logger)
+                            
+                            if s3_keys:
+                                data["photo_filenames"] = "|".join(s3_keys)
+                                data["image_count"] = len(s3_keys)
+                                if logger:
+                                    logger.info(f"Downloaded {len(s3_keys)}/{len(selected_urls)} Suumo images")
+                            else:
+                                data["image_count"] = 0
+                                if logger:
+                                    logger.warning("No Suumo images were successfully downloaded")
+                        else:
+                            data["image_count"] = 0
+                            data["photo_filenames"] = ""
+                            if logger:
+                                logger.info("No Suumo images selected for download")
+                                
+                    except Exception as e:
+                        if logger:
+                            logger.error(f"Suumo image download failed: {str(e)}")
+                        # Don't fail the entire scrape for image issues
+                        data["image_count"] = 0
+                        data["photo_filenames"] = ""
             
             # Listing metadata and market context
             info_date = soup.find(text=re.compile('情報提供日'))

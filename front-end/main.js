@@ -37,10 +37,14 @@ document.addEventListener('DOMContentLoaded', async function() {
     
     // Set up event listeners for state changes
     appState.on('hidden', () => {
-        console.log('[DEBUG] Hidden state changed, re-applying filters');
-        // Re-apply filters whenever hidden state changes
-        if (window.app && window.app.properties) {
+        console.log('[DEBUG] Hidden state changed');
+        // Only re-apply filters if properties have already been loaded
+        // Otherwise we'll overwrite saved filters with empty ones!
+        if (window.app && window.app.properties && appState.allProperties.length > 0) {
+            console.log('[DEBUG] Properties loaded, re-applying filters');
             window.app.properties.applyFilters();
+        } else {
+            console.log('[DEBUG] Properties not loaded yet, skipping filter apply');
         }
     });
     
@@ -58,6 +62,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         state: appState
     };
     
+    // Make appState available globally for storage functions
+    window.appState = appState;
+    
     console.log('[DEBUG] Global app object created');
     
     // Add global functions for onclick handlers
@@ -67,6 +74,18 @@ document.addEventListener('DOMContentLoaded', async function() {
         const banner = document.getElementById('errorBanner');
         if (banner) banner.style.display = 'none';
     };
+    
+    // Global function for opening listing URLs - used by favorite and hidden cards
+    window.openListing = (event, url) => {
+        // Prevent opening if clicking on a button
+        if (event.target.tagName === 'BUTTON' || event.target.closest('button')) {
+            return;
+        }
+        window.open(url, '_blank');
+    };
+    
+    // Debug functions for troubleshooting
+    window.debugFavorites = () => favoritesManager.debugFavorites();
     
     window.applyColumnFilter = (column) => {
         const checkboxes = document.querySelectorAll(`#${column}-filter-options input[type="checkbox"]:checked`);
@@ -162,16 +181,11 @@ document.addEventListener('DOMContentLoaded', async function() {
         favoritesManager.updateFavoritesCount();
         hiddenManager.updateHiddenCount();
         
-        // Load saved filters from localStorage
-        const savedFilters = StorageManager.loadFilters();
-        appState.restoreFilters(savedFilters);
-        console.log('[DEBUG] Restored filters from localStorage:', savedFilters);
-        
         console.log('[DEBUG] ==========================================');
         console.log('[DEBUG] STEP 3: Loading properties...');
         console.log('[DEBUG] ==========================================');
         console.log('[DEBUG] Hidden items that will be filtered:', Array.from(appState.hidden));
-        console.log('[DEBUG] Active filters:', appState.currentFilters);
+        console.log('[DEBUG] Filters will be restored during property loading');
         
         // NOW load properties - they will be filtered automatically based on hidden items
         await propertiesManager.loadAllProperties();

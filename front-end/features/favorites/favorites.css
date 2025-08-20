@@ -133,6 +133,40 @@
     opacity: 0.6;
 }
 
+/* Move to hidden button - eye with slash */
+.move-to-hidden-btn {
+    position: absolute;
+    top: var(--space-md);
+    right: calc(var(--space-md) + 30px);
+    background: transparent;
+    border: 1px solid var(--ink-faint);
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0;
+    transition: all 0.3s ease;
+    color: var(--ink-light);
+    padding: 0;
+}
+
+.favorite-card:hover .move-to-hidden-btn {
+    opacity: 1;
+}
+
+.move-to-hidden-btn:hover {
+    border-color: var(--ink-gray);
+    color: var(--ink-black);
+    background: var(--paper-gray);
+}
+
+.move-to-hidden-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
 /* Remove button - minimal X */
 .remove-favorite-btn {
     position: absolute;
@@ -620,6 +654,16 @@
 
 .comparison-status:hover {
     color: var(--ink-black);
+}
+
+.comparison-status.processing {
+    color: var(--ink-light);
+    opacity: 0.7;
+    cursor: default;
+}
+
+.comparison-status.processing:disabled {
+    cursor: not-allowed;
 }
 
 .remove-comparison-btn {

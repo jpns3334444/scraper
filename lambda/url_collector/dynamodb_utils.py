@@ -72,15 +72,18 @@ def load_all_existing_properties(table, logger=None):
                 property_id = item.get('property_id', '')
                 raw_property_id = None
                 
-                # Method 1: Extract from property_id field (format: PROP#YYYYMMDD_123456)
-                if property_id and '#' in property_id and '_' in property_id:
+                # Method 1: Extract from property_id field 
+                if property_id and '#' in property_id:
                     try:
-                        # Split on '#' and then on '_' to get the raw ID
                         parts = property_id.split('#')
                         if len(parts) >= 2:
-                            date_and_id = parts[1]  # Get "YYYYMMDD_123456"
-                            if '_' in date_and_id:
-                                raw_property_id = date_and_id.split('_', 1)[1]  # Get "123456"
+                            id_part = parts[1]  # Get everything after #
+                            if '_' in id_part:
+                                # Old format: PROP#YYYYMMDD_123456 
+                                raw_property_id = id_part.split('_', 1)[1]  # Get "123456"
+                            else:
+                                # New format: PROP#123456
+                                raw_property_id = id_part
                     except (IndexError, ValueError):
                         pass
                 
