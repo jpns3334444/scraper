@@ -21,21 +21,6 @@ Parameters:
     Default: latest
     Description: "S3 object version for favorites API function"
     
-  RegisterUserCodeVersion:
-    Type: String
-    Default: latest
-    Description: "S3 object version for register user function"
-    
-  LoginUserCodeVersion:
-    Type: String
-    Default: latest
-    Description: "S3 object version for login user function"
-    
-  BcryptLayerObjectVersion:
-    Type: String
-    Description: "S3 object version ID for frontend-bcrypt-layer.zip"
-    Default: latest
-
 Resources:
   # S3 Bucket for Static Website
   StaticSiteBucket:
@@ -71,18 +56,6 @@ Resources:
             Action: "s3:GetObject"
             Resource: !Sub "${StaticSiteBucket.Arn}/*"
 
-  # Bcrypt Layer for authentication functions (using S3 version like AI stack)
-  BcryptLayer:
-    Type: AWS::Lambda::LayerVersion
-    Properties:
-      LayerName: !Sub '${AWS::StackName}-bcrypt'
-      CompatibleRuntimes: [ python3.12 ]
-      Description: Bcrypt password hashing layer
-      Content:
-        S3Bucket: !Ref DeploymentBucket
-        S3Key: layers/frontend-bcrypt-layer.zip
-        S3ObjectVersion: !Ref BcryptLayerObjectVersion
-
   # IAM Role for Lambda functions (matching AI stack pattern)
   LambdaExecutionRole:
     Type: "AWS::IAM::Role"
@@ -113,7 +86,6 @@ Resources:
                 Resource:
                   - Fn::ImportValue: !Sub "${AIStackName}-DynamoDBTableArn"
                   - Fn::ImportValue: !Sub "${AIStackName}-UserPreferencesTableArn"
-                  - Fn::ImportValue: !Sub "${AIStackName}-UsersTableArn"
                   - !Sub 
                     - "${TableArn}/index/*"
                     - TableArn: 
@@ -196,48 +168,6 @@ Resources:
           OUTPUT_BUCKET:
             Fn::ImportValue: !Sub "${AIStackName}-OutputBucketName"
           FAVORITE_ANALYZER_FUNCTION: !Sub '${AIStackName}-favorite-analyzer'
-
-  # Register User Lambda Function
-  RegisterUserFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${AWS::StackName}-register-user'
-      Runtime: python3.12
-      Handler: app.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        S3Bucket: !Ref DeploymentBucket
-        S3Key: frontend-functions/register_user.zip
-        S3ObjectVersion: !Ref RegisterUserCodeVersion
-      Timeout: 30
-      MemorySize: 512
-      Layers:
-        - !Ref BcryptLayer
-      Environment:
-        Variables:
-          USERS_TABLE:  # Will resolve to: real-estate-ai-users
-            Fn::ImportValue: !Sub "${AIStackName}-UsersTableName"
-
-  # Login User Lambda Function
-  LoginUserFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${AWS::StackName}-login-user'
-      Runtime: python3.12
-      Handler: app.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        S3Bucket: !Ref DeploymentBucket
-        S3Key: frontend-functions/login_user.zip
-        S3ObjectVersion: !Ref LoginUserCodeVersion
-      Timeout: 30
-      MemorySize: 512
-      Layers:
-        - !Ref BcryptLayer
-      Environment:
-        Variables:
-          USERS_TABLE:  # Will resolve to: real-estate-ai-users
-            Fn::ImportValue: !Sub "${AIStackName}-UsersTableName"
 
   # API Gateway REST API
   FrontendRestApi:
@@ -700,102 +630,6 @@ Resources:
             method.response.header.Access-Control-Allow-Headers: true
             method.response.header.Access-Control-Allow-Methods: true
 
-  # /auth resources
-  AuthResource:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref FrontendRestApi
-      ParentId: !GetAtt FrontendRestApi.RootResourceId
-      PathPart: 'auth'
-
-  # /auth/register
-  AuthRegisterResource:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref FrontendRestApi
-      ParentId: !Ref AuthResource
-      PathPart: 'register'
-
-  AuthRegisterMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref FrontendRestApi
-      ResourceId: !Ref AuthRegisterResource
-      HttpMethod: POST
-      AuthorizationType: NONE
-      Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RegisterUserFunction.Arn}/invocations'
-
-  AuthRegisterOptionsMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref FrontendRestApi
-      ResourceId: !Ref AuthRegisterResource
-      HttpMethod: OPTIONS
-      AuthorizationType: NONE
-      Integration:
-        Type: MOCK
-        RequestTemplates:
-          application/json: '{"statusCode":200}'
-        IntegrationResponses:
-          - StatusCode: 200
-            ResponseParameters:
-              method.response.header.Access-Control-Allow-Origin: "'*'"
-              method.response.header.Access-Control-Allow-Headers: "'*'"
-              method.response.header.Access-Control-Allow-Methods: "'*'"
-      MethodResponses:
-        - StatusCode: 200
-          ResponseParameters:
-            method.response.header.Access-Control-Allow-Origin: true
-            method.response.header.Access-Control-Allow-Headers: true
-            method.response.header.Access-Control-Allow-Methods: true
-
-  # /auth/login
-  AuthLoginResource:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref FrontendRestApi
-      ParentId: !Ref AuthResource
-      PathPart: 'login'
-
-  AuthLoginMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref FrontendRestApi
-      ResourceId: !Ref AuthLoginResource
-      HttpMethod: POST
-      AuthorizationType: NONE
-      Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LoginUserFunction.Arn}/invocations'
-
-  AuthLoginOptionsMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref FrontendRestApi
-      ResourceId: !Ref AuthLoginResource
-      HttpMethod: OPTIONS
-      AuthorizationType: NONE
-      Integration:
-        Type: MOCK
-        RequestTemplates:
-          application/json: '{"statusCode":200}'
-        IntegrationResponses:
-          - StatusCode: 200
-            ResponseParameters:
-              method.response.header.Access-Control-Allow-Origin: "'*'"
-              method.response.header.Access-Control-Allow-Headers: "'*'"
-              method.response.header.Access-Control-Allow-Methods: "'*'"
-      MethodResponses:
-        - StatusCode: 200
-          ResponseParameters:
-            method.response.header.Access-Control-Allow-Origin: true
-            method.response.header.Access-Control-Allow-Headers: true
-            method.response.header.Access-Control-Allow-Methods: true
-
   # API Gateway Deployment
   FrontendApiDeployment:
     Type: AWS::ApiGateway::Deployment
@@ -818,10 +652,6 @@ Resources:
       - HiddenUserOptionsMethod
       - HiddenDeleteMethod
       - HiddenDeleteOptionsMethod
-      - AuthRegisterMethod
-      - AuthRegisterOptionsMethod
-      - AuthLoginMethod
-      - AuthLoginOptionsMethod
     Properties:
       RestApiId: !Ref FrontendRestApi
       Description: !Sub 'Frontend API Deployment ${AWS::StackId}'
@@ -856,29 +686,7 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${FrontendRestApi}/*/*'
 
-  RegisterApiInvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref RegisterUserFunction
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${FrontendRestApi}/*/*'
-
-  LoginApiInvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref LoginUserFunction
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${FrontendRestApi}/*/*'
-
 Outputs:
-  BcryptLayerArn:
-    Description: 'ARN of the Bcrypt layer'
-    Value: !Ref BcryptLayer
-    Export:
-      Name: !Sub '${AWS::StackName}-BcryptLayerArn'
-
   FrontendApiEndpoint:
     Description: "Frontend API Gateway endpoint URL"
     Value: !Sub "https://${FrontendRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
@@ -908,15 +716,3 @@ Outputs:
     Value: !GetAtt FavoritesAPIFunction.Arn
     Export:
       Name: !Sub "${AWS::StackName}-favorites-api-arn"
-
-  RegisterUserFunctionArn:
-    Description: "Register User Lambda function ARN"
-    Value: !GetAtt RegisterUserFunction.Arn
-    Export:
-      Name: !Sub "${AWS::StackName}-register-user-arn"
-
-  LoginUserFunctionArn:
-    Description: "Login User Lambda function ARN"
-    Value: !GetAtt LoginUserFunction.Arn
-    Export:
-      Name: !Sub "${AWS::StackName}-login-user-arn"

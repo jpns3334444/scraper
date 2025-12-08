@@ -21,10 +21,7 @@ REGION="$AWS_REGION"
 STACK_NAME="$FRONTEND_STACK"
 AI_STACK_NAME="$AI_STACK"
 BUCKET_NAME="$DEPLOYMENT_BUCKET"
-BCRYPT_LAYER_VERSION_FILE="$REPO_ROOT/.frontend-bcrypt-layer-version"
 TEMPLATE_FILE="$REPO_ROOT/frontend-stack.yaml"
-CURRENT_BCRYPT_VERSION="${BCRYPT_VERSION:-4.1.2}"
-NEED_BCRYPT_LAYER_BUILD=false
 
 
 # Cleanup function
@@ -33,22 +30,9 @@ cleanup_and_exit() {
 
     info "Cleaning up temporary files..."
 
-    # Remove temporary Docker files if they exist
-    [ -f "$REPO_ROOT/Dockerfile.bcrypt" ] && rm -f "$REPO_ROOT/Dockerfile.bcrypt" && info "Removed Dockerfile.bcrypt"
-
     # Remove temporary zip files
-    [ -f "$REPO_ROOT/frontend-bcrypt-layer.zip" ] && rm -f "$REPO_ROOT/frontend-bcrypt-layer.zip" && info "Removed frontend-bcrypt-layer.zip"
     [ -f "$REPO_ROOT/dashboard_api.zip" ] && rm -f "$REPO_ROOT/dashboard_api.zip" && info "Removed dashboard_api.zip"
     [ -f "$REPO_ROOT/favorites_api.zip" ] && rm -f "$REPO_ROOT/favorites_api.zip" && info "Removed favorites_api.zip"
-    [ -f "$REPO_ROOT/register_user.zip" ] && rm -f "$REPO_ROOT/register_user.zip" && info "Removed register_user.zip"
-    [ -f "$REPO_ROOT/login_user.zip" ] && rm -f "$REPO_ROOT/login_user.zip" && info "Removed login_user.zip"
-
-    # Note: We keep the .frontend-bcrypt-layer-version file as it's used for caching
-    # Only remove it if explicitly requested or on error during bcrypt build
-    if [ "$exit_code" -ne 0 ] && [ "$NEED_BCRYPT_LAYER_BUILD" = true ]; then
-        warn "Build failed during bcrypt layer creation, removing version file for retry"
-        [ -f "$BCRYPT_LAYER_VERSION_FILE" ] && rm -f "$BCRYPT_LAYER_VERSION_FILE"
-    fi
 
     status "✅ Cleanup completed"
     exit $exit_code
@@ -88,98 +72,17 @@ status "Prerequisites OK"
 info "Checking S3 bucket..."
 aws s3 mb s3://$BUCKET_NAME --region $REGION 2>/dev/null && status "Created bucket $BUCKET_NAME" || info "Bucket $BUCKET_NAME exists"
 
-# Check if we need to build the Bcrypt layer (already initialized above)
+# Enable versioning on the bucket (required for Lambda code versioning)
+aws s3api put-bucket-versioning --bucket $BUCKET_NAME --region $REGION --versioning-configuration Status=Enabled 2>/dev/null || true
 
-if [ ! -f "$BCRYPT_LAYER_VERSION_FILE" ]; then
-    info "No bcrypt layer version file found - will build layer"
-    NEED_BCRYPT_LAYER_BUILD=true
-else
-    STORED_BCRYPT_VERSION=$(cat $BCRYPT_LAYER_VERSION_FILE)
-    if [ "$STORED_BCRYPT_VERSION" != "$CURRENT_BCRYPT_VERSION" ]; then
-        info "Bcrypt version changed ($STORED_BCRYPT_VERSION → $CURRENT_BCRYPT_VERSION) - will rebuild layer"
-        NEED_BCRYPT_LAYER_BUILD=true
-    else
-        # Check if layer exists in S3
-        if ! aws s3 ls s3://$BUCKET_NAME/layers/frontend-bcrypt-layer.zip --region $REGION >/dev/null 2>&1; then
-            info "Bcrypt layer missing from S3 - will rebuild layer"
-            NEED_BCRYPT_LAYER_BUILD=true
-        else
-            status "✅ Bcrypt layer up to date (v$CURRENT_BCRYPT_VERSION) - skipping build"
-        fi
-    fi
-fi
-
-# Get Bcrypt layer version
-if [ "$NEED_BCRYPT_LAYER_BUILD" = false ]; then
-    info "Retrieving existing Bcrypt layer version ID..."
-    BCRYPT_LAYER_OBJECT_VERSION=$(aws s3api head-object \
-        --bucket $BUCKET_NAME \
-        --key layers/frontend-bcrypt-layer.zip \
-        --region $REGION \
-        --query VersionId --output text)
-    info "Bcrypt layer version ID: $BCRYPT_LAYER_OBJECT_VERSION"
-fi
-
-# Build Bcrypt layer if needed (Windows-compatible approach)
-if [ "$NEED_BCRYPT_LAYER_BUILD" = true ]; then
-    status "Building Bcrypt layer (Windows-compatible method)..."
-    
-    # Create temporary Dockerfile for Windows compatibility
-    cat > Dockerfile.bcrypt << EOF
-FROM python:3.12-slim
-RUN pip install bcrypt==$CURRENT_BCRYPT_VERSION --target /layer/python/
-WORKDIR /layer
-RUN apt-get update && apt-get install -y zip && rm -rf /var/lib/apt/lists/*
-RUN zip -r frontend-bcrypt-layer.zip python/
-EOF
-    
-    # Build image and extract layer
-    docker build -t frontend-bcrypt-layer-builder -f Dockerfile.bcrypt .
-    
-    # Create container and copy file out
-    CONTAINER_ID=$(docker create frontend-bcrypt-layer-builder)
-    docker cp "$CONTAINER_ID:/layer/frontend-bcrypt-layer.zip" ./frontend-bcrypt-layer.zip
-    docker rm "$CONTAINER_ID"
-    
-    # Cleanup Docker artifacts immediately
-    rm -f Dockerfile.bcrypt
-    docker rmi frontend-bcrypt-layer-builder
-    
-    [ -f frontend-bcrypt-layer.zip ] || { echo "Bcrypt layer build failed"; cleanup_and_exit 1; }
-    
-    BCRYPT_LAYER_SIZE=$(du -sh frontend-bcrypt-layer.zip | cut -f1)
-    status "✅ Bcrypt layer built ($BCRYPT_LAYER_SIZE)"
-    
-    # Upload to S3
-    aws s3 cp frontend-bcrypt-layer.zip s3://$BUCKET_NAME/layers/frontend-bcrypt-layer.zip --region $REGION
-    status "✅ Bcrypt layer uploaded to S3"
-    
-    # Get the version ID we just wrote
-    BCRYPT_LAYER_OBJECT_VERSION=$(aws s3api head-object \
-        --bucket $BUCKET_NAME \
-        --key layers/frontend-bcrypt-layer.zip \
-        --region $REGION \
-        --query VersionId --output text)
-    
-    # Save version
-    echo "$CURRENT_BCRYPT_VERSION" > $BCRYPT_LAYER_VERSION_FILE
-    
-    # Cleanup zip file immediately after upload
-    rm -f frontend-bcrypt-layer.zip
-else
-    info "Skipping bcrypt layer build - using cached version"
-fi
-
-# Always package Lambda functions (these change frequently) - Windows compatible ZIP
+# Package Lambda functions (these change frequently) - Windows compatible ZIP
 status "Packaging Lambda functions..."
 
 # Initialize version variables
 DASHBOARD_API_VERSION="latest"
 FAVORITES_API_VERSION="latest"
-REGISTER_USER_VERSION="latest"
-LOGIN_USER_VERSION="latest"
 
-for func in dashboard_api favorites_api register_user login_user; do
+for func in dashboard_api favorites_api; do
     [ -d "lambda/$func" ] || { echo "Function directory lambda/$func not found"; cleanup_and_exit 1; }
     
     info "Packaging $func..."
@@ -260,12 +163,6 @@ print('Created $func.zip with shared modules')
         favorites_api)
             FAVORITES_API_VERSION="$OBJECT_VERSION"
             ;;
-        register_user)
-            REGISTER_USER_VERSION="$OBJECT_VERSION"
-            ;;
-        login_user)
-            LOGIN_USER_VERSION="$OBJECT_VERSION"
-            ;;
     esac
     
     # Clean up zip file immediately after upload
@@ -286,17 +183,6 @@ if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
     status "✅ Stack deleted successfully"
 fi
 
-# Always get the layer version ID (whether we built it or not)
-if [ -z "$BCRYPT_LAYER_OBJECT_VERSION" ]; then
-    info "Retrieving existing Bcrypt layer version ID..."
-    BCRYPT_LAYER_OBJECT_VERSION=$(aws s3api head-object \
-        --bucket $BUCKET_NAME \
-        --key layers/frontend-bcrypt-layer.zip \
-        --region $REGION \
-        --query VersionId --output text)
-    info "Bcrypt layer version ID: $BCRYPT_LAYER_OBJECT_VERSION"
-fi
-
 # Deploy CloudFormation stack
 aws cloudformation deploy \
   --template-file frontend-stack.yaml \
@@ -307,10 +193,7 @@ aws cloudformation deploy \
       AIStackName=$AI_STACK_NAME \
       DeploymentBucket=$BUCKET_NAME \
       DashboardAPICodeVersion=$DASHBOARD_API_VERSION \
-      FavoritesAPICodeVersion=$FAVORITES_API_VERSION \
-      RegisterUserCodeVersion=$REGISTER_USER_VERSION \
-      LoginUserCodeVersion=$LOGIN_USER_VERSION \
-      BcryptLayerObjectVersion=$BCRYPT_LAYER_OBJECT_VERSION
+      FavoritesAPICodeVersion=$FAVORITES_API_VERSION
 
 status "✅ CloudFormation stack deployed"
 
@@ -354,7 +237,6 @@ echo "📋 Stack Details:"
 echo "  Stack Name: $STACK_NAME"
 echo "  Region: $REGION"
 echo "  Bucket: $BUCKET_NAME"
-echo "  Bcrypt Layer: v$CURRENT_BCRYPT_VERSION"
 echo ""
 echo "🔧 Stack Resources:"
 echo "  Dashboard API Function: $DASHBOARD_API_FUNCTION_ARN"
@@ -370,9 +252,4 @@ echo ""
 echo "  # Test Favorites API function"
 echo "  aws lambda invoke --function-name $STACK_NAME-favorites-api --payload '{\"userId\":\"test\"}' favorites-api-response.json --region $REGION"
 echo ""
-echo "💡 Next Deployments:"
-echo "  - Layer will be cached (fast deployments)"
-echo "  - Only Lambda functions will be rebuilt"
-echo "  - To force layer rebuild: rm $BCRYPT_LAYER_VERSION_FILE"
-
 # The trap will automatically call cleanup_and_exit when script ends successfully
