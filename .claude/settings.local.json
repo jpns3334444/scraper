@@ -44,7 +44,10 @@
       "Bash(aws logs get-log-events:*)",
       "Bash(docker info:*)",
       "Bash(sudo systemctl status:*)",
-      "Bash(aws s3api get-bucket-versioning:*)"
+      "Bash(aws s3api get-bucket-versioning:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git add:*)"
     ],
     "deny": []
   }
