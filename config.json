@@ -1,29 +1,29 @@
 {
-  "_comment": "Tokyo Real Estate Project Configuration - Single source of truth for all AWS resource names",
-  
+  "_comment": "US Real Estate Project Configuration - Single source of truth for all AWS resource names",
+
   "core": {
-    "PROJECT": "tokyo-real-estate",
-    "AWS_REGION": "ap-northeast-1"
+    "PROJECT": "real-estate-ai",
+    "AWS_REGION": "us-east-1"
   },
-  
+
   "stacks": {
-    "AI_STACK": "tokyo-real-estate-ai",
-    "FRONTEND_STACK": "tokyo-real-estate-frontend"
+    "AI_STACK": "real-estate-ai",
+    "FRONTEND_STACK": "real-estate-ai-frontend"
   },
-  
+
   "s3": {
-    "DEPLOYMENT_BUCKET_PREFIX": "ai-scraper-artifacts",
-    "OUTPUT_BUCKET": "tokyo-real-estate-ai-data",
-    "FRONTEND_STATIC_BUCKET": "tokyo-real-estate-frontend-static"
+    "DEPLOYMENT_BUCKET_PREFIX": "real-estate-ai-artifacts",
+    "OUTPUT_BUCKET": "real-estate-ai-data",
+    "FRONTEND_STATIC_BUCKET": "real-estate-ai-frontend"
   },
-  
+
   "dynamodb": {
-    "DDB_PROPERTIES": "tokyo-real-estate-ai-analysis-db",
-    "DDB_URL_TRACKING": "tokyo-real-estate-ai-urls",
-    "DDB_USERS": "tokyo-real-estate-ai-users",
-    "DDB_USER_PREFERENCES": "tokyo-real-estate-ai-user-preferences"
+    "DDB_PROPERTIES": "real-estate-ai-properties",
+    "DDB_URL_TRACKING": "real-estate-ai-urls",
+    "DDB_USERS": "real-estate-ai-users",
+    "DDB_USER_PREFERENCES": "real-estate-ai-user-preferences"
   },
-  
+
   "lambda": {
     "_comment": "Lambda Function Names (stack prefix will be prepended)",
     "LAMBDA_URL_COLLECTOR": "url-collector",
@@ -35,32 +35,32 @@
     "LAMBDA_REGISTER_USER": "register-user",
     "LAMBDA_LOGIN_USER": "login-user"
   },
-  
+
   "api": {
-    "API_NAME": "tokyo-real-estate-api",
+    "API_NAME": "real-estate-ai-api",
     "LISTING_FETCH_SIZE": 300
   },
-  
-  "email": {
-    "_comment": "Email Settings (for report sender)",
-    "EMAIL_FROM": "jpns3334444@gmail.com",
-    "EMAIL_TO": "haykaslanyan@gmail.com"
-  },
-  
+
   "features": {
     "LEAN_MODE": "1"
   },
-  
-  "paths": {
-    "SCRIPT_DIR": "/home/azure/Projects/real-estate-scraper"
+
+  "realtor": {
+    "_comment": "Realtor.com scraper configuration",
+    "TARGET_CITY": "Paonia",
+    "TARGET_STATE": "CO",
+    "BASE_URL": "https://www.realtor.com/realestateandhomes-search/Paonia_CO",
+    "MAX_PAGES": 50
   },
-  
-  "suumo": {
-    "_comment": "Suumo scraper configuration",
-    "BASE_URL": "https://suumo.jp/jj/bukken/ichiran/JJ010FJ001/?ar=030&bs=011&ta=13&jspIdFlg=patternShikugun&sc=13101&sc=13102&sc=13103&sc=13104&sc=13105&sc=13113&sc=13106&sc=13107&sc=13108&sc=13118&sc=13121&sc=13122&sc=13123&sc=13109&sc=13110&sc=13111&sc=13112&sc=13114&sc=13115&sc=13120&sc=13116&sc=13117&sc=13119&kb=1&kt=3000&mb=0&mt=9999999&ekTjCd=&ekTjNm=&tj=0&cnb=0&cn=9999999&srch_navi=1",
-    "MAX_PAGES": 700
+
+  "scraper": {
+    "_comment": "Scraper rate limiting settings",
+    "MIN_DELAY_SECONDS": 3,
+    "MAX_DELAY_SECONDS": 8,
+    "MAX_CONCURRENT_REQUESTS": 2,
+    "RETRY_ATTEMPTS": 3
   },
-  
+
   "layers": {
     "BCRYPT_LAYER_OBJECT_VERSION": "latest",
     "OPENAI_VERSION": "1.99.3",
@@ -68,7 +68,6 @@
   },
 
   "secrets": {
-    "GOOGLE_MAPS_API_KEY": "tokyo-real-estate/google-maps-api-key",
-    "OPENAI_API_KEY": "ai-scraper/openai-api-key"
+    "OPENAI_API_KEY": "real-estate-ai/openai-api-key"
   }
 }

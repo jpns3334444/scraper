@@ -34,9 +34,11 @@ def prepare_for_dynamodb(record):
 
 def setup_dynamodb_client(logger=None):
     """Setup DynamoDB client and table reference"""
+    import os
     try:
-        dynamodb = boto3.resource('dynamodb', region_name='ap-northeast-1')
-        table_name = 'tokyo-real-estate-ai-analysis-db'
+        region = os.environ.get('AWS_REGION', 'us-east-1')
+        dynamodb = boto3.resource('dynamodb', region_name=region)
+        table_name = os.environ.get('PROPERTIES_TABLE', 'real-estate-ai-properties')
         table = dynamodb.Table(table_name)
         
         # Test connection
@@ -55,12 +57,10 @@ def setup_dynamodb_client(logger=None):
 def extract_property_id_from_url(url):
     """Extract property ID from listing URL"""
     patterns = [
-        r'/mansion/b-(\d+)',  # Homes.co.jp format
-        r'/b-(\d+)',          # Homes.co.jp format (flexible)
-        r'/nc_(\d+)',         # Suumo format: /nc_78166592/
         r'property[_-]?id[=:](\d+)',
-        r'mansion[_-]?(\d{8,})',
-        r'/(\d{10,})'         # Generic long number format
+        r'/(\d{10,})',         # Generic long number format
+        r'M(\d{10,})',         # Realtor.com MLS ID format
+        r'/([A-Z0-9]{8,})',    # Generic alphanumeric ID
     ]
     
     for pattern in patterns:
@@ -133,9 +133,11 @@ def save_complete_properties_to_dynamodb(properties_data, config, logger=None):
     if not properties_data:
         return 0
     
+    import os
     try:
-        dynamodb = boto3.resource('dynamodb', region_name='ap-northeast-1')
-        table_name = config.get('dynamodb_table', 'tokyo-real-estate-ai-analysis-db')
+        region = os.environ.get('AWS_REGION', 'us-east-1')
+        dynamodb = boto3.resource('dynamodb', region_name=region)
+        table_name = config.get('dynamodb_table', os.environ.get('PROPERTIES_TABLE', 'real-estate-ai-properties'))
         table = dynamodb.Table(table_name)
         
         saved_count = 0
@@ -449,10 +451,14 @@ def process_listings_with_existing_check(listings, existing_properties, logger=N
 
 # URL Tracking Table (DYDB2) Functions
 
-def setup_url_tracking_table(table_name='tokyo-real-estate-urls', logger=None):
+def setup_url_tracking_table(table_name=None, logger=None):
     """Setup URL tracking table reference"""
+    import os
     try:
-        dynamodb = boto3.resource('dynamodb', region_name='ap-northeast-1')
+        if table_name is None:
+            table_name = os.environ.get('URL_TRACKING_TABLE', 'real-estate-ai-urls')
+        region = os.environ.get('AWS_REGION', 'us-east-1')
+        dynamodb = boto3.resource('dynamodb', region_name=region)
         table = dynamodb.Table(table_name)
         
         # Test connection

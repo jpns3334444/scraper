@@ -3,8 +3,8 @@
 set -e
 
 # Get the directory of this script (should be repo root)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-echo "DEBUG: SCRIPT_DIR detected as: $SCRIPT_DIR"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+echo "DEBUG: REPO_ROOT detected as: $REPO_ROOT"
 
 # Colors and functions first
 G='\033[0;32m' R='\033[0;31m' Y='\033[1;33m' B='\033[0;34m' NC='\033[0m'
@@ -14,15 +14,15 @@ warn() { echo -e "${Y}WARNING:${NC} $1"; }
 info() { echo -e "${B}INFO:${NC} $1"; }
 
 # Load centralized config
-. "$SCRIPT_DIR/scripts/cfg.sh"
+. "$REPO_ROOT/scripts/cfg.sh"
 
 # Configuration from centralized config
 REGION="$AWS_REGION"
 STACK_NAME="$AI_STACK"
 BUCKET_NAME="$DEPLOYMENT_BUCKET"
-LAYER_VERSION_FILE="$SCRIPT_DIR/.layer-version"
-BCRYPT_LAYER_VERSION_FILE="$SCRIPT_DIR/.bcrypt-layer-version"
-TEMPLATE_FILE="$SCRIPT_DIR/ai-stack.yaml"
+LAYER_VERSION_FILE="$REPO_ROOT/.layer-version"
+BCRYPT_LAYER_VERSION_FILE="$REPO_ROOT/.bcrypt-layer-version"
+TEMPLATE_FILE="$REPO_ROOT/ai-stack.yaml"
 CURRENT_OPENAI_VERSION="${OPENAI_VERSION:-$(python3 -c "import json; print(json.load(open('config.json'))['layers']['OPENAI_VERSION'])" 2>/dev/null || echo "1.99.3")}"
 CURRENT_BCRYPT_VERSION="${BCRYPT_VERSION:-$(python3 -c "import json; print(json.load(open('config.json'))['layers']['BCRYPT_VERSION'])" 2>/dev/null || echo "4.1.2")}"
 
@@ -30,8 +30,8 @@ CURRENT_BCRYPT_VERSION="${BCRYPT_VERSION:-$(python3 -c "import json; print(json.
 echo "🚀 AI Stack Smart Deployment (Windows Compatible)"
 echo "================================================="
 
-# Change to the script's directory to resolve relative paths
-cd "$SCRIPT_DIR"
+# Change to the repo root directory to resolve relative paths
+cd "$REPO_ROOT"
 
 # Check prerequisites
 command -v docker >/dev/null || error "Docker not found"
@@ -56,6 +56,9 @@ status "Prerequisites OK"
 # Create S3 bucket if needed
 info "Checking S3 bucket..."
 aws s3 mb s3://$BUCKET_NAME --region $REGION 2>/dev/null && status "Created bucket $BUCKET_NAME" || info "Bucket $BUCKET_NAME exists"
+
+# Enable versioning on the bucket (required for Lambda layer S3ObjectVersion)
+aws s3api put-bucket-versioning --bucket $BUCKET_NAME --region $REGION --versioning-configuration Status=Enabled 2>/dev/null && info "Enabled versioning on $BUCKET_NAME" || info "Versioning already enabled or bucket just created"
 
 # Check if we need to build the OpenAI layer
 NEED_LAYER_BUILD=false
@@ -418,17 +421,11 @@ aws cloudformation deploy \
   --parameter-overrides \
       DeploymentBucket=$BUCKET_NAME \
       OutputBucket=$OUTPUT_BUCKET \
-      EmailFrom=$EMAIL_FROM \
-      EmailTo=$EMAIL_TO \
       LeanMode=$LEAN_MODE \
       URLCollectorCodeVersion=$URL_COLLECTOR_VERSION \
       PropertyProcessorCodeVersion=$PROPERTY_PROCESSOR_VERSION \
       PropertyAnalyzerCodeVersion=$PROPERTY_ANALYZER_VERSION \
-      DashboardAPICodeVersion=$DASHBOARD_API_VERSION \
-      FavoritesAPICodeVersion=$FAVORITES_API_VERSION \
       FavoriteAnalyzerCodeVersion=$FAVORITE_ANALYZER_VERSION \
-      RegisterUserCodeVersion=$REGISTER_USER_VERSION \
-      LoginUserCodeVersion=$LOGIN_USER_VERSION \
       OpenAILayerObjectVersion=$LAYER_OBJECT_VERSION \
       BcryptLayerObjectVersion=$BCRYPT_LAYER_OBJECT_VERSION
 
@@ -501,12 +498,12 @@ echo "  # Test Favorites API function"
 echo "  aws lambda invoke --function-name $STACK_NAME-favorites-api --payload '{\"userId\":\"test\"}' favorites-api-response.json --region $REGION"
 echo ""
 echo "  # Run scraper with trigger script"
-echo "  cd $SCRIPT_DIR && ./trigger-lambda.sh --function property-processor --max-properties 5 --sync"
+echo "  cd $REPO_ROOT && ./trigger-lambda.sh --function property-processor --max-properties 5 --sync"
 echo ""
 echo "  # Run property analyzer with trigger script"
-echo "  cd $SCRIPT_DIR && ./trigger-lambda.sh --function property-analyzer --sync"
+echo "  cd $REPO_ROOT && ./trigger-lambda.sh --function property-analyzer --sync"
 echo ""
 echo "💡 Next Deployments:"
 echo "  - Layer will be cached (fast deployments)"
 echo "  - Only Lambda functions will be rebuilt"
-echo "  - To force layer rebuild: rm $LAYER_VERSION_FILE"
+echo "  - To force layer rebuild: rm $REPO_ROOT/.layer-version"

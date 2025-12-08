@@ -41,7 +41,10 @@
       "Bash(grep:*)",
       "Bash(./deploy-frontend.sh:*)",
       "Bash(aws lambda invoke:*)",
-      "Bash(aws logs get-log-events:*)"
+      "Bash(aws logs get-log-events:*)",
+      "Bash(docker info:*)",
+      "Bash(sudo systemctl status:*)",
+      "Bash(aws s3api get-bucket-versioning:*)"
     ],
     "deny": []
   }

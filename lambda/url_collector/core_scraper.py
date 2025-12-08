@@ -1,55 +1,56 @@
 #!/usr/bin/env python3
 """
-Core scraping functionality for homes.co.jp
+Core scraping functionality for realtor.com (US market)
 """
 import time
 import requests
 import random
 import re
+import json
 from bs4 import BeautifulSoup
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import boto3
 
-INQUIRE_SUBSTRING = "/inquire/"      # marketing / brochure / visit links
-
-def _is_inquiry_url(url: str) -> bool:
-    """Return True for brochure / visit enquiry URLs we don't want to scrape."""
-    return INQUIRE_SUBSTRING in url
-
-# Simplified browser profiles
+# Browser profiles for anti-bot evasion
 BROWSER_PROFILES = [
     {
         "name": "Chrome_Windows",
         "headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "sec-ch-ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
             "sec-ch-ua-platform": '"Windows"',
-            "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7"
+            "Accept-Language": "en-US,en;q=0.9"
         }
     },
     {
         "name": "Chrome_Mac",
         "headers": {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-            "sec-ch-ua": '"Chromium";v="123", "Google Chrome";v="123", "Not-A.Brand";v="99"',
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "sec-ch-ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
             "sec-ch-ua-platform": '"macOS"',
-            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8"
+            "Accept-Language": "en-US,en;q=0.9"
+        }
+    },
+    {
+        "name": "Firefox_Windows",
+        "headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+            "Accept-Language": "en-US,en;q=0.5"
         }
     }
 ]
 
+
 def create_session(logger=None):
     """Create HTTP session with anti-bot headers"""
     session = requests.Session()
-    
+
     # Random browser profile
     profile = random.choice(BROWSER_PROFILES)
     base_headers = profile["headers"].copy()
-    
+
     # Common headers
     base_headers.update({
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'Accept-Encoding': 'gzip, deflate, br',
         'DNT': '1',
         'Connection': 'keep-alive',
@@ -60,591 +61,302 @@ def create_session(logger=None):
         'Sec-Fetch-User': '?1',
         'Cache-Control': 'max-age=0'
     })
-    
+
     session.headers.update(base_headers)
-    
+
     if logger:
         logger.debug(f"Session created with {profile['name']}")
-    
+
     return session
 
-def parse_price_from_text(price_text):
-    """Parse price text like '32,000万円' or '32,000' to numeric value in man-yen"""
+
+def parse_us_price(price_text):
+    """
+    Parse US price text like '$450,000' or '450000' to numeric value in USD
+    Returns integer price in dollars
+    """
     if not price_text:
         return None
-    
-    # Ignore inquiry phrases and garbage like "3件万円"
-    if any(token in price_text for token in ('件', '問い合わせ', '未定', '相談')):
+
+    price_str = str(price_text)
+
+    # Skip non-price text
+    skip_phrases = ['contact', 'call', 'price upon request', 'auction', 'n/a']
+    if any(phrase in price_str.lower() for phrase in skip_phrases):
         return None
-    
-    # Extract the first "<number>万円" pattern — ignore trailing floor-plan text
-    m = re.search(r'([\d,]+)\s*万円', str(price_text))
-    if m:
-        return int(m.group(1).replace(',', ''))
-    
+
     try:
-        # Strip nuisance characters before digit test
-        price_clean = re.sub(r'[^\d,円万円〜台以上.]', '', str(price_text))
-        
-        # Check if cleaned string contains digits
-        if not re.search(r'\d', price_clean):
+        # Remove $ and commas, extract digits
+        cleaned = re.sub(r'[^\d.]', '', price_str)
+
+        if not cleaned:
             return None
-        
-        # Handle ranges by taking the lower bound
-        if '〜' in str(price_text):
-            # Split on 〜 and take the first part
-            price_parts = str(price_text).split('〜')
-            if price_parts and price_parts[0]:
-                price_clean = re.sub(r'[^\d,円万円.]', '', price_parts[0])
-                price_clean = price_clean.replace('〜', '')
-        
-        # Handle high-end prices like "1億2,880万円"
-        if '億' in price_clean:
-            oku_part, man_part = price_clean.split('億', 1)
-            oku_val = int(oku_part.replace(',', '')) * 10000  # 1 億 = 10,000 万
-            man_val = parse_price_from_text(man_part or '0万円') or 0
-            return oku_val + man_val
-        
-        # Handle different formats
-        if '万円' in price_clean:
-            # Format: "32,000万円" -> 32000
-            number_part = price_clean.replace('万円', '').replace(',', '')
-            return int(float(number_part))
-        elif '円' in price_clean and '万円' not in price_clean:
-            # Format: "320,000,000円" -> 32000 (convert from yen to man-yen)
-            number_part = price_clean.replace('円', '').replace(',', '')
-            return int(float(number_part) / 10000)  # Convert to man-yen
+
+        # Handle decimal prices (unlikely for real estate but just in case)
+        if '.' in cleaned:
+            price = int(float(cleaned))
         else:
-            # Format: "32,000" (assuming it's already in man-yen) -> 32000
-            number_part = price_clean.replace(',', '')
-            if number_part.isdigit():
-                return int(number_part)
+            price = int(cleaned)
+
+        # Sanity check - US real estate typically > $10,000
+        if price < 10000:
+            return None
+
+        return price
+
     except (ValueError, AttributeError):
-        pass
-    
+        return None
+
+
+def extract_listing_urls_from_realtor_html(html_content, logger=None):
+    """
+    Extract property listing URLs and prices from realtor.com search results HTML
+    Returns list of dicts: [{'url': str, 'price': int, 'city': str}, ...]
+    """
+    soup = BeautifulSoup(html_content, 'lxml')
+    results = []
+    seen_urls = set()
+
+    # realtor.com uses various card structures
+    # Look for property cards with data attributes or specific classes
+
+    # Method 1: Look for property card links
+    property_links = soup.select('a[href*="/realestateandhomes-detail/"]')
+
+    for link in property_links:
+        href = link.get('href', '')
+
+        # Skip if already seen
+        if href in seen_urls:
+            continue
+
+        # Build full URL
+        if href.startswith('/'):
+            full_url = f"https://www.realtor.com{href}"
+        elif href.startswith('http'):
+            full_url = href
+        else:
+            continue
+
+        # Extract property ID from URL for deduplication
+        # URL format: /realestateandhomes-detail/{address}_{property_id}
+        if full_url in seen_urls:
+            continue
+        seen_urls.add(full_url)
+
+        # Try to find price near this link
+        price = None
+
+        # Look for price in parent card element
+        card = link.find_parent(['div', 'li', 'article'], class_=re.compile(r'card|listing|property', re.I))
+        if card:
+            # Look for price element
+            price_elem = card.find(string=re.compile(r'\$[\d,]+'))
+            if price_elem:
+                price = parse_us_price(price_elem)
+
+            # Alternative: look for data-price attribute
+            if not price:
+                price_attr = card.get('data-price') or card.get('data-list-price')
+                if price_attr:
+                    price = parse_us_price(price_attr)
+
+        results.append({
+            'url': full_url,
+            'price': price or 0,
+            'city': 'Paonia'  # Default to target city, will be extracted from URL if needed
+        })
+
+    # Method 2: Try to parse JSON-LD structured data if available
+    script_tags = soup.find_all('script', type='application/ld+json')
+    for script in script_tags:
+        try:
+            data = json.loads(script.string)
+            # Handle different JSON-LD formats
+            if isinstance(data, list):
+                for item in data:
+                    if item.get('@type') in ['Product', 'RealEstateListing', 'Residence']:
+                        url = item.get('url')
+                        price_obj = item.get('offers', {})
+                        price = parse_us_price(price_obj.get('price') if isinstance(price_obj, dict) else None)
+
+                        if url and url not in seen_urls:
+                            seen_urls.add(url)
+                            results.append({
+                                'url': url,
+                                'price': price or 0,
+                                'city': 'Paonia'
+                            })
+        except (json.JSONDecodeError, AttributeError):
+            continue
+
+    if logger:
+        logger.debug(f"Extracted {len(results)} property URLs from HTML")
+
+    return results
+
+
+def extract_next_page_url(html_content, current_page, base_url):
+    """
+    Extract next page URL from realtor.com pagination
+    Returns next page URL or None if no more pages
+    """
+    soup = BeautifulSoup(html_content, 'lxml')
+
+    # Look for next page link
+    next_link = soup.find('a', {'aria-label': re.compile(r'next|page.*' + str(current_page + 1), re.I)})
+    if next_link and next_link.get('href'):
+        href = next_link['href']
+        if href.startswith('/'):
+            return f"https://www.realtor.com{href}"
+        return href
+
+    # Alternative: construct page URL directly
+    # realtor.com format: /realestateandhomes-search/City_ST/pg-{page}
+    next_page_url = f"{base_url}/pg-{current_page + 1}"
+
+    # Check if there are more results by looking for pagination info
+    pagination = soup.find(class_=re.compile(r'pagination|page-nav', re.I))
+    if pagination:
+        # Check if current page has results
+        results_count = soup.find(string=re.compile(r'\d+\s*(results?|homes?|properties)', re.I))
+        if results_count:
+            return next_page_url
+
     return None
 
-def normalize_ward_name(area_name):
-    """Keep ward names in English for consistency"""
-    # Simply return the area name as-is (already in English from URL)
-    return area_name
 
-def extract_listing_urls_from_html(html_content):
-    """Extract unique listing URLs from HTML content"""
-    soup = BeautifulSoup(html_content, 'lxml')
-    
-    # Select tags that directly carry the link
-    tag_candidates = soup.select(
-        '[href*="/mansion/b-"], [data-linkurl*="/mansion/b-"], [onclick*="/mansion/b-"]'
-    )
-    
-    BASE_URL = "https://www.homes.co.jp"
-    seen_urls = set()
-    results = []
-    
-    for tag in tag_candidates:
-        # 1️⃣ pull out the raw link
-        # pull out the raw link once
-        onclick_match = re.search(r"/mansion/b-\d+[^\s\"'>]*",
-                                  tag.get("onclick", ""))
-        href = (
-            tag.get("href")
-            or tag.get("data-linkurl")
-            or (onclick_match.group(0) if onclick_match else None)
-        )
-        
-        # skip if we somehow didn't extract
-        if not href:
-            continue
-        
-        if _is_inquiry_url(href):
-            continue  # skip brochure / visit links
-        
-        # 2️⃣ canonicalise to absolute URL
-        absolute_url = href if href.startswith('http') else f"{BASE_URL}{href}"
-        
-        # 3️⃣ dedupe on the whole URL
-        if absolute_url in seen_urls:
-            continue
-        seen_urls.add(absolute_url)
-        results.append(absolute_url)
-    
-    return results
-
-def _find_price(node):
+def collect_realtor_listings(city, state, max_pages=50, session=None, logger=None, rate_limiter=None):
     """
-    Given a BeautifulSoup tag associated with a listing's <a>,
-    return (price_value_int, price_text_str) or (None, None).
+    Collect property listings from realtor.com for a given city
+
+    Args:
+        city: City name (e.g., 'Paonia')
+        state: State abbreviation (e.g., 'CO')
+        max_pages: Maximum number of pages to scrape
+        session: requests.Session object
+        logger: Logger instance
+        rate_limiter: RateLimiter instance
+
+    Returns:
+        List of dicts: [{'url': str, 'price': int, 'city': str}, ...]
     """
-    # Search order:
-    # a. Card layout – sibling <div class="price">
-    sibling_price = node.find_next_sibling(class_='price')
-    if sibling_price:
-        price_text = sibling_price.get_text(strip=True)
-        price_value = parse_price_from_text(price_text)
-        if price_value and price_value > 0:
-            return (price_value, price_text)
-    
-    # NEW: look forward anywhere inside the same card for a .price element
-    deep_price = node.find_next(class_=re.compile('price'))
-    if deep_price:
-        price_text = deep_price.get_text(strip=True)
-        price_value = parse_price_from_text(price_text)
-        if price_value and price_value > 0:
-            return (price_value, price_text)
-    
-    # NEW-2: if we still have nothing, look *within the same card* for any span.num
-    deepest_num = node.find_next('span', class_='num')
-    if deepest_num:
-        # sometimes the surrounding tag holds "万円" outside <span class="num">
-        parent_text = deepest_num.parent.get_text(strip=True)
-        price_text = deepest_num.text + ('' if '万円' in parent_text else '万円')
-        price_value = parse_price_from_text(price_text)
-        if price_value and price_value > 0:
-            return (price_value, price_text)
-    
-    # b. Table layout – the enclosing <tr> → the <td class*="price">
-    tr = node.find_parent('tr')
-    if tr:
-        price_cell = tr.find('td', class_=re.compile('price'))
-        if price_cell:
-            price_span = price_cell.find('span', class_='num')
-            if price_span and '万円' in price_cell.text:
-                price_num = price_span.text.strip()
-                price_text = f"{price_num}万円"
-                price_value = parse_price_from_text(price_text)
-                if price_value and price_value > 0:
-                    return (price_value, price_text)
-    
-    # c. Generic climb – first ancestor that contains ".price" in its classes
-    # or has a child <span class="num">
-    container = node
-    for _ in range(10):  # Look up to 10 levels
-        parent = container.parent
-        if not parent:
-            break
-        
-        # Check for price class
-        if hasattr(parent, 'get'):
-            parent_classes = parent.get('class', [])
-            if parent_classes and any('price' in str(c) for c in parent_classes):
-                price_text = parent.get_text(strip=True)
-                price_value = parse_price_from_text(price_text)
-                if price_value and price_value > 0:
-                    return (price_value, price_text)
-        
-        # Check for child with price
-        price_elem = parent.find(class_=re.compile('price'))
-        if price_elem:
-            price_text = price_elem.get_text(strip=True)
-            price_value = parse_price_from_text(price_text)
-            if price_value and price_value > 0:
-                return (price_value, price_text)
-        
-        container = parent
-    
-    return (None, None)
-
-# Alternative: Hybrid approach - use regex for URLs, BeautifulSoup for prices
-def extract_listings_with_prices_from_html(html_content):
-    """Hybrid approach: regex for URLs (fast), BeautifulSoup for price extraction (reliable)"""
-    soup = BeautifulSoup(html_content, 'lxml')
-    
-    # Select tags that directly carry the link
-    tag_candidates = soup.select(
-        '[href*="/mansion/b-"], [data-linkurl*="/mansion/b-"], [onclick*="/mansion/b-"]'
-    )
-    
-    BASE_URL = "https://www.homes.co.jp"
-    listings, seen_urls, zero_price_count = [], set(), 0
-    
-    for tag in tag_candidates:
-        # 1️⃣ pull out the raw link
-        # pull out the raw link once
-        onclick_match = re.search(r"/mansion/b-\d+[^\s\"'>]*",
-                                  tag.get("onclick", ""))
-        href = (
-            tag.get("href")
-            or tag.get("data-linkurl")
-            or (onclick_match.group(0) if onclick_match else None)
-        )
-        
-        # skip if we somehow didn't extract
-        if not href or _is_inquiry_url(href):
-            continue    # skip empty or inquiry links
-        
-        # 2️⃣ canonicalise to absolute URL
-        absolute_url = href if href.startswith('http') else f"{BASE_URL}{href}"
-        
-        # 3️⃣ dedupe on the whole URL
-        if absolute_url in seen_urls:
-            continue
-        seen_urls.add(absolute_url)
-        
-        # 4️⃣ find nearest price
-        price_value, price_text = _find_price(tag)
-        
-        if price_value is not None:
-            listings.append({'url': absolute_url,
-                             'price': price_value,
-                             'price_text': price_text})
-        else:
-            listings.append({'url': absolute_url,
-                             'price': 0,
-                             'price_text': ''})
-            zero_price_count += 1
-    
-    # Log warning if more than 5% of rows have zero price
-    if listings:
-        zero_price_percentage = (zero_price_count / len(listings)) * 100
-        if zero_price_percentage > 5:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(f"High zero-price rate: {zero_price_percentage:.1f}% ({zero_price_count}/{len(listings)}) rows have no price")
-    
-    return listings
-
-def collect_area_listing_urls(area_name, max_pages=None, session=None, logger=None):
-    """Collect listing URLs from a specific Tokyo area (legacy function for compatibility)"""
-    listings_with_prices = collect_area_listings_with_prices(area_name, max_pages, session, logger)
-    return [listing['url'] for listing in listings_with_prices]
-
-def collect_area_listings_with_prices(area_name, max_pages=None, session=None, logger=None):
-    """Collect listing URLs with prices from a specific Tokyo area"""
-    # Validate area_name to prevent malformed URLs
-    if not area_name or not area_name.strip():
-        raise ValueError(f"Invalid area_name: '{area_name}' - area_name cannot be empty or None")
-    
-    area_name = area_name.strip()
-    base_url = f"https://www.homes.co.jp/mansion/chuko/tokyo/{area_name}/list"
-    
     if session is None:
         session = create_session(logger)
-        should_close_session = True
-    else:
-        should_close_session = False
-    
-    all_listings = {}  # Use dict to deduplicate by URL while keeping price info
-    
+
+    # Format city name for URL (replace spaces with underscores, remove special chars)
+    city_formatted = city.replace(' ', '_').replace('-', '_')
+    base_url = f"https://www.realtor.com/realestateandhomes-search/{city_formatted}_{state}"
+
     if logger:
-        logger.info(f"Collecting listings with prices from {area_name}")
-    
-    try:
-        # Get page 1
-        response = session.get(base_url, timeout=15)
-        
-        if response.status_code != 200:
-            raise Exception(f"Failed to access {area_name}: HTTP {response.status_code}")
-        
-        if "pardon our interruption" in response.text.lower():
-            raise Exception(f"Anti-bot protection detected on {area_name}")
-        
-        # Parse pagination info using regex
-        # Extract total count
-        total_count_match = re.search(r'<span[^>]*class="totalNum"[^>]*>(\d+)</span>', response.text)
-        total_count = int(total_count_match.group(1)) if total_count_match else 0
+        logger.info(f"Starting collection for {city}, {state} from {base_url}")
 
-        # Extract page numbers from data-page attributes
-        page_numbers = re.findall(r'data-page="(\d+)"', response.text)
-        total_pages = max([int(p) for p in page_numbers]) if page_numbers else 1
-
-        # Alternative: Look for the last page link
-        if not page_numbers:
-            # Try to find pagination links with page numbers in href
-            page_href_matches = re.findall(r'[?&]page=(\d+)', response.text)
-            if page_href_matches:
-                total_pages = max([int(p) for p in page_href_matches])
-            else:
-                total_pages = 1
-        
-        if max_pages:
-            total_pages = min(total_pages, max_pages)
-        
-        # Normalize ward name from area_name
-        ward = normalize_ward_name(area_name)
-        
-        # Extract listings with prices from page 1
-        page1_listings = extract_listings_with_prices_from_html(response.text)
-        for listing in page1_listings:
-            listing['ward'] = ward  # Add ward to each listing
-            all_listings[listing['url']] = listing
-        
-        # Set referer for subsequent requests
-        session.headers['Referer'] = base_url
-        
-        # Get remaining pages
-        for page_num in range(2, total_pages + 1):
-            # Anti-bot delay
-            time.sleep(random.uniform(1, 3))
-            page_url = f"{base_url}/?page={page_num}"
-            
-            try:
-                response = session.get(page_url, timeout=15)
-                
-                if response.status_code != 200:
-                    if logger:
-                        logger.debug(f"Failed page {page_num}: HTTP {response.status_code}")
-                    continue
-                
-                if "pardon our interruption" in response.text.lower():
-                    if logger:
-                        logger.error(f"Anti-bot triggered on page {page_num}")
-                    break
-                
-                page_listings = extract_listings_with_prices_from_html(response.text)
-                for listing in page_listings:
-                    listing['ward'] = ward  # Add ward to each listing
-                    all_listings[listing['url']] = listing
-                
-                session.headers['Referer'] = page_url
-                
-            except Exception as e:
-                if logger:
-                    logger.error(f"Error on page {page_num}: {str(e)}")
-                continue
-        
-        area_listings_list = list(all_listings.values())
-        if logger:
-            logger.debug(f"Found {len(area_listings_list)} listings with prices in {area_name}")
-        
-        return area_listings_list
-        
-    except Exception as e:
-        if logger:
-            logger.error(f"Error collecting {area_name}: {str(e)}")
-        return []
-    
-    finally:
-        if should_close_session:
-            session.close()
-
-
-
-
-def discover_tokyo_areas(logger=None):
-    """Discover all Tokyo area URLs using regex"""
-    session = create_session(logger)
-    city_listing_url = "https://www.homes.co.jp/mansion/chuko/tokyo/city/"
-    
-    try:
-        response = session.get(city_listing_url, timeout=15)
-        if response.status_code != 200:
-            raise Exception(f"Failed to access city listing: HTTP {response.status_code}")
-        
-        area_links = []
-        
-        # Find area links using regex
-        # Pattern: /mansion/chuko/tokyo/AREA_NAME/list/
-        pattern = re.compile(r'/mansion/chuko/tokyo/([^/]+)/list/')
-        matches = pattern.findall(response.text)
-        
-        for area_name in matches:
-            # Clean and validate area name
-            area_name = area_name.strip()
-            # Skip invalid entries
-            if (area_name and 
-                area_name != 'city' and 
-                not area_name.startswith('.') and
-                not area_name.startswith('#') and
-                len(area_name) < 50):  # Reasonable length limit
-                area_links.append(area_name)
-        
-        # Remove duplicates and sort
-        area_links = sorted(list(set(area_links)))
-        
-        # Use fallback list if no links found or too few
-        if len(area_links) < 10:
-            if logger:
-                logger.warning(f"Only found {len(area_links)} areas, using fallback list")
-            area_links = [
-                'adachi-city', 'akiruno-city', 'akishima-city', 'arakawa-city',
-                'bunkyo-city', 'chiyoda-city', 'chofu-city', 'chuo-city',
-                'edogawa-city', 'fuchu-city', 'fussa-city', 'hachioji-city',
-                'hamura-city', 'higashikurume-city', 'higashimurayama-city',
-                'higashiyamato-city', 'hino-city', 'hinode-town', 'hinohara-village',
-                'inagi-city', 'itabashi-city', 'katsushika-city', 'kita-city',
-                'kiyose-city', 'kodaira-city', 'koganei-city', 'kokubunji-city',
-                'komae-city', 'koto-city', 'kunitachi-city', 'machida-city',
-                'meguro-city', 'minato-city', 'mitaka-city', 'mizuho-town',
-                'musashimurayama-city', 'musashino-city', 'nakano-city',
-                'nerima-city', 'nishitokyo-city', 'ome-city', 'ota-city',
-                'okutama-town', 'setagaya-city', 'shibuya-city', 'shinagawa-city',
-                'shinjuku-city', 'suginami-city', 'sumida-city', 'tachikawa-city',
-                'taito-city', 'tama-city', 'toshima-city'
-            ]
-        
-        if logger:
-            logger.debug(f"Discovered {len(area_links)} Tokyo areas")
-        
-        return area_links
-        
-    except Exception as e:
-        if logger:
-            logger.error(f"Failed to discover areas: {str(e)}")
-        
-        # Return comprehensive fallback list
-        return [
-            'chofu-city', 'shibuya-city', 'shinjuku-city', 'setagaya-city',
-            'minato-city', 'chiyoda-city', 'chuo-city', 'meguro-city',
-            'ota-city', 'shinagawa-city', 'nerima-city', 'suginami-city'
-        ]
-    
-    finally:
-        session.close()
-
-
-def extract_suumo_listing_urls_from_html(html_content):
-    """Extract unique listing URLs from Suumo HTML content"""
-    soup = BeautifulSoup(html_content, 'lxml')
-    
-    # Find all property unit titles with links
-    property_links = soup.select('.property_unit-title a')
-    
-    BASE_URL = "https://suumo.jp"
+    all_listings = []
     seen_urls = set()
-    results = []
-    
-    for link in property_links:
-        href = link.get('href')
-        if not href:
-            continue
-            
-        # Make absolute URL
-        absolute_url = href if href.startswith('http') else f"{BASE_URL}{href}"
-        
-        # Remove duplicates
-        if absolute_url in seen_urls:
-            continue
-        seen_urls.add(absolute_url)
-        results.append(absolute_url)
-    
-    return results
 
+    for page in range(1, max_pages + 1):
+        if rate_limiter:
+            rate_limiter.wait()
 
-def collect_suumo_listings_with_prices(session=None, logger=None, rate_limiter=None, max_pages=None):
-    """Collect all Suumo property URLs with prices from paginated listings"""
-    
-    # Import config to get base URL
-    import json
-    import os
-    
-    # Try multiple config paths for different environments
-    config_paths = [
-        '/config.json',  # Lambda environment
-        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config.json'),  # Local development
-        './config.json'  # Current directory fallback
-    ]
-    
-    config = None
-    for config_path in config_paths:
+        # Construct page URL
+        if page == 1:
+            url = base_url
+        else:
+            url = f"{base_url}/pg-{page}"
+
+        if logger:
+            logger.debug(f"Fetching page {page}: {url}")
+
         try:
-            with open(config_path, 'r') as f:
-                config = json.load(f)
-            break
-        except FileNotFoundError:
-            continue
-    
-    if not config:
-        # Fallback to hardcoded values if config not found
-        base_url = "https://suumo.jp/jj/bukken/ichiran/JJ010FJ001/?ar=030&bs=011&ta=13&jspIdFlg=patternShikugun&sc=13101&sc=13102&sc=13103&sc=13104&sc=13105&sc=13113&sc=13106&sc=13107&sc=13108&sc=13118&sc=13121&sc=13122&sc=13123&sc=13109&sc=13110&sc=13111&sc=13112&sc=13114&sc=13115&sc=13120&sc=13116&sc=13117&sc=13119&kb=1&kt=3000&mb=0&mt=9999999&ekTjCd=&ekTjNm=&tj=0&cnb=0&cn=9999999&srch_navi=1"
-        max_pages = max_pages or 700
-    else:
-        base_url = config['suumo']['BASE_URL']
-        max_pages = max_pages or config['suumo'].get('MAX_PAGES', 700)
-    
-    should_close_session = session is None
-    if session is None:
-        session = create_session(logger)
-    
-    try:
-        all_listings = {}
-        
-        # Iterate through pages
-        for page_num in range(1, max_pages + 1):
-            try:
-                # Add page parameter
-                page_url = f"{base_url}&page={page_num}"
-                
+            # Add referer header for more natural browsing
+            headers = {'Referer': base_url if page > 1 else 'https://www.realtor.com/'}
+
+            response = session.get(url, headers=headers, timeout=30)
+
+            # Check for blocking/rate limiting
+            if response.status_code == 403:
                 if logger:
-                    logger.info(f"Fetching Suumo page {page_num}/{max_pages}: {page_url}")
-                
-                # Rate limiting
+                    logger.warning(f"403 Forbidden on page {page} - possible rate limiting")
                 if rate_limiter:
-                    rate_limiter.wait()
-                
-                response = session.get(page_url, timeout=15)
-                if response.status_code != 200:
-                    if logger:
-                        logger.warning(f"HTTP {response.status_code} for page {page_num}")
-                    continue
-                
-                soup = BeautifulSoup(response.text, 'lxml')
-                
-                # Find all property units
-                property_units = soup.select('.property_unit')
-                
-                if not property_units:
-                    if logger:
-                        logger.info(f"No more properties found at page {page_num}, stopping")
-                    break
-                
-                for unit in property_units:
-                    # Get URL
-                    title_link = unit.select_one('.property_unit-title a')
-                    if not title_link:
-                        continue
-                    
-                    href = title_link.get('href')
-                    if not href:
-                        continue
-                    
-                    url = href if href.startswith('http') else f"https://suumo.jp{href}"
-                    
-                    # Get price
-                    price_elem = unit.select_one('.dottable-value')
-                    if price_elem:
-                        price_text = price_elem.get_text(strip=True)
-                        price_value = parse_price_from_text(price_text)
-                        
-                        if price_value and price_value > 0:
-                            # Extract property ID from URL
-                            property_id = re.search(r'/nc_(\d+)/', url)
-                            if property_id:
-                                property_id = f"suumo_{property_id.group(1)}"
-                            else:
-                                property_id = url.split('/')[-2] if url.endswith('/') else url.split('/')[-1]
-                            
-                            all_listings[property_id] = {
-                                'url': url,
-                                'price': price_value,
-                                'source': 'suumo'
-                            }
-                
+                    rate_limiter.record_error(is_rate_limit=True)
+                break
+
+            if response.status_code == 404:
                 if logger:
-                    logger.debug(f"Page {page_num}: Found {len(property_units)} units, total collected: {len(all_listings)}")
-                
-                # Rate limiting success
-                if rate_limiter:
-                    rate_limiter.record_success()
-                    
-            except Exception as e:
+                    logger.info(f"Page {page} not found - reached end of listings")
+                break
+
+            response.raise_for_status()
+
+            if rate_limiter:
+                rate_limiter.record_success()
+
+            # Parse listings from this page
+            page_listings = extract_listing_urls_from_realtor_html(response.text, logger)
+
+            if not page_listings:
                 if logger:
-                    logger.error(f"Error on Suumo page {page_num}: {str(e)}")
-                if rate_limiter:
-                    rate_limiter.record_error()
+                    logger.info(f"No listings found on page {page} - reached end")
+                break
+
+            # Add new listings (deduplicate)
+            new_count = 0
+            for listing in page_listings:
+                if listing['url'] not in seen_urls:
+                    seen_urls.add(listing['url'])
+                    listing['city'] = city  # Ensure city is set
+                    all_listings.append(listing)
+                    new_count += 1
+
+            if logger:
+                logger.info(f"Page {page}: {new_count} new listings (total: {len(all_listings)})")
+
+            # If no new listings were found, we've likely seen all properties
+            if new_count == 0:
+                if logger:
+                    logger.info(f"No new listings on page {page} - stopping")
+                break
+
+            # Small delay between pages
+            time.sleep(random.uniform(1.0, 2.0))
+
+        except requests.RequestException as e:
+            if logger:
+                logger.error(f"Error fetching page {page}: {str(e)}")
+            if rate_limiter:
+                rate_limiter.record_error()
+            # Continue to next page or break depending on error
+            if 'timeout' in str(e).lower():
                 continue
-        
-        listings_list = list(all_listings.values())
-        if logger:
-            logger.info(f"Found {len(listings_list)} Suumo listings with prices")
-        
-        return listings_list
-        
-    except Exception as e:
-        if logger:
-            logger.error(f"Error collecting Suumo listings: {str(e)}")
-        return []
-    
-    finally:
-        if should_close_session:
-            session.close()
+            break
+
+    if logger:
+        logger.info(f"Collection complete for {city}, {state}: {len(all_listings)} total listings")
+
+    return all_listings
+
+
+def get_target_cities(config, logger=None):
+    """
+    Get list of target cities to scrape based on configuration
+
+    Args:
+        config: Configuration dict with 'realtor' section
+        logger: Logger instance
+
+    Returns:
+        List of dicts: [{'city': str, 'state': str}, ...]
+    """
+    # For now, return the single configured city
+    # Can be expanded later to support multiple cities
+    realtor_config = config.get('realtor', {})
+
+    target_city = realtor_config.get('TARGET_CITY', 'Paonia')
+    target_state = realtor_config.get('TARGET_STATE', 'CO')
+
+    cities = [{'city': target_city, 'state': target_state}]
+
+    if logger:
+        logger.info(f"Target cities: {cities}")
+
+    return cities

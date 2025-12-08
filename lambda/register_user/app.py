@@ -16,7 +16,7 @@ sys.path.append('/opt')
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 dynamodb = boto3.resource('dynamodb')
-users_table_name = config.get_env_var('USERS_TABLE') if config else os.environ.get('USERS_TABLE', 'tokyo-real-estate-ai-users')
+users_table_name = config.get_env_var('USERS_TABLE') if config else os.environ.get('USERS_TABLE', 'real-estate-ai-users')
 users_table = dynamodb.Table(users_table_name)
 
 def validate_email(email):

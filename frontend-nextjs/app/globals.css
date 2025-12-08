@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground-rgb: 0, 0, 0;
+  --background-start-rgb: 255, 255, 255;
+  --background-end-rgb: 245, 245, 245;
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background: linear-gradient(
+    to bottom,
+    rgb(var(--background-start-rgb)),
+    rgb(var(--background-end-rgb))
+  );
+}
+
+/* Property card styles */
+.property-card {
+  @apply bg-white rounded-lg shadow-md overflow-hidden transition-all hover:shadow-lg;
+}
+
+.property-card:hover {
+  transform: translateY(-2px);
+}
+
+/* Analysis markdown styles */
+.analysis-content h2 {
+  @apply text-xl font-bold mt-4 mb-2;
+}
+
+.analysis-content h3 {
+  @apply text-lg font-semibold mt-3 mb-1;
+}
+
+.analysis-content ul {
+  @apply list-disc pl-5 my-2;
+}
+
+.analysis-content li {
+  @apply my-1;
+}
+
+.analysis-content p {
+  @apply my-2;
+}
+
+.analysis-content strong {
+  @apply font-semibold;
+}
+
+/* Price formatting */
+.price-below-median {
+  @apply text-green-600;
+}
+
+.price-above-median {
+  @apply text-red-600;
+}
