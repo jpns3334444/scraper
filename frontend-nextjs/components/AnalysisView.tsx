@@ -10,11 +10,13 @@ interface AnalysisViewProps {
   onClose: () => void;
 }
 
+type AnalysisStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
 export function AnalysisView({ favorite, onClose }: AnalysisViewProps) {
   const { getAnalysis } = useFavorites();
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [images, setImages] = useState<string[]>([]);
-  const [status, setStatus] = useState<string>(favorite.analysis_status || 'pending');
+  const [status, setStatus] = useState<AnalysisStatus>(favorite.analysis_status || 'pending');
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -24,7 +26,7 @@ export function AnalysisView({ favorite, onClose }: AnalysisViewProps) {
         if (result) {
           setAnalysis(result.analysis_result);
           setImages(result.property_images || []);
-          setStatus(result.analysis_status);
+          setStatus(result.analysis_status as AnalysisStatus);
         }
       } catch (error) {
         console.error('Failed to load analysis:', error);
