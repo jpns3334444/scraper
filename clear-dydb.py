@@ -21,7 +21,7 @@ config = load_config()
 def clear_dynamodb_table(table_name, region=None):
     """Delete all items from a DynamoDB table"""
     
-    region = region or config.get('AWS_REGION', 'ap-northeast-1')
+    region = region or config.get('AWS_REGION', 'us-east-1')
     dynamodb = boto3.resource('dynamodb', region_name=region)
     table = dynamodb.Table(table_name)
     
@@ -58,7 +58,7 @@ def clear_dynamodb_table(table_name, region=None):
             with table.batch_writer() as batch:
                 for item in items:
                     # Get the key fields for this table
-                    if table_name == config.get('DDB_URL_TRACKING', 'tokyo-real-estate-ai-urls'):
+                    if table_name == config.get('DDB_URL_TRACKING', 'real-estate-ai-urls'):
                         # URL tracking table has 'url' as primary key
                         batch.delete_item(Key={'url': item['url']})
                     else:
@@ -97,8 +97,8 @@ def main():
     
     # Define tables from config
     tables = [
-        config.get('DDB_URL_TRACKING', 'tokyo-real-estate-ai-urls'),
-        config.get('DDB_PROPERTIES', 'tokyo-real-estate-ai-analysis-db')
+        config.get('DDB_URL_TRACKING', 'real-estate-ai-urls'),
+        config.get('DDB_PROPERTIES', 'real-estate-ai-properties')
     ]
     
     print("\nThis script will delete ALL data from the following tables:")

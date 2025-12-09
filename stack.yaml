@@ -1,0 +1,1134 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: US Real Estate AI - Unified Stack (API + Workers + Infrastructure)
+
+Parameters:
+  DeploymentBucket:
+    Type: String
+    Description: S3 bucket containing Lambda deployment packages and layers
+  OutputBucket:
+    Type: String
+    Default: real-estate-ai-data
+    Description: S3 bucket for storing scraped data and images
+
+  # Worker Lambda versions
+  URLCollectorCodeVersion:
+    Type: String
+    Default: latest
+  PropertyProcessorCodeVersion:
+    Type: String
+    Default: latest
+  PropertyAnalyzerCodeVersion:
+    Type: String
+    Default: latest
+  FavoriteAnalyzerCodeVersion:
+    Type: String
+    Default: latest
+
+  # API Lambda versions
+  DashboardAPICodeVersion:
+    Type: String
+    Default: latest
+  FavoritesAPICodeVersion:
+    Type: String
+    Default: latest
+
+  # Layer versions
+  OpenAILayerObjectVersion:
+    Type: String
+    Description: S3 object version ID for openai-layer.zip
+
+Resources:
+  #############################################
+  # Lambda Layers
+  #############################################
+
+  OpenAILayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: !Sub '${AWS::StackName}-openai'
+      CompatibleRuntimes: [python3.12]
+      Description: OpenAI SDK layer
+      Content:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: layers/openai-layer.zip
+        S3ObjectVersion: !Ref OpenAILayerObjectVersion
+
+  #############################################
+  # IAM Roles
+  #############################################
+
+  # Role for worker Lambdas (scraping, analysis)
+  WorkerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:PutObject, s3:GetObject, s3:ListBucket]
+                Resource:
+                  - !Sub 'arn:aws:s3:::${OutputBucket}'
+                  - !Sub 'arn:aws:s3:::${OutputBucket}/*'
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:BatchWriteItem
+                  - dynamodb:GetItem
+                  - dynamodb:BatchGetItem
+                  - dynamodb:Scan
+                  - dynamodb:Query
+                  - dynamodb:DescribeTable
+                Resource:
+                  - !GetAtt PropertiesTable.Arn
+                  - !Sub '${PropertiesTable.Arn}/index/*'
+                  - !GetAtt URLTrackingTable.Arn
+        - PolicyName: SQSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource:
+                  - !GetAtt URLCollectorDLQ.Arn
+                  - !GetAtt PropertyProcessorDLQ.Arn
+                  - !GetAtt PropertyAnalyzerDLQ.Arn
+
+  # Role for API Lambdas + Favorite Analyzer (needs more permissions)
+  APIExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:ListBucket, s3:DeleteObject]
+                Resource:
+                  - !Sub 'arn:aws:s3:::${OutputBucket}'
+                  - !Sub 'arn:aws:s3:::${OutputBucket}/*'
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:real-estate-ai/openai-api-key-*'
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:BatchWriteItem
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:DescribeTable
+                Resource:
+                  - !GetAtt PropertiesTable.Arn
+                  - !Sub '${PropertiesTable.Arn}/index/*'
+                  - !GetAtt UserPreferencesTable.Arn
+                  - !Sub '${UserPreferencesTable.Arn}/index/*'
+        - PolicyName: LambdaInvokeAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-favorite-analyzer'
+
+  #############################################
+  # DynamoDB Tables
+  #############################################
+
+  PropertiesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-properties'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: property_id
+          AttributeType: S
+        - AttributeName: sort_key
+          AttributeType: S
+        - AttributeName: city
+          AttributeType: S
+        - AttributeName: price_per_sqft
+          AttributeType: N
+        - AttributeName: analysis_date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: property_id
+          KeyType: HASH
+        - AttributeName: sort_key
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: city-index
+          KeySchema:
+            - AttributeName: city
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: city-price-index
+          KeySchema:
+            - AttributeName: city
+              KeyType: HASH
+            - AttributeName: price_per_sqft
+              KeyType: RANGE
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes: [listing_url, price, size_sqft, beds, baths, year_built, property_type]
+        - IndexName: analysis-date-index
+          KeySchema:
+            - AttributeName: city
+              KeyType: HASH
+            - AttributeName: analysis_date
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  URLTrackingTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-urls'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: url
+          AttributeType: S
+      KeySchema:
+        - AttributeName: url
+          KeyType: HASH
+
+  UserPreferencesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-user-preferences'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: property_id
+          AttributeType: S
+        - AttributeName: preference_type
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+        - AttributeName: property_id
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: user-type-index
+          KeySchema:
+            - AttributeName: user_id
+              KeyType: HASH
+            - AttributeName: preference_type
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  #############################################
+  # Worker Lambda Functions
+  #############################################
+
+  URLCollectorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-url-collector'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt WorkerExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/url_collector.zip
+        S3ObjectVersion: !Ref URLCollectorCodeVersion
+      Timeout: 900
+      MemorySize: 1024
+      Layers:
+        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
+      DeadLetterConfig:
+        TargetArn: !GetAtt URLCollectorDLQ.Arn
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref PropertiesTable
+          URL_TRACKING_TABLE: !Ref URLTrackingTable
+          TARGET_CITY: 'Paonia'
+          TARGET_STATE: 'CO'
+          CITY_ID: '14856'
+          MAX_PAGES: '10'
+
+  PropertyProcessorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-property-processor'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt WorkerExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/property_processor.zip
+        S3ObjectVersion: !Ref PropertyProcessorCodeVersion
+      Timeout: 900
+      MemorySize: 2048
+      Layers:
+        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
+      DeadLetterConfig:
+        TargetArn: !GetAtt PropertyProcessorDLQ.Arn
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref OutputBucket
+          DYNAMODB_TABLE: !Ref PropertiesTable
+          URL_TRACKING_TABLE: !Ref URLTrackingTable
+          MAX_PROPERTIES: '0'
+          MAX_RUNTIME_MINUTES: '14'
+
+  PropertyAnalyzerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-property-analyzer'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt WorkerExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/property_analyzer.zip
+        S3ObjectVersion: !Ref PropertyAnalyzerCodeVersion
+      Timeout: 900
+      MemorySize: 1024
+      Layers:
+        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
+      DeadLetterConfig:
+        TargetArn: !GetAtt PropertyAnalyzerDLQ.Arn
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref PropertiesTable
+          DAYS_BACK: '7'
+          ANALYZE_ALL: 'false'
+
+  FavoriteAnalyzerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-favorite-analyzer'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt APIExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/favorite_analyzer.zip
+        S3ObjectVersion: !Ref FavoriteAnalyzerCodeVersion
+      Timeout: 900
+      MemorySize: 1024
+      Layers:
+        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
+        - !Ref OpenAILayer
+      Environment:
+        Variables:
+          PREFERENCES_TABLE: !Ref UserPreferencesTable
+          PROPERTIES_TABLE: !Ref PropertiesTable
+          DATA_BUCKET: !Ref OutputBucket
+          OPENAI_SECRET_NAME: real-estate-ai/openai-api-key
+
+  #############################################
+  # API Lambda Functions
+  #############################################
+
+  DashboardAPIFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-dashboard-api'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt APIExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/dashboard.zip
+        S3ObjectVersion: !Ref DashboardAPICodeVersion
+      Timeout: 30
+      MemorySize: 512
+      Layers:
+        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref PropertiesTable
+          PREFERENCES_TABLE: !Ref UserPreferencesTable
+
+  FavoritesAPIFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-favorites-api'
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Role: !GetAtt APIExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: functions/favorites.zip
+        S3ObjectVersion: !Ref FavoritesAPICodeVersion
+      Timeout: 30
+      MemorySize: 512
+      Layers:
+        - !Sub 'arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:15'
+      Environment:
+        Variables:
+          PREFERENCES_TABLE: !Ref UserPreferencesTable
+          PROPERTIES_TABLE: !Ref PropertiesTable
+          OUTPUT_BUCKET: !Ref OutputBucket
+          FAVORITE_ANALYZER_FUNCTION: !Sub '${AWS::StackName}-favorite-analyzer'
+
+  #############################################
+  # Dead Letter Queues
+  #############################################
+
+  URLCollectorDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-url-collector-dlq'
+      MessageRetentionPeriod: 1209600
+
+  PropertyProcessorDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-property-processor-dlq'
+      MessageRetentionPeriod: 1209600
+
+  PropertyAnalyzerDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-property-analyzer-dlq'
+      MessageRetentionPeriod: 1209600
+
+  #############################################
+  # API Gateway
+  #############################################
+
+  RestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${AWS::StackName}-api'
+      Description: US Real Estate API
+      EndpointConfiguration:
+        Types: [REGIONAL]
+
+  # CORS Gateway Responses
+  GatewayResponse4XX:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref RestApi
+      ResponseType: DEFAULT_4XX
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Methods: "'*'"
+
+  GatewayResponse5XX:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref RestApi
+      ResponseType: DEFAULT_5XX
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Methods: "'*'"
+
+  # /properties
+  PropertiesResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: properties
+
+  PropertiesGET:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref PropertiesResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DashboardAPIFunction.Arn}/invocations'
+
+  PropertiesOPTIONS:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref PropertiesResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode":200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  # /favorites
+  FavoritesResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: favorites
+
+  FavoritesPOST:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref FavoritesResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FavoritesAPIFunction.Arn}/invocations'
+
+  FavoritesOPTIONS:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref FavoritesResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode":200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  # /favorites/user/{userId}
+  FavoritesUserResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref FavoritesResource
+      PathPart: user
+
+  FavoritesUserIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref FavoritesUserResource
+      PathPart: '{userId}'
+
+  FavoritesUserGET:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref FavoritesUserIdResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FavoritesAPIFunction.Arn}/invocations'
+
+  FavoritesUserOPTIONS:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref FavoritesUserIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode":200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  # /favorites/{id}
+  FavoritesIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref FavoritesResource
+      PathPart: '{id}'
+
+  FavoritesDELETE:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref FavoritesIdResource
+      HttpMethod: DELETE
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FavoritesAPIFunction.Arn}/invocations'
+
+  FavoritesIdOPTIONS:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref FavoritesIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode":200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  # /favorites/compare
+  FavoritesCompareResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref FavoritesResource
+      PathPart: compare
+
+  FavoritesComparePOST:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref FavoritesCompareResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FavoritesAPIFunction.Arn}/invocations'
+
+  FavoritesCompareOPTIONS:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref FavoritesCompareResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode":200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  # /favorites/analysis/{userEmail}/{propertyId}
+  FavoritesAnalysisResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref FavoritesResource
+      PathPart: analysis
+
+  FavoritesAnalysisUserResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref FavoritesAnalysisResource
+      PathPart: '{userEmail}'
+
+  FavoritesAnalysisPropertyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref FavoritesAnalysisUserResource
+      PathPart: '{propertyId}'
+
+  FavoritesAnalysisGET:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref FavoritesAnalysisPropertyResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.userEmail: true
+        method.request.path.propertyId: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FavoritesAPIFunction.Arn}/invocations'
+
+  FavoritesAnalysisOPTIONS:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref FavoritesAnalysisPropertyResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode":200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  # /hidden
+  HiddenResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: hidden
+
+  HiddenPOST:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref HiddenResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FavoritesAPIFunction.Arn}/invocations'
+
+  HiddenOPTIONS:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref HiddenResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode":200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  # /hidden/user/{userId}
+  HiddenUserResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref HiddenResource
+      PathPart: user
+
+  HiddenUserIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref HiddenUserResource
+      PathPart: '{userId}'
+
+  HiddenUserGET:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref HiddenUserIdResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FavoritesAPIFunction.Arn}/invocations'
+
+  HiddenUserOPTIONS:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref HiddenUserIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode":200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  # /hidden/{id}
+  HiddenIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref HiddenResource
+      PathPart: '{id}'
+
+  HiddenDELETE:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref HiddenIdResource
+      HttpMethod: DELETE
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FavoritesAPIFunction.Arn}/invocations'
+
+  HiddenIdOPTIONS:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref HiddenIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode":200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  # API Deployment
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - PropertiesGET
+      - PropertiesOPTIONS
+      - FavoritesPOST
+      - FavoritesOPTIONS
+      - FavoritesUserGET
+      - FavoritesUserOPTIONS
+      - FavoritesDELETE
+      - FavoritesIdOPTIONS
+      - FavoritesComparePOST
+      - FavoritesCompareOPTIONS
+      - FavoritesAnalysisGET
+      - FavoritesAnalysisOPTIONS
+      - HiddenPOST
+      - HiddenOPTIONS
+      - HiddenUserGET
+      - HiddenUserOPTIONS
+      - HiddenDELETE
+      - HiddenIdOPTIONS
+    Properties:
+      RestApiId: !Ref RestApi
+
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref RestApi
+      DeploymentId: !Ref ApiDeployment
+      StageName: prod
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          ThrottlingBurstLimit: 100
+          ThrottlingRateLimit: 50
+
+  # Lambda Permissions for API Gateway
+  DashboardApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DashboardAPIFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*/*'
+
+  FavoritesApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref FavoritesAPIFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*/*'
+
+  #############################################
+  # Step Functions Pipeline
+  #############################################
+
+  StepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaInvoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !GetAtt URLCollectorFunction.Arn
+                  - !GetAtt PropertyProcessorFunction.Arn
+                  - !GetAtt PropertyAnalyzerFunction.Arn
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: '*'
+
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vendedlogs/states/${AWS::StackName}-pipeline'
+      RetentionInDays: 7
+
+  PropertyPipeline:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${AWS::StackName}-property-pipeline'
+      RoleArn: !GetAtt StepFunctionsRole.Arn
+      LoggingConfiguration:
+        Level: ERROR
+        IncludeExecutionData: true
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt PipelineLogGroup.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Property scraping and analysis pipeline",
+          "StartAt": "URLCollector",
+          "States": {
+            "URLCollector": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${URLCollectorFunction.Arn}",
+                "Payload": {
+                  "session_id.$": "States.Format('url-collector-{}', $$.Execution.StartTime)"
+                }
+              },
+              "Retry": [{"ErrorEquals": ["Lambda.ServiceException"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2}],
+              "ResultPath": "$.url_collector_result",
+              "Next": "CheckURLs"
+            },
+            "CheckURLs": {
+              "Type": "Choice",
+              "Choices": [{"Variable": "$.url_collector_result.Payload.statusCode", "NumericEquals": 200, "Next": "PropertyProcessor"}],
+              "Default": "Success"
+            },
+            "PropertyProcessor": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${PropertyProcessorFunction.Arn}",
+                "Payload": {
+                  "session_id.$": "States.Format('property-processor-{}', $$.Execution.StartTime)"
+                }
+              },
+              "Retry": [{"ErrorEquals": ["Lambda.ServiceException"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2}],
+              "ResultPath": "$.property_processor_result",
+              "Next": "PropertyAnalyzer"
+            },
+            "PropertyAnalyzer": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${PropertyAnalyzerFunction.Arn}",
+                "Payload": {
+                  "session_id.$": "States.Format('property-analyzer-{}', $$.Execution.StartTime)"
+                }
+              },
+              "Retry": [{"ErrorEquals": ["Lambda.ServiceException"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2}],
+              "ResultPath": "$.property_analyzer_result",
+              "Next": "Success"
+            },
+            "Success": {
+              "Type": "Succeed"
+            }
+          }
+        }
+
+  #############################################
+  # EventBridge Scheduled Trigger
+  #############################################
+
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartStepFunctions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource: !Ref PropertyPipeline
+
+  HourlyTrigger:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${AWS::StackName}-hourly-trigger'
+      Description: Trigger property pipeline every hour
+      ScheduleExpression: 'rate(1 hour)'
+      State: ENABLED
+      Targets:
+        - Arn: !Ref PropertyPipeline
+          RoleArn: !GetAtt EventBridgeRole.Arn
+          Id: PropertyPipelineTarget
+
+#############################################
+# Outputs
+#############################################
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiEndpoint'
+
+  PropertiesTableName:
+    Value: !Ref PropertiesTable
+    Export:
+      Name: !Sub '${AWS::StackName}-PropertiesTableName'
+
+  URLTrackingTableName:
+    Value: !Ref URLTrackingTable
+    Export:
+      Name: !Sub '${AWS::StackName}-URLTrackingTableName'
+
+  UserPreferencesTableName:
+    Value: !Ref UserPreferencesTable
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPreferencesTableName'
+
+  URLCollectorFunctionArn:
+    Value: !GetAtt URLCollectorFunction.Arn
+
+  PropertyProcessorFunctionArn:
+    Value: !GetAtt PropertyProcessorFunction.Arn
+
+  PropertyAnalyzerFunctionArn:
+    Value: !GetAtt PropertyAnalyzerFunction.Arn
+
+  FavoriteAnalyzerFunctionArn:
+    Value: !GetAtt FavoriteAnalyzerFunction.Arn
+
+  DashboardAPIFunctionArn:
+    Value: !GetAtt DashboardAPIFunction.Arn
+
+  FavoritesAPIFunctionArn:
+    Value: !GetAtt FavoritesAPIFunction.Arn
+
+  PropertyPipelineArn:
+    Value: !Ref PropertyPipeline

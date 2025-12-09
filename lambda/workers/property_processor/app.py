@@ -137,7 +137,8 @@ def mark_url_processed(url, url_table, logger=None):
     try:
         url_table.update_item(
             Key={'url': url},
-            UpdateExpression="SET processed = :p",
+            UpdateExpression="SET #p = :p",
+            ExpressionAttributeNames={'#p': 'processed'},
             ExpressionAttributeValues={':p': 'Y'}
         )
         return True
@@ -195,21 +196,34 @@ def save_property_to_dynamodb(property_data, table, logger=None):
             'city': property_data.get('city', ''),
             'state': property_data.get('state', ''),
             'zip_code': property_data.get('zip_code', ''),
+            'latitude': property_data.get('latitude', 0),
+            'longitude': property_data.get('longitude', 0),
 
-            # US-specific
+            # Listing details
             'hoa_fee': property_data.get('hoa_fee', 0),
-            'mls_id': property_data.get('mls_id', ''),
+            'mls_number': property_data.get('mls_number', ''),
+            'redfin_id': property_data.get('redfin_id', ''),
+            'listing_source': property_data.get('listing_source', ''),
+            'date_listed': property_data.get('date_listed', ''),
+            'date_updated': property_data.get('date_updated', ''),
+            'days_on_market': property_data.get('days_on_market', 0),
+
+            # Amenities
+            'parking': property_data.get('parking', ''),
+            'amenities': property_data.get('amenities', []),
+            'description': property_data.get('description', '')[:500] if property_data.get('description') else '',
 
             # Media
             'image_count': property_data.get('image_count', 0),
-            'image_urls': property_data.get('image_urls', [])[:5],  # Store first 5
+            'image_urls': property_data.get('image_urls', [])[:10],  # Store first 10
 
             # Metadata
             'extraction_timestamp': property_data.get('extraction_timestamp', now.isoformat()),
         }
 
         # Remove empty values and convert floats to Decimal
-        record = {k: v for k, v in record.items() if v is not None and v != '' and v != 0}
+        # Keep empty lists as they're valid, just remove None, empty strings, and zeros
+        record = {k: v for k, v in record.items() if v is not None and v != '' and v != 0 and v != []}
         record = convert_floats_to_decimal(record)
 
         # Ensure required keys are present

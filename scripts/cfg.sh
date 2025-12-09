@@ -14,14 +14,14 @@ fi
 # Parse JSON config and export as environment variables
 parse_json_config() {
   local json_file="$1"
-  
+
   # Check if jq is available
   if ! command -v jq >/dev/null 2>&1; then
     echo "Error: jq is required to parse config.json" >&2
     exit 1
   fi
-  
-  # Extract all values from nested JSON structure and export as env vars
+
+  # Extract flat values from nested JSON structure
   eval "$(jq -r '
     def extract(prefix):
       . as $obj |
@@ -55,34 +55,23 @@ need() {
 need PROJECT
 need AWS_REGION
 need AI_STACK
-need FRONTEND_STACK
 
 # Validate S3 buckets
 need DEPLOYMENT_BUCKET_PREFIX
 need OUTPUT_BUCKET
-need FRONTEND_STATIC_BUCKET
 
 # Validate DynamoDB tables
 need DDB_PROPERTIES
 need DDB_URL_TRACKING
-need DDB_USERS
 need DDB_USER_PREFERENCES
-
-# Validate Lambda function names
-need LAMBDA_URL_COLLECTOR
-need LAMBDA_PROPERTY_PROCESSOR
-need LAMBDA_PROPERTY_ANALYZER
-need LAMBDA_DASHBOARD_API
 
 # Export commonly used derived values
 export DEPLOYMENT_BUCKET="${DEPLOYMENT_BUCKET_PREFIX}-${AWS_REGION}"
 
-# Export full Lambda function names (with stack prefix)
-export LAMBDA_URL_COLLECTOR_FULL="${AI_STACK}-${LAMBDA_URL_COLLECTOR}"
-export LAMBDA_PROPERTY_PROCESSOR_FULL="${AI_STACK}-${LAMBDA_PROPERTY_PROCESSOR}"
-export LAMBDA_PROPERTY_ANALYZER_FULL="${AI_STACK}-${LAMBDA_PROPERTY_ANALYZER}"
-export LAMBDA_FAVORITE_ANALYZER_FULL="${AI_STACK}-${LAMBDA_FAVORITE_ANALYZER}"
-export LAMBDA_DASHBOARD_API_FULL="${FRONTEND_STACK}-${LAMBDA_DASHBOARD_API}"
-export LAMBDA_FAVORITES_API_FULL="${FRONTEND_STACK}-${LAMBDA_FAVORITES_API}"
-export LAMBDA_REGISTER_USER_FULL="${FRONTEND_STACK}-${LAMBDA_REGISTER_USER}"
-export LAMBDA_LOGIN_USER_FULL="${FRONTEND_STACK}-${LAMBDA_LOGIN_USER}"
+# Export full Lambda function names (all in unified stack now)
+export LAMBDA_URL_COLLECTOR_FULL="${AI_STACK}-url-collector"
+export LAMBDA_PROPERTY_PROCESSOR_FULL="${AI_STACK}-property-processor"
+export LAMBDA_PROPERTY_ANALYZER_FULL="${AI_STACK}-property-analyzer"
+export LAMBDA_FAVORITE_ANALYZER_FULL="${AI_STACK}-favorite-analyzer"
+export LAMBDA_DASHBOARD_API_FULL="${AI_STACK}-dashboard-api"
+export LAMBDA_FAVORITES_API_FULL="${AI_STACK}-favorites-api"

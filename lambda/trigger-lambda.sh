@@ -1,11 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-# Get the directory of this script
+# Get the directory of this script (lambda/) and repo root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Load centralized config
-. "$SCRIPT_DIR/scripts/cfg.sh"
+. "$REPO_ROOT/scripts/cfg.sh"
 
 # Handle Ctrl+C
 cleanup() {
@@ -36,17 +37,6 @@ declare -A FUNCTION_MAP=(
     ["favorite-analyzer"]="$LAMBDA_FAVORITE_ANALYZER_FULL"
     ["dashboard-api"]="$LAMBDA_DASHBOARD_API_FULL"
     ["favorites-api"]="$LAMBDA_FAVORITES_API_FULL"
-    ["register-user"]="$LAMBDA_REGISTER_USER_FULL"
-    ["login-user"]="$LAMBDA_LOGIN_USER_FULL"
-    # Legacy functions that might still exist
-    ["scraper"]="${AI_STACK}-scraper"
-    ["etl"]="${AI_STACK}-etl"
-    ["prompt-builder"]="${AI_STACK}-prompt-builder"
-    ["llm-batch"]="${AI_STACK}-llm-batch"
-    ["report-sender"]="${AI_STACK}-report-sender"
-    ["dynamodb-writer"]="${AI_STACK}-dynamodb-writer"
-    ["snapshot-generator"]="${AI_STACK}-snapshot-generator"
-    ["daily-digest"]="${AI_STACK}-daily-digest"
 )
 
 # Generate session ID first
@@ -96,6 +86,7 @@ while [[ $# -gt 0 ]]; do
     -p) PARALLEL_INSTANCES="$2"; shift 2 ;;
     --output-bucket) OUTPUT_BUCKET="$2"; PAYLOAD="${PAYLOAD%,\"output_bucket\":*}},\"output_bucket\":\"$2\""; shift 2 ;;
     --max-properties) PAYLOAD="$PAYLOAD,\"max_properties\":$2"; shift 2 ;;
+    --max-pages) PAYLOAD="$PAYLOAD,\"max_pages\":$2"; shift 2 ;;
     --areas) PAYLOAD="$PAYLOAD,\"areas\":\"$2\""; shift 2 ;;
     --max-concurrent-areas) PAYLOAD="$PAYLOAD,\"max_concurrent_areas\":$2"; shift 2 ;;
     --max-runtime-minutes) PAYLOAD="$PAYLOAD,\"max_runtime_minutes\":$2"; shift 2 ;;
@@ -105,19 +96,14 @@ while [[ $# -gt 0 ]]; do
     --debug) LOG_LEVEL="DEBUG"; PAYLOAD="$PAYLOAD,\"log_level\":\"DEBUG\""; shift ;;
     --log-level) LOG_LEVEL="$2"; PAYLOAD="$PAYLOAD,\"log_level\":\"$2\""; shift 2 ;;
     --sync) SYNC_MODE=true; shift ;;
-    suumo) PAYLOAD="$PAYLOAD,\"source\":\"suumo\""; SOURCE_NAME="suumo"; shift ;;
-    lifull|homes) PAYLOAD="$PAYLOAD,\"source\":\"homes\""; SOURCE_NAME="homes"; shift ;;
     --help)
       echo "Usage: $0 <function-name> [OPTIONS]"
       echo "   or: $0 --function <function-name> [OPTIONS]"
       echo ""
       echo "Examples:"
-      echo "  $0 property-processor -p 5"
-      echo "  $0 property_processor -p 5    # underscores converted to hyphens"
-      echo "  $0 url-collector               # runs both Homes + Suumo in parallel"
-      echo "  $0 url-collector suumo         # runs only Suumo"
-      echo "  $0 url-collector lifull        # runs only Homes (Lifull)"
-      echo "  $0 url-collector --max-properties 1000"
+      echo "  $0 url-collector --max-properties 10 --sync"
+      echo "  $0 property-processor --max-properties 5 --sync"
+      echo "  $0 property-analyzer --sync"
       echo ""
       echo "Available Functions: ${!FUNCTION_MAP[*]}"
       echo ""
@@ -126,21 +112,12 @@ while [[ $# -gt 0 ]]; do
       echo "  --parallel-instances N      Launch N parallel Lambda instances"
       echo "  -p N                        Launch N parallel Lambda instances (shortcut)"
       echo "  --output-bucket BUCKET      S3 bucket for output (default: $DEFAULT_BUCKET)"
-      echo "  --max-properties N          Max properties to process"
-      echo "  --areas AREAS               Comma-separated list of areas"
-      echo "  --max-concurrent-areas N    Max concurrent area processing"
+      echo "  --max-properties N          Max properties to collect/process"
+      echo "  --max-pages N               Max pages to scrape (url-collector)"
       echo "  --max-runtime-minutes N     Max runtime before stopping"
-      echo "  --batch-mode                Enable batch processing mode"
-      echo "  --batch-area-size N         Batch area size"
-      echo "  --batch-number N            Batch number"
       echo "  --debug                     Enable debug logging"
       echo "  --log-level LEVEL           Set log level"
-      echo "  --sync                      Wait for completion"
-      echo ""
-      echo "URL Collector Sources:"
-      echo "  suumo                       Run only Suumo scraper"
-      echo "  lifull|homes                Run only Homes/Lifull scraper"
-      echo "  (no source)                 Run both sources in parallel (default)"
+      echo "  --sync                      Wait for completion and show response"
       echo ""
       echo "  --help                      Show this help message"
       exit 0
@@ -162,81 +139,8 @@ fi
 
 PAYLOAD="$PAYLOAD}"
 
-# Special handling for url-collector - launch both Homes and Suumo by default
-if [[ "$FUNCTION_NAME" == "url-collector" ]] && [[ -z "${PARALLEL_INSTANCES:-}" ]] && [[ "$PAYLOAD" != *"source"* ]] && [[ -z "${SOURCE_NAME:-}" ]]; then
-    echo "🔗 Triggering dual URL collection (Homes + Suumo) with session base: $SESSION_ID"
-    echo "📦 Using S3 bucket: $OUTPUT_BUCKET"
-    
-    # Launch Homes.co.jp collector
-    HOMES_SESSION_ID="${SESSION_ID}-homes"
-    HOMES_PAYLOAD=$(echo "$PAYLOAD" | jq --arg sid "$HOMES_SESSION_ID" '.session_id = $sid')
-    
-    echo "  🏠 Launching Homes.co.jp collector (session: $HOMES_SESSION_ID)..."
-    aws lambda invoke \
-        --function-name "$LAMBDA_FUNCTION" \
-        --invocation-type "Event" \
-        --payload "$HOMES_PAYLOAD" \
-        --cli-binary-format raw-in-base64-out \
-        --region "$REGION" \
-        /tmp/url-collector-homes-response.json >/dev/null 2>&1 || { echo "❌ Failed to trigger Homes collector"; exit 1; }
-    echo "  ✓ Homes collector launched"
-    
-    # Launch Suumo collector  
-    SUUMO_SESSION_ID="${SESSION_ID}-suumo"
-    SUUMO_PAYLOAD=$(echo "$PAYLOAD" | jq --arg sid "$SUUMO_SESSION_ID" --arg source "suumo" '.session_id = $sid | .source = $source')
-    
-    echo "  🏢 Launching Suumo collector (session: $SUUMO_SESSION_ID)..."
-    aws lambda invoke \
-        --function-name "$LAMBDA_FUNCTION" \
-        --invocation-type "Event" \
-        --payload "$SUUMO_PAYLOAD" \
-        --cli-binary-format raw-in-base64-out \
-        --region "$REGION" \
-        /tmp/url-collector-suumo-response.json >/dev/null 2>&1 || { echo "❌ Failed to trigger Suumo collector"; exit 1; }
-    echo "  ✓ Suumo collector launched"
-    
-    echo "✅ Both collectors launched successfully"
-    echo "📊 Streaming logs for both collectors..."
-    
-    # Stream logs for both sessions
-    sleep 2 # Give Lambda time to start
-    
-    # Extract base timestamp for log filtering
-    BASE_TIMESTAMP=$(echo "$SESSION_ID" | sed 's/.*-//')
-    
-    aws logs tail "/aws/lambda/$LAMBDA_FUNCTION" \
-      --region "$REGION" \
-      --follow \
-      --since 30s \
-      --filter-pattern "\"${BASE_TIMESTAMP}\"" \
-      --format short 2>/dev/null &
-    SESSION_PID=$!
-    
-    # Also stream ERROR logs in parallel
-    aws logs tail "/aws/lambda/$LAMBDA_FUNCTION" \
-      --region "$REGION" \
-      --follow \
-      --since 30s \
-      --filter-pattern "ERROR" \
-      --format short 2>/dev/null &
-    ERROR_PID=$!
-    
-    # Wait for either process to finish or user interrupt
-    wait $SESSION_PID $ERROR_PID 2>/dev/null || echo "Log streaming ended"
-    
-    # Clean up background processes
-    kill $SESSION_PID $ERROR_PID 2>/dev/null || true
-    
-    echo "✨ Done!"
-    exit 0
-fi
-
-# Trigger Lambda (based on working url-collector pattern)
-if [[ -n "${SOURCE_NAME:-}" ]]; then
-    echo "🔗 Triggering $FUNCTION_NAME (${SOURCE_NAME} only) with session: $SESSION_ID (Log level: $LOG_LEVEL)"
-else
-    echo "🔗 Triggering $FUNCTION_NAME with session: $SESSION_ID (Log level: $LOG_LEVEL)"
-fi
+# Trigger Lambda
+echo "🔗 Triggering $FUNCTION_NAME with session: $SESSION_ID (Log level: $LOG_LEVEL)"
 echo "📦 Using S3 bucket: $OUTPUT_BUCKET"
 if [[ "${SYNC_MODE:-false}" == "true" ]]; then
   echo "⏳ Running in synchronous mode..."

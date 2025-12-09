@@ -1,6 +1,6 @@
 # Property Analyzer Lambda Function
 
-This Lambda function analyzes real estate properties in the Tokyo Real Estate AI system by computing investment scores and verdicts based on market data and property characteristics.
+This Lambda function analyzes real estate properties in the US Real Estate AI system by computing investment scores and verdicts based on market data and property characteristics.
 
 ## IAM Policy Requirements
 
@@ -16,7 +16,7 @@ The Lambda function requires the following DynamoDB permissions:
                 "dynamodb:Scan",
                 "dynamodb:UpdateItem"
             ],
-            "Resource": "arn:aws:dynamodb:ap-northeast-1:*:table/tokyo-real-estate-ai-analysis-db"
+            "Resource": "arn:aws:dynamodb:us-east-1:*:table/real-estate-ai-properties"
         }
     ]
 }
@@ -24,8 +24,8 @@ The Lambda function requires the following DynamoDB permissions:
 
 ## Environment Variables
 
-- `DYNAMODB_TABLE`: DynamoDB table name (default: `tokyo-real-estate-ai-analysis-db`)
-- `AWS_REGION`: AWS region (default: `ap-northeast-1`)
+- `DYNAMODB_TABLE`: DynamoDB table name (default: `real-estate-ai-properties`)
+- `AWS_REGION`: AWS region (default: `us-east-1`)
 - `LOG_LEVEL`: Logging level (default: `INFO`)
 
 ## Function Overview

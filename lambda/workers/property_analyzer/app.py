@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Property Analyzer Lambda - Simplified US market analysis
-Calculates 3 metrics: days_on_market, city_median_price_per_sqft, city_discount_pct
+Property Analyzer Lambda - US market analysis
+Calculates: price_per_acre, city_median_price_per_sqft, city_discount_pct
 """
 import boto3
 import time
@@ -9,7 +9,6 @@ import json
 import statistics
 import logging
 import os
-from decimal import Decimal
 from decimal_utils import to_float, to_dec
 from datetime import datetime, timezone
 
@@ -146,25 +145,23 @@ def calc_city_stats(properties, logger):
 
     city_stats = {}
     for city, prices in city_groups.items():
-        if len(prices) >= 1:
+        if prices:
             city_stats[city] = {
                 'median_price_per_sqft': statistics.median(prices),
-                'mean_price_per_sqft': statistics.mean(prices),
                 'property_count': len(prices)
             }
-            logger.debug(f"City {city}: {len(prices)} properties, "
-                        f"median ${city_stats[city]['median_price_per_sqft']:.2f}/sqft")
 
     return city_stats
 
 
 def analyze_property(prop, city_stats, logger):
     """
-    Analyze a single property - simplified to 3 metrics:
-    1. days_on_market
+    Analyze a single property:
+    1. price_per_acre - price divided by lot size in acres
     2. city_median_price_per_sqft
     3. city_discount_pct
     """
+    price = to_float(prop.get('price', 0))
     price_per_sqft = to_float(prop.get('price_per_sqft', 0))
     city = prop.get('city', '').strip()
 
@@ -173,8 +170,8 @@ def analyze_property(prop, city_stats, logger):
     city_median = city_data.get('median_price_per_sqft', price_per_sqft)
     city_property_count = city_data.get('property_count', 1)
 
-    # 1. Days on Market
-    days_on_market = calculate_days_on_market(prop)
+    # 1. Price per Acre
+    price_per_acre = calculate_price_per_acre(prop, price)
 
     # 2. City Median (just store it for reference)
     city_median_price_per_sqft = city_median
@@ -190,7 +187,7 @@ def analyze_property(prop, city_stats, logger):
     now = datetime.now(timezone.utc)
 
     enrichment = {
-        'days_on_market': days_on_market,
+        'price_per_acre': price_per_acre,
         'city_median_price_per_sqft': city_median_price_per_sqft,
         'city_discount_pct': round(city_discount_pct, 2),
         'city_property_count': city_property_count,
@@ -201,58 +198,50 @@ def analyze_property(prop, city_stats, logger):
     return enrichment
 
 
-def calculate_days_on_market(prop):
-    """Calculate days on market from first_seen_date"""
-    first_seen = prop.get('first_seen_date')
-    if not first_seen:
+def calculate_price_per_acre(prop, price):
+    """
+    Calculate price per acre from lot size.
+    Uses lot_size_acres if available, otherwise converts from lot_size_sqft.
+    """
+    if price <= 0:
         return None
 
-    try:
-        # Parse ISO format date
-        dt = datetime.fromisoformat(first_seen.replace('Z', '+00:00'))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+    # 1. Use lot_size_acres if available
+    lot_acres = to_float(prop.get('lot_size_acres', 0))
+    if lot_acres > 0:
+        return round(price / lot_acres, 2)
 
-        now = datetime.now(timezone.utc)
-        return max(0, (now - dt).days)
+    # 2. Convert from lot_size_sqft (43560 sqft = 1 acre)
+    lot_sqft = to_float(prop.get('lot_size_sqft', 0))
+    if lot_sqft > 0:
+        lot_acres = lot_sqft / 43560
+        return round(price / lot_acres, 2)
 
-    except Exception:
-        return None
+    return None
 
 
 def update_property(property_id, enrichment, logger):
     """Update property with enrichment data"""
-    try:
-        # Build update expression
-        update_parts = []
-        expr_values = {}
-        expr_names = {}
+    # Convert numeric values to Decimal for DynamoDB
+    values = {}
+    for k, v in enrichment.items():
+        if isinstance(v, (int, float)):
+            values[k] = to_dec(v)
+        else:
+            values[k] = v
 
-        for key, value in enrichment.items():
-            safe_key = key.replace('_', '')
-            update_parts.append(f"#{safe_key} = :{safe_key}")
-            expr_names[f"#{safe_key}"] = key
-
-            # Convert values for DynamoDB
-            if value is None:
-                expr_values[f":{safe_key}"] = None
-            elif isinstance(value, (int, float)):
-                expr_values[f":{safe_key}"] = to_dec(value)
-            else:
-                expr_values[f":{safe_key}"] = value
-
-        update_expression = "SET " + ", ".join(update_parts)
-
-        table.update_item(
-            Key={'property_id': property_id, 'sort_key': 'META'},
-            UpdateExpression=update_expression,
-            ExpressionAttributeValues=expr_values,
-            ExpressionAttributeNames=expr_names
-        )
-
-    except Exception as e:
-        logger.error(f"Error updating property {property_id}: {str(e)}")
-        raise
+    table.update_item(
+        Key={'property_id': property_id, 'sort_key': 'META'},
+        UpdateExpression="SET price_per_acre=:ppa, city_median_price_per_sqft=:cm, city_discount_pct=:cd, city_property_count=:cc, last_analyzed=:la, analysis_date=:ad",
+        ExpressionAttributeValues={
+            ':ppa': values.get('price_per_acre'),
+            ':cm': values.get('city_median_price_per_sqft'),
+            ':cd': values.get('city_discount_pct'),
+            ':cc': values.get('city_property_count'),
+            ':la': values.get('last_analyzed'),
+            ':ad': values.get('analysis_date')
+        }
+    )
 
 
 if __name__ == "__main__":

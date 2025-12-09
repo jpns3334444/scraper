@@ -2,11 +2,15 @@
 # Dynamic Lambda function updater - works with any lambda in the project
 set -e
 
-# Get the directory of this script
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get the directory of this script (lambda/) and repo root
+LAMBDA_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$LAMBDA_SCRIPT_DIR/.." && pwd)"
 
-# Load centralized config
-. "$SCRIPT_DIR/scripts/cfg.sh"
+# Load centralized config (note: cfg.sh sets its own SCRIPT_DIR, we use LAMBDA_SCRIPT_DIR)
+. "$REPO_ROOT/scripts/cfg.sh"
+
+# Restore our script directory
+SCRIPT_DIR="$LAMBDA_SCRIPT_DIR"
 
 # Configuration from centralized config
 REGION="$AWS_REGION"
@@ -94,43 +98,33 @@ echo "Region: $REGION"
 echo "Stack:  $STACK_NAME"
 echo ""
 
-# Change to script directory
+# Change to lambda directory (where this script lives)
 cd "$SCRIPT_DIR"
 
 # Check prerequisites
 command -v aws >/dev/null || error "AWS CLI not found"
 aws sts get-caller-identity >/dev/null || error "AWS credentials not configured"
 
-# Check if lambda directory exists
-LAMBDA_DIR="lambda/$LAMBDA_FOLDER"
-[ -d "$LAMBDA_DIR" ] || error "Lambda directory not found: $LAMBDA_DIR"
-
-# Determine function name pattern based on lambda type
-# Frontend functions have different naming pattern
-if [[ "$LAMBDA_FOLDER" == "register_user" || "$LAMBDA_FOLDER" == "login_user" || "$LAMBDA_FOLDER" == "dashboard_api" || "$LAMBDA_FOLDER" == "favorites_api" ]]; then
-    # Frontend stack pattern
-    FUNCTION_NAME="$FRONTEND_STACK-${LAMBDA_FOLDER//_/-}"
-    STACK_NAME="$FRONTEND_STACK"  # Override stack name for frontend functions
+# Check if lambda directory exists (try both api/ and workers/ subdirs)
+if [ -d "api/$LAMBDA_FOLDER" ]; then
+    LAMBDA_DIR="api/$LAMBDA_FOLDER"
+elif [ -d "workers/$LAMBDA_FOLDER" ]; then
+    LAMBDA_DIR="workers/$LAMBDA_FOLDER"
 else
-    # Main AI stack pattern: stack-name-lambda-folder
-    FUNCTION_NAME="$AI_STACK-${LAMBDA_FOLDER//_/-}"
+    error "Lambda directory not found: api/$LAMBDA_FOLDER or workers/$LAMBDA_FOLDER"
 fi
+
+# All functions are now in the unified stack
+FUNCTION_NAME="$AI_STACK-${LAMBDA_FOLDER//_/-}"
 
 # Try to find the actual function name from AWS
 info "Looking for Lambda function..."
 ACTUAL_FUNCTION_NAME=$(aws lambda list-functions --region "$REGION" --query "Functions[?starts_with(FunctionName, '$FUNCTION_NAME')].FunctionName" --output text 2>/dev/null | head -n1)
 
 if [ -z "$ACTUAL_FUNCTION_NAME" ]; then
-    # Try alternative patterns
-    if [[ "$LAMBDA_FOLDER" == "register_user" || "$LAMBDA_FOLDER" == "login_user" ]]; then
-        # Try with frontend stack name
-        FUNCTION_NAME="$FRONTEND_STACK-${LAMBDA_FOLDER//_/-}"
-        ACTUAL_FUNCTION_NAME=$(aws lambda list-functions --region "$REGION" --query "Functions[?starts_with(FunctionName, '$FUNCTION_NAME')].FunctionName" --output text 2>/dev/null | head -n1)
-    else
-        # Try main stack alternative pattern
-        FUNCTION_NAME="$STACK_NAME-${LAMBDA_FOLDER//_/-}-function"
-        ACTUAL_FUNCTION_NAME=$(aws lambda list-functions --region "$REGION" --query "Functions[?starts_with(FunctionName, '$FUNCTION_NAME')].FunctionName" --output text 2>/dev/null | head -n1)
-    fi
+    # Try alternative pattern
+    FUNCTION_NAME="$STACK_NAME-${LAMBDA_FOLDER//_/-}-function"
+    ACTUAL_FUNCTION_NAME=$(aws lambda list-functions --region "$REGION" --query "Functions[?starts_with(FunctionName, '$FUNCTION_NAME')].FunctionName" --output text 2>/dev/null | head -n1)
 fi
 
 if [ -z "$ACTUAL_FUNCTION_NAME" ]; then
@@ -146,25 +140,36 @@ if [ "$SKIP_DEPS" = false ]; then
     REQUIREMENTS_FILE="$LAMBDA_DIR/requirements.txt"
     if [ -f "$REQUIREMENTS_FILE" ]; then
         info "Found requirements.txt, installing dependencies..."
-        
+
         DEPS_DIR="$LAMBDA_DIR/deps"
+        rm -rf "$DEPS_DIR"
         mkdir -p "$DEPS_DIR"
-        
+
         # Read requirements and install
         if [ "$DRY_RUN" = true ]; then
             echo "Would install:"
             cat "$REQUIREMENTS_FILE"
         else
-            # Install each requirement
-            while IFS= read -r requirement || [ -n "$requirement" ]; do
-                # Skip empty lines and comments
-                [[ -z "$requirement" || "$requirement" =~ ^[[:space:]]*# ]] && continue
-                
-                info "Installing: $requirement"
-                if ! timeout 300 pip install "$requirement" --target "$DEPS_DIR" --no-cache-dir; then
-                    warning "Failed to install $requirement, continuing..."
-                fi
-            done < "$REQUIREMENTS_FILE"
+            # For url_collector and property_processor, use Docker to build Lambda-compatible binaries
+            if [ "$LAMBDA_FOLDER" == "url_collector" ] || [ "$LAMBDA_FOLDER" == "property_processor" ]; then
+                info "Building dependencies in Docker (for Lambda compatibility)..."
+                REQS=$(cat "$REQUIREMENTS_FILE" | tr '\n' ' ')
+                # Use current user's UID/GID to avoid permission issues
+                docker run --rm --user "$(id -u):$(id -g)" -v "$(cd "$DEPS_DIR" && pwd):/deps" python:3.12-slim bash -c \
+                    "pip install $REQS -t /deps --no-cache-dir --quiet" || \
+                    error "Failed to build dependencies in Docker"
+            else
+                # Install each requirement normally
+                while IFS= read -r requirement || [ -n "$requirement" ]; do
+                    # Skip empty lines and comments
+                    [[ -z "$requirement" || "$requirement" =~ ^[[:space:]]*# ]] && continue
+
+                    info "Installing: $requirement"
+                    if ! timeout 300 pip install "$requirement" --target "$DEPS_DIR" --no-cache-dir; then
+                        warning "Failed to install $requirement, continuing..."
+                    fi
+                done < "$REQUIREMENTS_FILE"
+            fi
         fi
     else
         info "No requirements.txt found, skipping dependency installation"
@@ -206,14 +211,13 @@ import zipfile
 import os
 import sys
 
-lambda_folder = '$LAMBDA_FOLDER'
-lambda_dir = f'lambda/{lambda_folder}'
-zip_file = f'{lambda_folder}.zip'
+lambda_dir = '$LAMBDA_DIR'
+zip_file = '${LAMBDA_FOLDER}.zip'
 
 def create_zip():
     with zipfile.ZipFile(zip_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
         files_added = 0
-        
+
         # Add lambda function files
         for root, dirs, files in os.walk(lambda_dir):
             dirs[:] = [d for d in dirs if d != '__pycache__']
@@ -228,9 +232,9 @@ def create_zip():
                     arc_name = os.path.relpath(file_path, lambda_dir)
                 zipf.write(file_path, arc_name)
                 files_added += 1
-        
-        # Add shared modules (if they exist)
-        shared_dirs = ['lambda/util', 'analysis', 'schemas', 'notifications', 'snapshots']
+
+        # Add shared modules (if they exist) - check in parent dir (repo root)
+        shared_dirs = ['util', '../analysis', '../schemas', '../notifications', '../snapshots']
         for shared_dir in shared_dirs:
             if os.path.exists(shared_dir):
                 for root, dirs, files in os.walk(shared_dir):
@@ -239,13 +243,10 @@ def create_zip():
                         if file.endswith('.pyc'):
                             continue
                         file_path = os.path.join(root, file)
-                        if shared_dir.startswith('lambda/'):
-                            arc_name = os.path.relpath(file_path, 'lambda')
-                        else:
-                            arc_name = file_path
+                        arc_name = os.path.relpath(file_path, shared_dir if shared_dir == 'util' else '..')
                         zipf.write(file_path, arc_name)
                         files_added += 1
-        
+
         print(f'Packaged {files_added} files into {zip_file}')
 
 try:

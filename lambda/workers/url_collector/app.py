@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-URL Collector Lambda - Collects property URLs from realtor.com (US market)
+URL Collector Lambda - Collects property URLs from Redfin (US market)
+Uses curl_cffi for browser impersonation to bypass bot detection
 """
 import os
 import time
@@ -82,7 +83,7 @@ class SessionLogger:
 
 # Import from other modules
 from core_scraper import (
-    create_session, collect_realtor_listings, get_target_cities
+    create_session, collect_redfin_listings, get_target_cities
 )
 from dynamodb_utils import (
     setup_dynamodb_client, load_all_existing_properties,
@@ -95,13 +96,14 @@ from dynamodb_utils import (
 def parse_lambda_event(event):
     """Parse lambda event with environment variable fallbacks"""
     # Load config for table names
-    realtor_config = {}
+    redfin_config = {}
     scraper_config = {}
 
     if config:
         try:
             full_config = config.load_config()
-            realtor_config = full_config.get('realtor', {})
+            # Check for redfin config first, fall back to realtor for compatibility
+            redfin_config = full_config.get('redfin', full_config.get('realtor', {}))
             scraper_config = full_config.get('scraper', {})
         except Exception:
             pass
@@ -111,9 +113,10 @@ def parse_lambda_event(event):
         'dynamodb_table': event.get('dynamodb_table', config.get_env_var('DYNAMODB_TABLE') if config else os.environ.get('DYNAMODB_TABLE', 'real-estate-ai-properties')),
         'url_tracking_table': event.get('url_tracking_table', config.get_env_var('URL_TRACKING_TABLE') if config else os.environ.get('URL_TRACKING_TABLE', 'real-estate-ai-urls')),
         'log_level': event.get('log_level', os.environ.get('LOG_LEVEL', 'INFO')),
-        'target_city': event.get('target_city', realtor_config.get('TARGET_CITY', 'Paonia')),
-        'target_state': event.get('target_state', realtor_config.get('TARGET_STATE', 'CO')),
-        'max_pages': event.get('max_pages', int(realtor_config.get('MAX_PAGES', 50))),
+        'target_city': event.get('target_city', redfin_config.get('TARGET_CITY', os.environ.get('TARGET_CITY', 'Paonia'))),
+        'target_state': event.get('target_state', redfin_config.get('TARGET_STATE', os.environ.get('TARGET_STATE', 'CO'))),
+        'city_id': event.get('city_id', int(redfin_config.get('CITY_ID', os.environ.get('CITY_ID', '14856')))),
+        'max_pages': event.get('max_pages', int(redfin_config.get('MAX_PAGES', os.environ.get('MAX_PAGES', '10')))),
         'min_delay': float(scraper_config.get('MIN_DELAY_SECONDS', 3)),
         'max_delay': float(scraper_config.get('MAX_DELAY_SECONDS', 8))
     }
@@ -127,6 +130,7 @@ def get_collector_config(args):
         'url_tracking_table': args['url_tracking_table'],
         'target_city': args['target_city'],
         'target_state': args['target_state'],
+        'city_id': args['city_id'],
         'max_pages': args['max_pages'],
         'min_delay': args['min_delay'],
         'max_delay': args['max_delay']
@@ -134,7 +138,7 @@ def get_collector_config(args):
 
 
 def collect_urls_and_track_new(collector_config, logger=None):
-    """Collect URLs from realtor.com and track new ones"""
+    """Collect URLs from Redfin and track new ones"""
     if logger:
         logger.info(f"Starting URL collection for {collector_config['target_city']}, {collector_config['target_state']}")
 
@@ -162,11 +166,12 @@ def collect_urls_and_track_new(collector_config, logger=None):
         session = create_session(logger)
 
         try:
-            # Collect listings from realtor.com
-            listings = collect_realtor_listings(
+            # Collect listings from Redfin
+            listings = collect_redfin_listings(
                 city=collector_config['target_city'],
                 state=collector_config['target_state'],
                 max_pages=collector_config['max_pages'],
+                city_id=collector_config.get('city_id', 0),
                 session=session,
                 logger=logger,
                 rate_limiter=rate_limiter

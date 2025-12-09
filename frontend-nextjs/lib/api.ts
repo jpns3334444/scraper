@@ -1,4 +1,4 @@
-import { PropertiesResponse, FavoritesResponse, HiddenResponse, AnalysisResult } from './types';
+import { PropertiesResponse, FavoritesResponse, HiddenResponse, AnalysisResult, PropertySummary } from './types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://your-api-gateway-url.execute-api.us-east-1.amazonaws.com/prod';
 
@@ -62,7 +62,7 @@ export const api = {
     analysis_result: AnalysisResult;
     analysis_status: string;
     property_images: string[];
-    property_summary: any;
+    property_summary: PropertySummary;
   }> {
     return fetchWithAuth(
       `/favorites/analysis/${encodeURIComponent(userEmail)}/${encodeURIComponent(propertyId)}`,

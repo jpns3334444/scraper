@@ -7,33 +7,32 @@
   },
 
   "stacks": {
-    "AI_STACK": "real-estate-ai",
-    "FRONTEND_STACK": "real-estate-ai-frontend"
+    "AI_STACK": "real-estate-ai"
   },
 
   "s3": {
     "DEPLOYMENT_BUCKET_PREFIX": "real-estate-ai-artifacts",
-    "OUTPUT_BUCKET": "real-estate-ai-data",
-    "FRONTEND_STATIC_BUCKET": "real-estate-ai-frontend"
+    "OUTPUT_BUCKET": "real-estate-ai-data"
   },
 
   "dynamodb": {
     "DDB_PROPERTIES": "real-estate-ai-properties",
     "DDB_URL_TRACKING": "real-estate-ai-urls",
-    "DDB_USERS": "real-estate-ai-users",
     "DDB_USER_PREFERENCES": "real-estate-ai-user-preferences"
   },
 
   "lambda": {
     "_comment": "Lambda Function Names (stack prefix will be prepended)",
-    "LAMBDA_URL_COLLECTOR": "url-collector",
-    "LAMBDA_PROPERTY_PROCESSOR": "property-processor",
-    "LAMBDA_PROPERTY_ANALYZER": "property-analyzer",
-    "LAMBDA_FAVORITE_ANALYZER": "favorite-analyzer",
-    "LAMBDA_DASHBOARD_API": "dashboard-api",
-    "LAMBDA_FAVORITES_API": "favorites-api",
-    "LAMBDA_REGISTER_USER": "register-user",
-    "LAMBDA_LOGIN_USER": "login-user"
+    "workers": {
+      "URL_COLLECTOR": "url-collector",
+      "PROPERTY_PROCESSOR": "property-processor",
+      "PROPERTY_ANALYZER": "property-analyzer",
+      "FAVORITE_ANALYZER": "favorite-analyzer"
+    },
+    "api": {
+      "DASHBOARD": "dashboard-api",
+      "FAVORITES": "favorites-api"
+    }
   },
 
   "api": {
@@ -45,12 +44,12 @@
     "LEAN_MODE": "1"
   },
 
-  "realtor": {
-    "_comment": "Realtor.com scraper configuration",
+  "redfin": {
+    "_comment": "Redfin scraper configuration",
     "TARGET_CITY": "Paonia",
     "TARGET_STATE": "CO",
-    "BASE_URL": "https://www.realtor.com/realestateandhomes-search/Paonia_CO",
-    "MAX_PAGES": 50
+    "CITY_ID": 14856,
+    "MAX_PAGES": 10
   },
 
   "scraper": {
@@ -62,9 +61,7 @@
   },
 
   "layers": {
-    "BCRYPT_LAYER_OBJECT_VERSION": "latest",
-    "OPENAI_VERSION": "1.99.3",
-    "BCRYPT_VERSION": "4.1.2"
+    "OPENAI_VERSION": "1.99.3"
   },
 
   "secrets": {
