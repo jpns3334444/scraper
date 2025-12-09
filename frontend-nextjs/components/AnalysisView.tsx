@@ -14,7 +14,7 @@ export function AnalysisView({ favorite, onClose }: AnalysisViewProps) {
   const { getAnalysis } = useFavorites();
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [images, setImages] = useState<string[]>([]);
-  const [status, setStatus] = useState(favorite.analysis_status || 'pending');
+  const [status, setStatus] = useState<string>(favorite.analysis_status || 'pending');
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
