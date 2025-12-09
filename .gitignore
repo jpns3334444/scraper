@@ -92,4 +92,4 @@ tmp/
 .dockerignore
 
 # CloudFormation
-.aws/
+.aws/.claude/settings.local.json
